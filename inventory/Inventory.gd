@@ -86,4 +86,3 @@ func clear():
 		slots[i].item = null
 		slots[i].count = 0
 	inventory_changed.emit()
-

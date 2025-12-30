@@ -40,4 +40,3 @@ func test_inventory_stackable_items():
 	
 	assert_eq(slot1, slot2)  # Should stack
 	assert_eq(inventory.get_item_count(slot1), 2)
-
