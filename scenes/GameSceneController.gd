@@ -67,6 +67,14 @@ func _start_host_client():
 		print("[GameSceneController] Generating host client map with seed: %d" % map_seed)
 		await client_world.generate_map_with_seed(map_seed)
 
+		# Add loot spawner to client world for visual representation
+		if client_world.hex_grid:
+			var loot_spawner = LootSpawner.new()
+			loot_spawner.name = "LootSpawner"
+			client_world.add_child(loot_spawner)
+			loot_spawner.setup(client_world.hex_grid)
+			print("[GameSceneController] ✓ Loot spawner added to client world")
+
 		# Spawn local player for host
 		var host_id = 1  # Server is always ID 1
 		var spawn_pos = Vector3(0, 2, 0)  # Default spawn above ground
@@ -128,6 +136,9 @@ func _setup_host_input_and_camera(player: Player, client_world: ClientWorld):
 		hud.setup(player)
 		print("[GameSceneController] ✓ HUD attached to host player")
 
+	# Setup Inventory Menu
+	_setup_inventory_menu(player)
+
 func _setup_as_client():
 	# Client needs to create ClientWorld here since GameClient may have created it too early
 	var network_manager = get_node_or_null("/root/NetworkManager")
@@ -162,7 +173,15 @@ func _setup_offline_debug():
 	var map_generator = MapGenerator.new()
 	add_child(map_generator)
 	print("[GameSceneController] Generating debug map...")
-	await map_generator.generate_map(10, 12345)
+	var hex_grid = await map_generator.generate_map(10, 12345)
+
+	# Create loot spawner
+	if hex_grid:
+		var loot_spawner = LootSpawner.new()
+		loot_spawner.name = "LootSpawner"
+		add_child(loot_spawner)
+		loot_spawner.setup(hex_grid)
+		print("[GameSceneController] ✓ Loot spawner created")
 
 	# Create a test player
 	var player = Player.new()
@@ -196,6 +215,9 @@ func _setup_offline_debug():
 	if hud and hud.has_method("setup"):
 		hud.setup(player)
 
+	# Setup Inventory Menu
+	_setup_inventory_menu(player)
+
 	print("[GameSceneController] Debug mode setup complete")
 
 func _create_debug_floor():
@@ -211,3 +233,23 @@ func _create_debug_floor():
 
 	floor_body.add_child(collision)
 	add_child(floor_body)
+
+func _setup_inventory_menu(player: Player):
+	# Create InventoryMenu
+	var inventory_menu = preload("res://ui/menus/InventoryMenu.gd").new()
+	inventory_menu.name = "InventoryMenu"
+
+	# Add to UI layer
+	var ui_layer = get_node_or_null("UI")
+	if ui_layer:
+		ui_layer.add_child(inventory_menu)
+
+		# Setup with player's InventoryComponent
+		var inventory_component = player.get_component("InventoryComponent")
+		if inventory_component:
+			inventory_menu.setup(inventory_component)
+			print("[GameSceneController] ✓ Inventory menu created and linked to player")
+		else:
+			print("[GameSceneController] WARNING: Player has no InventoryComponent")
+	else:
+		print("[GameSceneController] ERROR: UI layer not found")
