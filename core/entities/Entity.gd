@@ -1,6 +1,7 @@
 ## Base entity class that holds components
 ## Uses component-based architecture
-extends Node3D
+## Extends CharacterBody3D for physics support (gravity, collisions)
+extends CharacterBody3D
 class_name Entity
 
 signal component_added(component)  # component: Component
@@ -11,12 +12,25 @@ var entity_id: int = -1
 var is_server_authoritative: bool = false
 
 func _ready():
-	pass
+	# Setup collision shape if not present
+	if not has_node("CollisionShape3D"):
+		_create_default_collision()
 
-func _process(delta: float):
+func _physics_process(delta: float):
+	# Process components
 	for component in components.values():
 		if component.enabled:
 			component.update(delta)
+
+func _create_default_collision():
+	var collision = CollisionShape3D.new()
+	collision.name = "CollisionShape3D"
+	var capsule = CapsuleShape3D.new()
+	capsule.radius = 0.4
+	capsule.height = 1.2
+	collision.shape = capsule
+	collision.position = Vector3(0, 0.6, 0)  # Center at player height
+	add_child(collision)
 
 ## Add a component to this entity
 func add_component(component) -> bool:  # component: Component

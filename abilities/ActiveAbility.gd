@@ -44,4 +44,3 @@ func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity
 
 func _on_deactivate(entity):  # entity: Entity
 	pass
-

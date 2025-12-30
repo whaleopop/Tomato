@@ -8,6 +8,7 @@ func _init():
 	base_health = 110.0
 	base_speed = 5.5
 	model_path = "res://models/Beet.glb"
+	color = Color(0.6, 0.1, 0.3)  # Dark purple/red
 	
 	# Active ability: Beet Crush - powerful melee strike
 	var active_ability_data = AbilityData.new()

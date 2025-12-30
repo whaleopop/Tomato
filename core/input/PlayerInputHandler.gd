@@ -32,10 +32,10 @@ func _capture_and_send_input():
 		"sequence": input_sequence,
 	}
 	input_sequence += 1
-	
+
 	# Capture movement input (WASD)
 	var move_direction = Vector2.ZERO
-	
+
 	if Input.is_action_pressed("move_up"):
 		move_direction.y -= 1.0
 	if Input.is_action_pressed("move_down"):
@@ -44,9 +44,20 @@ func _capture_and_send_input():
 		move_direction.x -= 1.0
 	if Input.is_action_pressed("move_right"):
 		move_direction.x += 1.0
-	
+
 	if move_direction.length_squared() > 0.01:
+		# Transform movement direction relative to camera rotation
+		var camera = get_viewport().get_camera_3d() as CameraController
+		if camera:
+			move_direction = camera.transform_direction(move_direction)
 		input_data["move_direction"] = move_direction
+
+	# Capture jump input (Space)
+	if Input.is_action_just_pressed("jump"):
+		input_data["jump"] = true
+
+	# Capture sprint input (Shift)
+	input_data["sprint"] = Input.is_action_pressed("sprint")
 	
 	# Capture attack input (Left Mouse Button)
 	if Input.is_action_just_pressed("attack"):
@@ -105,15 +116,28 @@ func _send_input_to_server(input_data: Dictionary):
 func _apply_input_locally(input_data: Dictionary):
 	if not player:
 		return
-	
+
 	var movement = player.get_component("MovementComponent")
-	if movement and input_data.has("move_direction"):
-		var move_dir = Vector3(
-			input_data.move_direction.x,
-			0.0,
-			input_data.move_direction.y
-		)
-		movement.set_move_direction(move_dir)
-	
+	if movement:
+		# Apply movement direction
+		if input_data.has("move_direction"):
+			var move_dir = Vector3(
+				input_data.move_direction.x,
+				0.0,
+				input_data.move_direction.y
+			)
+			movement.set_move_direction(move_dir)
+		else:
+			# No movement input - stop moving
+			movement.set_move_direction(Vector3.ZERO)
+
+		# Apply jump
+		if input_data.has("jump") and input_data.jump:
+			movement.jump()
+
+		# Apply sprint
+		if input_data.has("sprint"):
+			movement.set_sprint(input_data.sprint)
+
 	# Note: Attacks and abilities are handled server-side for server-authoritative gameplay
 

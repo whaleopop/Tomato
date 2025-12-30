@@ -1,22 +1,19 @@
 [gd_scene load_steps=5 format=3 uid="uid://gvea0g0vdibv"]
 
-[ext_resource type="Script" uid="uid://b7ky0vo5lq2gf" path="res://GameManager.gd" id="1_game_manager"]
-[ext_resource type="Script" uid="uid://dayvbj2d5ro2j" path="res://world/generation/MapGenerator.gd" id="2_map_generator"]
-[ext_resource type="Script" uid="uid://7urq8qtxu3sx" path="res://world/CameraController.gd" id="3_camera"]
-[ext_resource type="Script" path="res://ui/hud/PlayerHUD.gd" id="4_player_hud"]
+[ext_resource type="Script" uid="uid://bbbomyl8vwa4i" path="res://scenes/GameSceneController.gd" id="1_game_scene"]
+[ext_resource type="Script" uid="uid://7urq8qtxu3sx" path="res://world/CameraController.gd" id="2_camera"]
+[ext_resource type="Script" uid="uid://h8ata255d4he" path="res://ui/hud/PlayerHUD.gd" id="3_player_hud"]
+[ext_resource type="Script" uid="uid://b4xg2rsh3dudm" path="res://world/GameEnvironment.gd" id="4_environment"]
 
 [node name="GameScene" type="Node3D"]
-script = ExtResource("1_game_manager")
+script = ExtResource("1_game_scene")
 
-[node name="MapGenerator" type="Node3D" parent="."]
-script = ExtResource("2_map_generator")
+[node name="GameEnvironment" type="Node3D" parent="."]
+script = ExtResource("4_environment")
 
 [node name="Camera" type="Camera3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 20, 15)
-script = ExtResource("3_camera")
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
-transform = Transform3D(0.866025, -0.433013, 0.25, 0, 0.5, 0.866025, -0.5, -0.75, 0.433013, 0, 10, 0)
+transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 10, 8)
+script = ExtResource("2_camera")
 
 [node name="UI" type="CanvasLayer" parent="."]
 
@@ -27,4 +24,4 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-script = ExtResource("4_player_hud")
+script = ExtResource("3_player_hud")

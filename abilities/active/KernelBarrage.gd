@@ -42,4 +42,3 @@ func _fire_kernel(entity, direction: Vector3):  # entity: Entity
 	var world = entity.get_tree().current_scene
 	if world:
 		world.add_child(projectile)
-

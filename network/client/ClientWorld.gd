@@ -7,6 +7,8 @@ var local_player: Player = null
 
 var map_seed: int = 0
 var map_generator: MapGenerator = null
+var loot_spawner: LootSpawner = null
+var hex_grid: HexGrid = null
 
 func _ready():
 	# Map will be generated when seed is received from server
@@ -16,50 +18,73 @@ func _ready():
 func generate_map_with_seed(seed_value: int, radius: int = 20):
 	print("[ClientWorld] Generating client map with seed: %d..." % seed_value)
 	map_seed = seed_value
-	
+
+	# Set random seed for consistent loot spawning
+	seed(seed_value)
+
 	if map_generator:
 		map_generator.queue_free()
-	
+
 	map_generator = MapGenerator.new()
 	add_child(map_generator)
-	var _grid = map_generator.generate_map(radius, seed_value)
+	hex_grid = await map_generator.generate_map(radius, seed_value)
+
+	# Spawn loot containers (same seed = same positions)
+	if loot_spawner:
+		loot_spawner.queue_free()
+
+	loot_spawner = LootSpawner.new()
+	loot_spawner.name = "LootSpawner"
+	add_child(loot_spawner)
+	loot_spawner.setup(hex_grid)
+
 	print("[ClientWorld] ✓ Client map generated with seed: %d" % seed_value)
 
 func spawn_player(player_id: int, position: Vector3):
 	print("[ClientWorld] Spawning player %d at position %s..." % [player_id, position])
-	
+
+	# Check if player already exists
+	if players.has(player_id):
+		print("[ClientWorld] Player %d already exists, skipping" % player_id)
+		return
+
 	# Create player entity
 	var player = Player.new()
 	player.entity_id = player_id
 	player.name = "Player_%d" % player_id
-	players[player_id] = player
-	add_child(player)
-	
-	# Spawn player
-	player.spawn(position)
-	
-	# Check if this is local player
+
+	# Check if this is local player BEFORE spawning (so color is set correctly)
 	var client = get_node_or_null("/root/NetworkManager/GameClient")
 	if not client:
 		client = get_node_or_null("/root/GameClient")
-	if client and player_id == client.local_player_id:
+
+	var is_local = client and player_id == client.local_player_id
+
+	if is_local:
 		print("[ClientWorld] Player %d is local player" % player_id)
 		local_player = player
-		local_player.is_local_player = true
+		player.is_local_player = true
 
-		# Apply selected character from GameManager
+		# Apply selected character from GameManager BEFORE spawning
 		var game_manager = get_node_or_null("/root/GameManager")
 		if game_manager and game_manager.selected_character:
 			player.setup_character(game_manager.selected_character)
 			print("[ClientWorld] Applied character: %s" % game_manager.selected_character.character_name)
-
-		# Setup input handler for local player
-		_setup_input_handler(player)
-		# Attach camera to local player
-		_setup_camera_for_local_player(player)
 	else:
 		print("[ClientWorld] Player %d is remote player" % player_id)
-	
+
+	# Add to tree and store in dictionary
+	players[player_id] = player
+	add_child(player)
+
+	# Now spawn (creates visual representation with correct color)
+	player.spawn(position)
+
+	# Setup input and camera for local player AFTER spawning
+	if is_local:
+		_setup_input_handler(player)
+		_setup_camera_for_local_player(player)
+
 	print("[ClientWorld] ✓ Player %d spawned (total players: %d)" % [player_id, players.size()])
 
 func remove_player(player_id: int):

@@ -14,26 +14,38 @@ var local_player_id: int = -1
 var is_connected: bool = false
 
 func _ready():
-	# Create client world and add it to the 3D scene
-	client_world = ClientWorld.new()
-	# Find the GameScene root (Node3D) to add ClientWorld to it
-	var game_scene = get_tree().get_first_node_in_group("game_scene")
-	if not game_scene:
-		# Try to find GameScene node
-		game_scene = get_node_or_null("/root/GameScene")
-	
-	if game_scene and game_scene is Node3D:
-		game_scene.add_child(client_world)
-		print("[GameClient] ClientWorld added to GameScene")
-	else:
-		# Fallback: add to NetworkManager (but it won't be in 3D space)
-		add_child(client_world)
-		print("[GameClient] WARNING: Could not find GameScene, ClientWorld added to NetworkManager")
-	
+	# Don't create ClientWorld here - it will be created when GameScene loads
+	# ClientWorld needs to be in the 3D scene, which doesn't exist yet during connection
+	client_world = null
+
 	# Connect multiplayer signals
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
+
+func ensure_client_world():
+	# Create ClientWorld if it doesn't exist, and add to GameScene
+	if client_world:
+		return client_world
+
+	print("[GameClient] Creating ClientWorld...")
+	client_world = ClientWorld.new()
+	client_world.name = "ClientWorld"
+
+	# Find GameScene to add ClientWorld to it
+	var game_scene = get_tree().get_first_node_in_group("game_scene")
+	if not game_scene:
+		game_scene = get_node_or_null("/root/GameScene")
+
+	if game_scene and game_scene is Node3D:
+		game_scene.add_child(client_world)
+		print("[GameClient] ClientWorld added to GameScene")
+	else:
+		# Fallback: add to self (not ideal but works)
+		add_child(client_world)
+		print("[GameClient] WARNING: GameScene not found, ClientWorld added to GameClient")
+
+	return client_world
 
 func connect_to_server(ip: String = "127.0.0.1", port: int = PORT):
 	print("[GameClient] Attempting to connect to server %s:%d..." % [ip, port])
@@ -114,10 +126,11 @@ func _on_server_disconnected():
 @rpc("authority", "reliable")
 func spawn_player(player_id: int, position: Vector3):
 	print("[GameClient] RPC: spawn_player called with player_id=%d, position=%s" % [player_id, position])
-	if client_world:
-		client_world.spawn_player(player_id, position)
+	var world = ensure_client_world()
+	if world:
+		world.spawn_player(player_id, position)
 	else:
-		print("[GameClient] ERROR: client_world is null, cannot spawn player")
+		print("[GameClient] ERROR: Could not create client_world, cannot spawn player")
 
 @rpc("authority", "reliable")
 func update_world_state(state: Dictionary):
@@ -125,19 +138,21 @@ func update_world_state(state: Dictionary):
 	if not state is Dictionary:
 		print("[GameClient] ERROR: state is not a Dictionary, got type: %s" % typeof(state))
 		return
-	if client_world:
-		client_world.apply_world_state(state)
+	var world = ensure_client_world()
+	if world:
+		world.apply_world_state(state)
 	else:
-		print("[GameClient] ERROR: client_world is null, cannot apply world state")
+		print("[GameClient] ERROR: Could not create client_world, cannot apply world state")
 
 # RPC to receive map seed from server
 @rpc("authority", "reliable")
 func receive_map_seed(seed_value: int):
 	print("[GameClient] Received map seed: %d" % seed_value)
-	if client_world:
-		client_world.generate_map_with_seed(seed_value)
+	var world = ensure_client_world()
+	if world:
+		world.generate_map_with_seed(seed_value)
 	else:
-		print("[GameClient] ERROR: client_world is null, cannot generate map")
+		print("[GameClient] ERROR: Could not create client_world, cannot generate map")
 
 # This RPC method exists on server, so we need it here too for checksum
 # But it should never be called on client (only server receives input)

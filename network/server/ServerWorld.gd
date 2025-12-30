@@ -7,8 +7,10 @@ signal player_removed(player_id: int)
 
 var map_generator: MapGenerator = null
 var destruction_system: DestructionSystem = null
+var loot_spawner: LootSpawner = null
 var players: Dictionary = {}  # player_id -> Player entity
 var spawn_points: Array[Vector3] = []
+var hex_grid: HexGrid = null
 
 var map_seed: int = 0
 
@@ -16,37 +18,45 @@ func _ready():
 	# Create map generator
 	map_generator = MapGenerator.new()
 	add_child(map_generator)
-	
+
 	# Generate map with random seed (will be synced to clients)
 	map_seed = randi()
-	var grid = map_generator.generate_map(20, map_seed)
+	hex_grid = await map_generator.generate_map(20, map_seed)
 	print("[ServerWorld] Map generated with seed: %d" % map_seed)
-	
+
 	# Create destruction system
 	destruction_system = DestructionSystem.new()
 	add_child(destruction_system)
-	destruction_system.start(grid)
-	
+	destruction_system.start(hex_grid)
+
+	# Create loot spawner
+	loot_spawner = LootSpawner.new()
+	loot_spawner.name = "LootSpawner"
+	add_child(loot_spawner)
+	loot_spawner.setup(hex_grid)
+
 	# Generate spawn points
-	_generate_spawn_points(grid)
+	_generate_spawn_points(hex_grid)
 
 func _generate_spawn_points(grid: HexGrid):
 	spawn_points.clear()
-	
+
 	# Get center tiles for spawn points
 	var center_coords = Vector2i(0, 0)
 	var spawn_radius = 5
-	
+
 	for q in range(-spawn_radius, spawn_radius + 1):
 		for r in range(-spawn_radius, spawn_radius + 1):
 			var coords = center_coords + Vector2i(q, r)
 			var tile = grid.get_tile(coords)
-			if tile and not tile.is_destroyed:
+			if tile and not tile.is_destroyed and tile.biome_type != HexTile.BiomeType.WATER:
 				var world_pos = grid.hex_to_world(coords)
-				world_pos.y = tile.height * HexTile.HEX_HEIGHT
+				# Spawn player ON TOP of the tile (tile height + offset for player)
+				world_pos.y = (tile.height * HexTile.HEX_HEIGHT) + HexTile.HEX_HEIGHT + 1.0
 				spawn_points.append(world_pos)
-	
+
 	spawn_points.shuffle()
+	print("[ServerWorld] Generated %d spawn points" % spawn_points.size())
 
 func spawn_player(player_id: int) -> Vector3:
 	print("[ServerWorld] Spawning player %d..." % player_id)
@@ -103,4 +113,3 @@ func get_player(player_id: int) -> Player:
 
 func get_all_players() -> Array[Player]:
 	return players.values()
-

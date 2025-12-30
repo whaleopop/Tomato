@@ -60,11 +60,11 @@ func _on_back_pressed():
 	get_tree().change_scene_to_file("res://scenes/MainMenuScene.tscn")
 
 func _on_connected():
-	print("[ConnectMenu] ✓ Connection successful! Switching to game scene...")
+	print("[ConnectMenu] ✓ Connection successful! Switching to character select...")
 	if status_label:
 		status_label.text = "Connected!"
-	# Switch to game scene
-	get_tree().change_scene_to_file("res://scenes/GameScene.tscn")
+	# Switch to character selection (same as host flow)
+	get_tree().change_scene_to_file("res://scenes/CharacterSelectScene.tscn")
 
 func _on_connection_failed():
 	print("[ConnectMenu] ✗ Connection failed!")

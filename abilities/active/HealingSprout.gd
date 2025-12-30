@@ -83,4 +83,3 @@ func _create_healing_effect(entity):  # entity: Entity
 		await entity.get_tree().create_timer(heal_duration + 0.5).timeout
 		if is_instance_valid(particles):
 			particles.queue_free()
-

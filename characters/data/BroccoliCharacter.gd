@@ -8,6 +8,7 @@ func _init():
 	base_health = 100.0
 	base_speed = 5.0
 	model_path = "res://models/Broccoli.glb"
+	color = Color(0.2, 0.7, 0.2)  # Dark green
 	
 	# Active ability: Healing Sprout - heals self and nearby allies
 	var active_ability_data = AbilityData.new()

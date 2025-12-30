@@ -8,6 +8,7 @@ func _init():
 	base_health = 75.0
 	base_speed = 8.0
 	model_path = "res://models/Green Pepper.glb"
+	color = Color(0.3, 0.8, 0.3)  # Light green
 	
 	# Active ability: Spicy Dash - fast movement with damage trail
 	var active_ability_data = AbilityData.new()

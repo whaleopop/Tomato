@@ -8,6 +8,7 @@ func _init():
 	base_health = 90.0
 	base_speed = 6.0
 	model_path = "res://models/Tomato.glb"
+	color = Color(0.9, 0.2, 0.2)  # Red
 	
 	# Active ability: Tomato Splash - throws acidic juice
 	var active_ability_data = AbilityData.new()

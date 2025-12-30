@@ -8,6 +8,7 @@ func _init():
 	base_health = 150.0
 	base_speed = 4.0
 	model_path = "res://models/Pumpkin.glb"
+	color = Color(1.0, 0.5, 0.0)  # Pumpkin orange
 	
 	# Active ability: Pumpkin Smash - area damage around self
 	var active_ability_data = AbilityData.new()

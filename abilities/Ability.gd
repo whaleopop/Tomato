@@ -19,4 +19,3 @@ func cleanup():
 
 func update(delta: float, entity):  # entity: Entity
 	pass
-

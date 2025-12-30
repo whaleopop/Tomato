@@ -10,4 +10,7 @@ class_name CharacterData
 @export var active_ability: AbilityData = null
 @export var passive_ability: AbilityData = null
 @export var icon: Texture2D = null
+@export var color: Color = Color(0.5, 0.5, 0.5)  # Character color for visuals
+@export var model_scale: float = 1.0  # Scale multiplier for model normalization
+@export var model_offset: Vector3 = Vector3.ZERO  # Offset for model positioning
 

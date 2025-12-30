@@ -38,16 +38,26 @@ func process_input(input_data: Dictionary):
 		input_buffer.pop_front()
 
 	# Process movement input
-	if input_data.has("move_direction"):
-		var move_direction = Vector3(
-			input_data.move_direction.x,
-			0.0,
-			input_data.move_direction.y
-		)
-		var movement = player_entity.get_component("MovementComponent")
-		if movement:
+	var movement = player_entity.get_component("MovementComponent")
+	if movement:
+		if input_data.has("move_direction"):
+			var move_direction = Vector3(
+				input_data.move_direction.x,
+				0.0,
+				input_data.move_direction.y
+			)
 			movement.set_move_direction(move_direction)
-	
+		else:
+			movement.set_move_direction(Vector3.ZERO)
+
+		# Process jump input
+		if input_data.has("jump") and input_data.jump:
+			movement.jump()
+
+		# Process sprint input
+		if input_data.has("sprint"):
+			movement.set_sprint(input_data.sprint)
+
 	# Process attack input
 	if input_data.has("attack") and input_data.attack:
 		var combat = player_entity.get_component("CombatComponent")
