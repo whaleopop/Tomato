@@ -1,0 +1,106 @@
+## Server-side world management
+extends Node
+class_name ServerWorld
+
+signal player_spawned(player_id: int, position: Vector3)
+signal player_removed(player_id: int)
+
+var map_generator: MapGenerator = null
+var destruction_system: DestructionSystem = null
+var players: Dictionary = {}  # player_id -> Player entity
+var spawn_points: Array[Vector3] = []
+
+var map_seed: int = 0
+
+func _ready():
+	# Create map generator
+	map_generator = MapGenerator.new()
+	add_child(map_generator)
+	
+	# Generate map with random seed (will be synced to clients)
+	map_seed = randi()
+	var grid = map_generator.generate_map(20, map_seed)
+	print("[ServerWorld] Map generated with seed: %d" % map_seed)
+	
+	# Create destruction system
+	destruction_system = DestructionSystem.new()
+	add_child(destruction_system)
+	destruction_system.start(grid)
+	
+	# Generate spawn points
+	_generate_spawn_points(grid)
+
+func _generate_spawn_points(grid: HexGrid):
+	spawn_points.clear()
+	
+	# Get center tiles for spawn points
+	var center_coords = Vector2i(0, 0)
+	var spawn_radius = 5
+	
+	for q in range(-spawn_radius, spawn_radius + 1):
+		for r in range(-spawn_radius, spawn_radius + 1):
+			var coords = center_coords + Vector2i(q, r)
+			var tile = grid.get_tile(coords)
+			if tile and not tile.is_destroyed:
+				var world_pos = grid.hex_to_world(coords)
+				world_pos.y = tile.height * HexTile.HEX_HEIGHT
+				spawn_points.append(world_pos)
+	
+	spawn_points.shuffle()
+
+func spawn_player(player_id: int) -> Vector3:
+	print("[ServerWorld] Spawning player %d..." % player_id)
+	
+	# Get random spawn point
+	if spawn_points.is_empty():
+		print("[ServerWorld] WARNING: No spawn points available, using center")
+		# Fallback to center
+		spawn_points.append(Vector3.ZERO)
+	
+	var spawn_pos = spawn_points.pop_back()
+	print("[ServerWorld] Selected spawn position: %s (remaining spawn points: %d)" % [spawn_pos, spawn_points.size()])
+	
+	# Create player entity
+	print("[ServerWorld] Creating Player entity for player %d..." % player_id)
+	var player = Player.new()
+	player.entity_id = player_id
+	player.name = "Player_%d" % player_id
+	players[player_id] = player
+	add_child(player)
+	
+	# Spawn player
+	player.spawn(spawn_pos)
+	
+	# Link player to ServerPlayer
+	var server = get_node_or_null("/root/NetworkManager/GameServer")
+	if server and server.players.has(player_id):
+		var server_player = server.players[player_id]
+		server_player.player_entity = player
+		print("[ServerWorld] ✓ Player entity linked to ServerPlayer")
+	
+	print("[ServerWorld] ✓ Player %d spawned at %s" % [player_id, spawn_pos])
+	player_spawned.emit(player_id, spawn_pos)
+	return spawn_pos
+
+func remove_player(player_id: int):
+	print("[ServerWorld] Removing player %d..." % player_id)
+	
+	if not players.has(player_id):
+		print("[ServerWorld] WARNING: Player %d not found in players dictionary" % player_id)
+		return
+	
+	var player = players[player_id]
+	players.erase(player_id)
+	
+	if is_instance_valid(player):
+		player.queue_free()
+	
+	print("[ServerWorld] ✓ Player %d removed (remaining players: %d)" % [player_id, players.size()])
+	player_removed.emit(player_id)
+
+func get_player(player_id: int) -> Player:
+	return players.get(player_id, null)
+
+func get_all_players() -> Array[Player]:
+	return players.values()
+
