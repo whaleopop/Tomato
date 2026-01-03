@@ -203,8 +203,9 @@ func _setup_preview_viewport():
 	# Camera
 	preview_camera = Camera3D.new()
 	preview_camera.position = Vector3(0, 1.0, 2.5)
-	preview_camera.look_at(Vector3(0, 0.7, 0))
 	preview_viewport.add_child(preview_camera)
+	# Must call look_at after camera is in tree
+	preview_camera.look_at(Vector3(0, 0.7, 0))
 
 	# Floor for reference
 	var floor_mesh = MeshInstance3D.new()

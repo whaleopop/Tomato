@@ -34,11 +34,13 @@ func _ready():
 	lobby_manager.name = "LobbyManager"
 	add_child(lobby_manager)
 
-	# Create network lobby sync
-	network_lobby = NetworkLobby.new()
-	network_lobby.name = "NetworkLobby"
-	network_lobby.setup_server(lobby_manager)
-	add_child(network_lobby)
+	# Get network lobby from NetworkManager (created before GameServer)
+	# This ensures consistent RPC paths between client and server
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_lobby = network_manager.get_network_lobby()
+		if network_lobby:
+			network_lobby.setup_server(lobby_manager)
 
 	# Connect signals
 	server_world.player_spawned.connect(_on_player_spawned)

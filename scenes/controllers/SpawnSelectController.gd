@@ -34,13 +34,16 @@ func _ready():
 
 func _setup_network():
 	var network_manager = get_node_or_null("/root/NetworkManager")
+	if not network_manager:
+		return
+
+	# Get NetworkLobby from NetworkManager (same path for both client and server)
+	network_lobby = network_manager.get_network_lobby()
 
 	if is_host:
-		# Host - get NetworkLobby from GameServer
-		var game_server = get_node_or_null("/root/NetworkManager/GameServer")
+		# Host - setup local host player in lobby
+		var game_server = network_manager.game_server
 		if game_server:
-			network_lobby = game_server.network_lobby
-
 			# Setup local host player in lobby
 			if game_server.lobby_manager:
 				game_server.lobby_manager.add_player(1)  # Host is always ID 1
@@ -49,11 +52,6 @@ func _setup_network():
 				if game_server.server_world and game_server.server_world.hex_grid:
 					game_server.lobby_manager.setup_available_spawns(game_server.server_world.hex_grid)
 					_setup_host_map(game_server.server_world.hex_grid)
-	else:
-		# Client - create local NetworkLobby to receive RPCs
-		network_lobby = NetworkLobby.new()
-		network_lobby.name = "NetworkLobby"
-		add_child(network_lobby)
 
 	# Connect signals
 	if network_lobby:
