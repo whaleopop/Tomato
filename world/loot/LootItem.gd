@@ -174,36 +174,37 @@ func _play_pickup_effect():
 	if mesh_instance:
 		mesh_instance.visible = false
 
-	# Create pickup particles
+	var item_color: Color
+	match item_type:
+		ItemType.HEALTH:
+			item_color = Color(0.2, 1.0, 0.3)
+		ItemType.AMMO:
+			item_color = Color(1.0, 0.8, 0.2)
+		ItemType.WEAPON:
+			item_color = Color(0.8, 0.8, 0.9)
+		ItemType.ABILITY_BOOST:
+			item_color = Color(0.9, 0.3, 1.0)
+		ItemType.SHIELD:
+			item_color = Color(0.3, 0.7, 1.0)
+
+	# Main pickup burst particles
 	var particles = GPUParticles3D.new()
-	particles.amount = 15
-	particles.lifetime = 0.5
+	particles.amount = 20
+	particles.lifetime = 0.6
 	particles.one_shot = true
 	particles.explosiveness = 1.0
 
 	var mat = ParticleProcessMaterial.new()
 	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	mat.emission_sphere_radius = 0.3
+	mat.emission_sphere_radius = 0.2
 	mat.direction = Vector3(0, 1, 0)
-	mat.spread = 45.0
-	mat.initial_velocity_min = 2.0
-	mat.initial_velocity_max = 4.0
-	mat.gravity = Vector3(0, -5, 0)
-	mat.scale_min = 0.1
-	mat.scale_max = 0.2
-
-	# Color based on item type
-	match item_type:
-		ItemType.HEALTH:
-			mat.color = Color(0.2, 1.0, 0.3)
-		ItemType.AMMO:
-			mat.color = Color(1.0, 0.8, 0.2)
-		ItemType.WEAPON:
-			mat.color = Color(0.8, 0.8, 0.9)
-		ItemType.ABILITY_BOOST:
-			mat.color = Color(0.9, 0.3, 1.0)
-		ItemType.SHIELD:
-			mat.color = Color(0.3, 0.7, 1.0)
+	mat.spread = 60.0
+	mat.initial_velocity_min = 3.0
+	mat.initial_velocity_max = 6.0
+	mat.gravity = Vector3(0, -8, 0)
+	mat.scale_min = 0.08
+	mat.scale_max = 0.15
+	mat.color = item_color
 
 	particles.process_material = mat
 
@@ -213,6 +214,94 @@ func _play_pickup_effect():
 	particles.draw_pass_1 = mesh
 
 	add_child(particles)
+
+	# Star burst effect (sparkles)
+	var stars = GPUParticles3D.new()
+	stars.amount = 12
+	stars.lifetime = 0.8
+	stars.one_shot = true
+	stars.explosiveness = 0.9
+
+	var star_mat = ParticleProcessMaterial.new()
+	star_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	star_mat.emission_sphere_radius = 0.1
+	star_mat.direction = Vector3(0, 1, 0)
+	star_mat.spread = 180.0
+	star_mat.initial_velocity_min = 4.0
+	star_mat.initial_velocity_max = 7.0
+	star_mat.gravity = Vector3(0, -3, 0)
+	star_mat.scale_min = 0.12
+	star_mat.scale_max = 0.25
+	star_mat.color = Color(1, 1, 0.7)  # Golden sparkles
+
+	# Scale down over time
+	var scale_curve = Curve.new()
+	scale_curve.add_point(Vector2(0, 1))
+	scale_curve.add_point(Vector2(1, 0))
+	var scale_texture = CurveTexture.new()
+	scale_texture.curve = scale_curve
+	star_mat.scale_curve = scale_texture
+
+	stars.process_material = star_mat
+
+	# Star mesh (small prism for sparkle)
+	var star_mesh = PrismMesh.new()
+	star_mesh.size = Vector3(0.08, 0.08, 0.08)
+	stars.draw_pass_1 = star_mesh
+
+	add_child(stars)
+
+	# Rising glow effect (goes upward and fades)
+	var glow = GPUParticles3D.new()
+	glow.amount = 8
+	glow.lifetime = 1.0
+	glow.one_shot = true
+	glow.explosiveness = 0.5
+
+	var glow_mat = ParticleProcessMaterial.new()
+	glow_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_POINT
+	glow_mat.direction = Vector3(0, 1, 0)
+	glow_mat.spread = 15.0
+	glow_mat.initial_velocity_min = 2.0
+	glow_mat.initial_velocity_max = 3.5
+	glow_mat.gravity = Vector3(0, 0.5, 0)  # Slight upward drift
+	glow_mat.scale_min = 0.2
+	glow_mat.scale_max = 0.4
+
+	# Color gradient from item color to white
+	var color_gradient = Gradient.new()
+	color_gradient.set_color(0, item_color)
+	color_gradient.set_color(1, Color(1, 1, 1, 0))
+	var color_texture = GradientTexture1D.new()
+	color_texture.gradient = color_gradient
+	glow_mat.color_ramp = color_texture
+
+	glow.process_material = glow_mat
+
+	var glow_mesh = SphereMesh.new()
+	glow_mesh.radius = 0.1
+	glow_mesh.height = 0.2
+	glow.draw_pass_1 = glow_mesh
+
+	add_child(glow)
+
+	# Trigger screen effect based on item type
+	_trigger_screen_effect()
+
+func _trigger_screen_effect():
+	var screen_effects = get_node_or_null("/root/ScreenEffects")
+	if not screen_effects:
+		return
+
+	match item_type:
+		ItemType.HEALTH:
+			ScreenEffects.heal_effect()
+		ItemType.SHIELD:
+			ScreenEffects.flash(Color(0.3, 0.6, 1.0), 0.15, 0.15)
+		ItemType.ABILITY_BOOST:
+			ScreenEffects.ability_ready_pulse()
+		ItemType.WEAPON:
+			ScreenEffects.flash(Color(1, 1, 0.8), 0.1, 0.1)
 
 func _start_respawn_timer():
 	await get_tree().create_timer(respawn_time).timeout

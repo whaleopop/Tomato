@@ -79,20 +79,32 @@ func stop_server():
 
 func _on_peer_connected(player_id: int):
 	print("[GameServer] ===== Player connected: %d =====" % player_id)
+
+	# Check for duplicate connection
+	if players.has(player_id):
+		print("[GameServer] WARNING: Player %d already in players dict, ignoring duplicate" % player_id)
+		return
+
 	player_connected.emit(player_id)
-	
+
 	# Create server player
 	print("[GameServer] Creating ServerPlayer for player %d..." % player_id)
 	var server_player = ServerPlayer.new()
 	server_player.player_id = player_id
 	players[player_id] = server_player
 	add_child(server_player)
-	
-	# Wait a frame to ensure everything is ready
-	await get_tree().process_frame
-	
+
 	# Send map seed to client FIRST (before spawning)
 	_send_map_seed_to_client(player_id)
+
+	# Use call_deferred to avoid race conditions with async operations
+	call_deferred("_spawn_player_deferred", player_id)
+
+func _spawn_player_deferred(player_id: int):
+	# Verify player still exists (may have disconnected)
+	if not players.has(player_id):
+		print("[GameServer] Player %d disconnected before spawn, skipping" % player_id)
+		return
 
 	# Spawn player in world
 	print("[GameServer] Spawning player %d in world..." % player_id)

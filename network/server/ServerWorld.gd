@@ -60,7 +60,17 @@ func _generate_spawn_points(grid: HexGrid):
 
 func spawn_player(player_id: int) -> Vector3:
 	print("[ServerWorld] Spawning player %d..." % player_id)
-	
+
+	# Check for duplicate spawn
+	if players.has(player_id):
+		print("[ServerWorld] WARNING: Player %d already exists, returning existing position" % player_id)
+		var existing_player = players[player_id]
+		if is_instance_valid(existing_player):
+			return existing_player.global_position
+		else:
+			# Clean up invalid reference
+			players.erase(player_id)
+
 	# Get random spawn point
 	if spawn_points.is_empty():
 		print("[ServerWorld] WARNING: No spawn points available, using center")

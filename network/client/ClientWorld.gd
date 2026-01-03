@@ -10,6 +10,10 @@ var map_generator: MapGenerator = null
 var loot_spawner: LootSpawner = null
 var hex_grid: HexGrid = null
 
+# Spawn queue for handling spawns before map is ready
+var is_map_ready: bool = false
+var pending_spawns: Array = []  # Array of {player_id: int, position: Vector3}
+
 func _ready():
 	# Map will be generated when seed is received from server
 	# For now, don't generate map - wait for server seed
@@ -18,6 +22,7 @@ func _ready():
 func generate_map_with_seed(seed_value: int, radius: int = 20):
 	print("[ClientWorld] Generating client map with seed: %d..." % seed_value)
 	map_seed = seed_value
+	is_map_ready = false
 
 	# Set random seed for consistent loot spawning
 	seed(seed_value)
@@ -40,8 +45,28 @@ func generate_map_with_seed(seed_value: int, radius: int = 20):
 
 	print("[ClientWorld] ✓ Client map generated with seed: %d" % seed_value)
 
+	# Map is now ready - process any pending spawns
+	is_map_ready = true
+	_process_pending_spawns()
+
+func _process_pending_spawns():
+	if pending_spawns.is_empty():
+		return
+
+	print("[ClientWorld] Processing %d pending spawns..." % pending_spawns.size())
+	for spawn_data in pending_spawns:
+		spawn_player(spawn_data.player_id, spawn_data.position)
+	pending_spawns.clear()
+	print("[ClientWorld] ✓ All pending spawns processed")
+
 func spawn_player(player_id: int, position: Vector3):
 	print("[ClientWorld] Spawning player %d at position %s..." % [player_id, position])
+
+	# If map is not ready yet, queue the spawn for later
+	if not is_map_ready:
+		print("[ClientWorld] Map not ready, queuing spawn for player %d" % player_id)
+		pending_spawns.append({"player_id": player_id, "position": position})
+		return
 
 	# Check if player already exists
 	if players.has(player_id):

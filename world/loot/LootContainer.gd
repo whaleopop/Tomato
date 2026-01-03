@@ -17,8 +17,13 @@ enum ContainerType {
 @export var loot_count: int = 2  # Number of items to drop
 @export var guaranteed_health: bool = true  # Always drop at least one health item
 
+const INTERACT_RANGE: float = 2.5
+const INTERACT_COLLISION_LAYER: int = 8  # Layer 4 for interactive objects
+
 var is_opened: bool = false
 var mesh_instance: MeshInstance3D = null
+var interact_prompt: Label3D = null
+var is_opening: bool = false  # Prevents double-opening during animation
 
 # Possible loot weights
 var loot_weights: Dictionary = {
@@ -92,8 +97,55 @@ func _create_collision():
 	collision.position = Vector3(0, 0.4, 0)
 	add_child(collision)
 
+	# Set collision layer for interact detection
+	collision_layer = INTERACT_COLLISION_LAYER
+	collision_mask = 2  # Can interact with player layer
+
+func _process(_delta: float):
+	_update_interact_prompt()
+
+func _update_interact_prompt():
+	if is_opened or is_opening:
+		if interact_prompt:
+			interact_prompt.queue_free()
+			interact_prompt = null
+		return
+
+	# Find local player
+	var local_player: Player = null
+	var players = get_tree().get_nodes_in_group("players")
+	for p in players:
+		if p is Player and p.is_local_player:
+			local_player = p
+			break
+
+	if not local_player:
+		if interact_prompt and interact_prompt.visible:
+			interact_prompt.visible = false
+		return
+
+	var dist = global_position.distance_to(local_player.global_position)
+
+	if dist <= INTERACT_RANGE:
+		if not interact_prompt:
+			_create_interact_prompt()
+		interact_prompt.visible = true
+	elif interact_prompt:
+		interact_prompt.visible = false
+
+func _create_interact_prompt():
+	interact_prompt = Label3D.new()
+	interact_prompt.text = "[E] Open"
+	interact_prompt.position = Vector3(0, 1.2, 0)
+	interact_prompt.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	interact_prompt.font_size = 48
+	interact_prompt.outline_size = 8
+	interact_prompt.modulate = Color(1, 1, 0.8)
+	interact_prompt.no_depth_test = true
+	add_child(interact_prompt)
+
 func take_damage(amount: float, source = null):
-	if is_opened:
+	if is_opened or is_opening:
 		return
 
 	health -= amount
@@ -101,6 +153,54 @@ func take_damage(amount: float, source = null):
 
 	if health <= 0:
 		open(source as Player if source is Player else null)
+
+## Called when player presses interact key (E) near container
+func interact(player: Player = null):
+	if is_opened or is_opening:
+		return
+
+	# Check distance if player provided
+	if player:
+		var dist = global_position.distance_to(player.global_position)
+		if dist > INTERACT_RANGE:
+			print("[LootContainer] Player too far to interact (%.1f > %.1f)" % [dist, INTERACT_RANGE])
+			return
+
+	print("[LootContainer] Player interacting with container")
+	is_opening = true
+
+	# Hide prompt immediately
+	if interact_prompt:
+		interact_prompt.visible = false
+
+	_play_open_animation()
+
+func _play_open_animation():
+	var tween = create_tween()
+
+	# Jump animation
+	var original_pos = mesh_instance.position
+	tween.tween_property(mesh_instance, "position:y", original_pos.y + 0.4, 0.15)
+	tween.set_ease(Tween.EASE_OUT)
+
+	# Add glow effect
+	var material = mesh_instance.get_surface_override_material(0) as StandardMaterial3D
+	if material:
+		material = material.duplicate()
+		mesh_instance.set_surface_override_material(0, material)
+		material.emission_enabled = true
+		material.emission = Color(1, 0.9, 0.5)
+		tween.parallel().tween_property(material, "emission_energy_multiplier", 2.0, 0.2)
+
+	# Scale up slightly
+	tween.parallel().tween_property(mesh_instance, "scale", Vector3(1.1, 1.1, 1.1), 0.15)
+
+	# Fall back down
+	tween.tween_property(mesh_instance, "position:y", original_pos.y, 0.1)
+	tween.tween_property(mesh_instance, "scale", Vector3.ONE, 0.1)
+
+	# Open after animation
+	tween.tween_callback(func(): open(null))
 
 func open(player: Player = null):
 	if is_opened:
