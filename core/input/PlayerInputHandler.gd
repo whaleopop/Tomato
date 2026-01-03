@@ -122,9 +122,9 @@ func _capture_and_send_input():
 		_apply_input_locally(input_data)
 
 func _send_input_to_server(input_data: Dictionary):
-	var client = get_node_or_null("/root/NetworkManager/GameClient")
-	if client:
-		client.send_input(input_data)
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager and network_manager.game_client:
+		network_manager.game_client.send_input(input_data)
 		input_sent.emit(input_data)
 
 func _apply_input_locally(input_data: Dictionary):
@@ -204,15 +204,20 @@ func _handle_interact(target: Node3D):
 
 ## Get the network loot manager
 func _get_loot_manager() -> NetworkLootManager:
-	# Try client world first
-	var client_world = get_node_or_null("/root/NetworkManager/GameClient/ClientWorld")
-	if client_world and client_world.loot_manager:
-		return client_world.loot_manager
+	# Try to find ClientWorld via GameClient
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		if network_manager.game_client and network_manager.game_client.client_world:
+			return network_manager.game_client.client_world.loot_manager
+		if network_manager.game_server and network_manager.game_server.server_world:
+			return network_manager.game_server.server_world.loot_manager
 
-	# Try server world
-	var server_world = get_node_or_null("/root/NetworkManager/GameServer/ServerWorld")
-	if server_world and server_world.loot_manager:
-		return server_world.loot_manager
+	# Fallback: search in game scene
+	var game_scene = get_tree().get_first_node_in_group("game_scene")
+	if game_scene:
+		var loot_mgr = game_scene.get_node_or_null("NetworkLootManager")
+		if loot_mgr:
+			return loot_mgr
 
 	return null
 

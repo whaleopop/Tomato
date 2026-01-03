@@ -171,3 +171,17 @@ func _receive_player_input(input_data: Dictionary):
 	if game_server.players.has(sender_id):
 		var server_player = game_server.players[sender_id]
 		server_player.process_input(input_data)
+
+func notify_match_start():
+	if not multiplayer.multiplayer_peer or not multiplayer.is_server():
+		return
+	_receive_match_start_notify.rpc()
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_match_start_notify():
+	# Client received match start notification
+	# Transition to game scene if not already there
+	print("[NetworkManager] Match start notification received")
+	var current_scene = get_tree().current_scene
+	if current_scene and current_scene.name != "GameScene":
+		get_tree().change_scene_to_file("res://scenes/GameScene.tscn")

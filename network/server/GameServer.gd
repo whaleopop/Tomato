@@ -165,13 +165,10 @@ func _on_match_started():
 	for player_id in players.keys():
 		call_deferred("_spawn_player_deferred", player_id)
 
-	# Notify all clients
-	_notify_match_start.rpc()
-
-@rpc("authority", "call_remote", "reliable")
-func _notify_match_start():
-	# Called on clients when match starts
-	pass
+	# Notify all clients via NetworkManager (consistent RPC path)
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.notify_match_start()
 
 func _on_peer_disconnected(player_id: int):
 	print("[GameServer] Player disconnected: %d" % player_id)

@@ -129,9 +129,9 @@ func _create_player_at(player_id: int, spawn_pos: Vector3) -> Vector3:
 	player.spawn(spawn_pos)
 
 	# Link player to ServerPlayer
-	var server = get_node_or_null("/root/NetworkManager/GameServer")
-	if server and server.players.has(player_id):
-		var server_player = server.players[player_id]
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager and network_manager.game_server and network_manager.game_server.players.has(player_id):
+		var server_player = network_manager.game_server.players[player_id]
 		server_player.player_entity = player
 		print("[ServerWorld] ✓ Player entity linked to ServerPlayer")
 

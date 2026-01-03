@@ -146,10 +146,10 @@ func _server_open_container(container_id: int, player_id: int):
 		return
 
 	# Find player entity
-	var server_world = get_node_or_null("/root/NetworkManager/GameServer/ServerWorld")
+	var network_manager = get_node_or_null("/root/NetworkManager")
 	var player: Player = null
-	if server_world:
-		player = server_world.get_player(player_id)
+	if network_manager and network_manager.game_server and network_manager.game_server.server_world:
+		player = network_manager.game_server.server_world.get_player(player_id)
 
 	# Open the container (this will spawn items)
 	container.interact(player)
@@ -172,10 +172,10 @@ func _server_request_pickup(item_id: int):
 		return
 
 	# Find player entity
-	var server_world = get_node_or_null("/root/NetworkManager/GameServer/ServerWorld")
+	var network_manager = get_node_or_null("/root/NetworkManager")
 	var player: Player = null
-	if server_world:
-		player = server_world.get_player(sender_id)
+	if network_manager and network_manager.game_server and network_manager.game_server.server_world:
+		player = network_manager.game_server.server_world.get_player(sender_id)
 
 	if not player:
 		return
@@ -246,7 +246,8 @@ func _client_spawn_item(item_data: Dictionary):
 	item.respawn_time = 0  # Network-spawned items don't respawn
 
 	# Add to scene
-	var world = get_node_or_null("/root/NetworkManager/GameClient/ClientWorld")
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	var world = network_manager.game_client.client_world if network_manager and network_manager.game_client else null
 	if world:
 		world.add_child(item)
 	else:

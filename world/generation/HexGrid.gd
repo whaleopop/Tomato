@@ -13,7 +13,11 @@ func add_tile(coords: Vector2i, tile: HexTile):
 	add_child(tile)
 
 func get_tile(coords: Vector2i) -> HexTile:
-	return tiles.get(coords, null)
+	var tile = tiles.get(coords, null)
+	if tile and not is_instance_valid(tile):
+		tiles.erase(coords)
+		return null
+	return tile
 
 func get_neighbors(coords: Vector2i) -> Array:
 	var neighbors: Array = []
