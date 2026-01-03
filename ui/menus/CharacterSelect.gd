@@ -392,12 +392,12 @@ func _on_select_pressed():
 		game_manager.selected_character = selected_character
 		print("[CharacterSelect] Stored character: %s" % selected_character.character_name)
 
-	# Transition to game with fade
+	# Transition to spawn selection
 	var scene_transition = get_node_or_null("/root/SceneTransition")
 	if scene_transition:
-		scene_transition.fade_to_scene("res://scenes/GameScene.tscn")
+		scene_transition.fade_to_scene("res://scenes/SpawnSelectScene.tscn")
 	else:
-		get_tree().change_scene_to_file("res://scenes/GameScene.tscn")
+		get_tree().change_scene_to_file("res://scenes/SpawnSelectScene.tscn")
 
 func _on_back_pressed():
 	var scene_transition = get_node_or_null("/root/SceneTransition")

@@ -14,20 +14,35 @@ var peer: ENetMultiplayerPeer = null
 var players: Dictionary = {}  # player_id -> ServerPlayer
 var server_world: ServerWorld = null
 var tick_system: TickSystem = null
+var lobby_manager: LobbyManager = null
+var network_lobby: NetworkLobby = null
 var is_running: bool = false
+var game_started: bool = false
 
 func _ready():
 	# Create server world
 	server_world = ServerWorld.new()
 	add_child(server_world)
-	
+
 	# Create tick system
 	tick_system = TickSystem.new()
 	tick_system.set_server(self)
 	add_child(tick_system)
-	
+
+	# Create lobby manager
+	lobby_manager = LobbyManager.new()
+	lobby_manager.name = "LobbyManager"
+	add_child(lobby_manager)
+
+	# Create network lobby sync
+	network_lobby = NetworkLobby.new()
+	network_lobby.name = "NetworkLobby"
+	network_lobby.setup_server(lobby_manager)
+	add_child(network_lobby)
+
 	# Connect signals
 	server_world.player_spawned.connect(_on_player_spawned)
+	lobby_manager.match_started.connect(_on_match_started)
 
 func start_server(port: int = PORT):
 	print("[GameServer] Starting server on port %d..." % port)
@@ -94,11 +109,24 @@ func _on_peer_connected(player_id: int):
 	players[player_id] = server_player
 	add_child(server_player)
 
-	# Send map seed to client FIRST (before spawning)
+	# Send map seed to client FIRST
 	_send_map_seed_to_client(player_id)
 
-	# Use call_deferred to avoid race conditions with async operations
-	call_deferred("_spawn_player_deferred", player_id)
+	# Add player to lobby
+	if lobby_manager:
+		lobby_manager.add_player(player_id)
+		# Setup available spawns if not done yet
+		if server_world.hex_grid and lobby_manager.available_spawns.is_empty():
+			lobby_manager.setup_available_spawns(server_world.hex_grid)
+
+	# Send map data for spawn selection
+	if network_lobby and server_world.hex_grid:
+		await get_tree().process_frame
+		network_lobby.send_map_data_to_player(player_id, server_world.hex_grid)
+
+	# If game already started, spawn immediately
+	if game_started:
+		call_deferred("_spawn_player_deferred", player_id)
 
 func _spawn_player_deferred(player_id: int):
 	# Verify player still exists (may have disconnected)
@@ -106,15 +134,45 @@ func _spawn_player_deferred(player_id: int):
 		print("[GameServer] Player %d disconnected before spawn, skipping" % player_id)
 		return
 
-	# Spawn player in world
-	print("[GameServer] Spawning player %d in world..." % player_id)
-	var spawn_pos = server_world.spawn_player(player_id)
+	# Get spawn position from lobby if available
+	var spawn_pos: Vector3
+	if lobby_manager and server_world.hex_grid:
+		spawn_pos = lobby_manager.get_spawn_position(player_id, server_world.hex_grid)
+		if spawn_pos == Vector3.ZERO:
+			# Fallback to random spawn
+			spawn_pos = server_world.spawn_player(player_id)
+		else:
+			# Spawn at selected position
+			spawn_pos = server_world.spawn_player_at(player_id, spawn_pos)
+	else:
+		spawn_pos = server_world.spawn_player(player_id)
+
 	print("[GameServer] ✓ Player %d fully connected and spawned at %s" % [player_id, spawn_pos])
+
+func _on_match_started():
+	print("[GameServer] ===== MATCH STARTED =====")
+	game_started = true
+
+	# Spawn all players at their selected positions
+	for player_id in players.keys():
+		call_deferred("_spawn_player_deferred", player_id)
+
+	# Notify all clients
+	_notify_match_start.rpc()
+
+@rpc("authority", "call_remote", "reliable")
+func _notify_match_start():
+	# Called on clients when match starts
+	pass
 
 func _on_peer_disconnected(player_id: int):
 	print("[GameServer] Player disconnected: %d" % player_id)
 	player_disconnected.emit(player_id)
-	
+
+	# Remove player from lobby
+	if lobby_manager:
+		lobby_manager.remove_player(player_id)
+
 	# Remove player from world
 	if players.has(player_id):
 		print("[GameServer] Removing player %d from world..." % player_id)

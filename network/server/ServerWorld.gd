@@ -96,10 +96,27 @@ func spawn_player(player_id: int) -> Vector3:
 		print("[ServerWorld] WARNING: No spawn points available, using center")
 		# Fallback to center
 		spawn_points.append(Vector3.ZERO)
-	
+
 	var spawn_pos = spawn_points.pop_back()
-	print("[ServerWorld] Selected spawn position: %s (remaining spawn points: %d)" % [spawn_pos, spawn_points.size()])
-	
+	return _create_player_at(player_id, spawn_pos)
+
+func spawn_player_at(player_id: int, position: Vector3) -> Vector3:
+	print("[ServerWorld] Spawning player %d at specific position %s..." % [player_id, position])
+
+	# Check for duplicate spawn
+	if players.has(player_id):
+		print("[ServerWorld] WARNING: Player %d already exists, returning existing position" % player_id)
+		var existing_player = players[player_id]
+		if is_instance_valid(existing_player):
+			return existing_player.global_position
+		else:
+			players.erase(player_id)
+
+	return _create_player_at(player_id, position)
+
+func _create_player_at(player_id: int, spawn_pos: Vector3) -> Vector3:
+	print("[ServerWorld] Selected spawn position: %s" % spawn_pos)
+
 	# Create player entity
 	print("[ServerWorld] Creating Player entity for player %d..." % player_id)
 	var player = Player.new()
@@ -107,17 +124,17 @@ func spawn_player(player_id: int) -> Vector3:
 	player.name = "Player_%d" % player_id
 	players[player_id] = player
 	add_child(player)
-	
+
 	# Spawn player
 	player.spawn(spawn_pos)
-	
+
 	# Link player to ServerPlayer
 	var server = get_node_or_null("/root/NetworkManager/GameServer")
 	if server and server.players.has(player_id):
 		var server_player = server.players[player_id]
 		server_player.player_entity = player
 		print("[ServerWorld] ✓ Player entity linked to ServerPlayer")
-	
+
 	print("[ServerWorld] ✓ Player %d spawned at %s" % [player_id, spawn_pos])
 	player_spawned.emit(player_id, spawn_pos)
 	return spawn_pos

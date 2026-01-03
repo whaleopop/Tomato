@@ -18,6 +18,7 @@ const ACCENT_PRIMARY = Color(0.3, 0.7, 1.0)
 const ACCENT_SECONDARY = Color(1.0, 0.7, 0.2)
 const ACCENT_SUCCESS = Color(0.3, 0.85, 0.4)
 const ACCENT_DANGER = Color(1.0, 0.35, 0.35)
+const ACCENT_WARNING = Color(1.0, 0.8, 0.2)
 
 const BUTTON_NORMAL = Color(0.2, 0.2, 0.28)
 const BUTTON_HOVER = Color(0.28, 0.28, 0.38)
