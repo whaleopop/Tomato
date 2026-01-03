@@ -25,7 +25,9 @@ const HEX_BUTTON_SIZE: float = 24.0
 const MAP_SCALE: float = 1.0
 
 func _ready():
-	_create_ui()
+	# Only create UI if not already created by setup()
+	if not map_container:
+		_create_ui()
 
 func _create_ui():
 	# Background
@@ -157,6 +159,11 @@ func setup(grid_data: Dictionary, p_reserved_spawns: Array, player_id: int):
 	hex_grid_data = grid_data
 	reserved_spawns = p_reserved_spawns
 	my_player_id = player_id
+
+	# Ensure UI is created (may be called before _ready)
+	if not map_container:
+		_create_ui()
+
 	_build_map()
 
 func _build_map():
