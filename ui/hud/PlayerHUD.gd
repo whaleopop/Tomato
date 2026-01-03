@@ -5,6 +5,8 @@ class_name PlayerHUD
 var health_bar: HealthBar = null
 var ability_bar: AbilityBar = null
 var minimap: Minimap = null
+var ammo_display: AmmoDisplay = null
+var crosshair: Control = null
 
 var player: Player = null
 
@@ -13,31 +15,41 @@ func _ready():
 	health_bar = get_node_or_null("HealthBar")
 	ability_bar = get_node_or_null("AbilityBar")
 	minimap = get_node_or_null("Minimap")
-	
+
 	if not health_bar:
 		print("[PlayerHUD] WARNING: HealthBar not found, creating default...")
 		_create_default_health_bar()
-	
+
 	if not ability_bar:
 		print("[PlayerHUD] WARNING: AbilityBar not found, creating default...")
 		_create_default_ability_bar()
-	
+
 	if not minimap:
 		print("[PlayerHUD] WARNING: Minimap not found, creating default...")
 		_create_default_minimap()
 
+	# Always create ammo display and crosshair
+	_create_ammo_display()
+	_create_crosshair()
+
 func setup(p_player: Player):
 	player = p_player
-	
+
 	# Connect to player components
 	if player:
 		var health = player.get_component("HealthComponent")
 		if health and health_bar:
 			health_bar.setup(health)
-		
+
 		var ability_component = player.get_component("AbilityComponent")
 		if ability_component and ability_bar:
 			ability_bar.setup(ability_component)
+
+		# Setup ammo display
+		var combat = player.get_component("CombatComponent")
+		var inventory = player.get_component("InventoryComponent")
+		if combat and ammo_display:
+			ammo_display.setup(combat, inventory)
 
 func _process(delta: float):
 	if player and minimap:
@@ -80,4 +92,50 @@ func _create_default_minimap():
 	minimap.offset_top = 20
 	minimap.offset_bottom = 220
 	add_child(minimap)
-	print("[PlayerHUD] ✓ Default Minimap created at top-right")
+	print("[PlayerHUD] Default Minimap created at top-right")
+
+func _create_ammo_display():
+	ammo_display = AmmoDisplay.new()
+	ammo_display.name = "AmmoDisplay"
+	# Position at bottom-right
+	ammo_display.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	ammo_display.anchor_left = 1.0
+	ammo_display.anchor_right = 1.0
+	ammo_display.anchor_top = 1.0
+	ammo_display.anchor_bottom = 1.0
+	ammo_display.offset_left = -200
+	ammo_display.offset_right = -20
+	ammo_display.offset_top = -80
+	ammo_display.offset_bottom = -20
+	add_child(ammo_display)
+	print("[PlayerHUD] AmmoDisplay created at bottom-right")
+
+func _create_crosshair():
+	crosshair = Control.new()
+	crosshair.name = "Crosshair"
+	crosshair.set_anchors_preset(Control.PRESET_CENTER)
+	crosshair.size = Vector2(32, 32)
+	crosshair.position = -crosshair.size / 2
+
+	# Create crosshair lines
+	var h_line = ColorRect.new()
+	h_line.color = Color(1, 1, 1, 0.8)
+	h_line.size = Vector2(20, 2)
+	h_line.position = Vector2(6, 15)
+	crosshair.add_child(h_line)
+
+	var v_line = ColorRect.new()
+	v_line.color = Color(1, 1, 1, 0.8)
+	v_line.size = Vector2(2, 20)
+	v_line.position = Vector2(15, 6)
+	crosshair.add_child(v_line)
+
+	# Center dot
+	var dot = ColorRect.new()
+	dot.color = Color(1, 0.3, 0.3, 0.9)
+	dot.size = Vector2(4, 4)
+	dot.position = Vector2(14, 14)
+	crosshair.add_child(dot)
+
+	add_child(crosshair)
+	print("[PlayerHUD] Crosshair created at center")

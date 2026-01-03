@@ -108,6 +108,12 @@ func _capture_and_send_input():
 			# Handle locally for immediate feedback
 			_handle_interact(interact_target)
 
+	# Capture reload input (R key)
+	if Input.is_action_just_pressed("reload"):
+		input_data["reload"] = true
+		# Handle locally for immediate feedback
+		_handle_reload()
+
 	# Send input to server if there's any
 	if input_data.size() > 0:
 		_send_input_to_server(input_data)
@@ -188,4 +194,13 @@ func _find_interact_target() -> Node3D:
 func _handle_interact(target: Node3D):
 	if target is LootContainer:
 		target.interact(player)
+
+## Handle reload (called locally for immediate feedback)
+func _handle_reload():
+	if not player:
+		return
+
+	var combat = player.get_component("CombatComponent")
+	if combat:
+		combat.start_reload()
 
