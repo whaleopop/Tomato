@@ -1,6 +1,6 @@
 ## Singleton for smooth scene transitions with fade effects
+## Autoload: SceneTransition
 extends CanvasLayer
-class_name SceneTransition
 
 signal transition_started
 signal transition_finished

@@ -1,8 +1,8 @@
 ## Singleton for screen effects like camera shake and flashes
+## Autoload: ScreenEffects
 extends Node
-class_name ScreenEffects
 
-static var instance: ScreenEffects = null
+static var instance: Node = null
 
 var camera: Camera3D = null
 var original_position: Vector3 = Vector3.ZERO
