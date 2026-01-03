@@ -8,6 +8,7 @@ signal player_removed(player_id: int)
 var map_generator: MapGenerator = null
 var destruction_system: DestructionSystem = null
 var loot_spawner: LootSpawner = null
+var loot_manager: NetworkLootManager = null
 var players: Dictionary = {}  # player_id -> Player entity
 var spawn_points: Array[Vector3] = []
 var hex_grid: HexGrid = null
@@ -15,6 +16,12 @@ var hex_grid: HexGrid = null
 var map_seed: int = 0
 
 func _ready():
+	# Create network loot manager
+	loot_manager = NetworkLootManager.new()
+	loot_manager.name = "NetworkLootManager"
+	loot_manager.is_server = true
+	add_child(loot_manager)
+
 	# Create map generator
 	map_generator = MapGenerator.new()
 	add_child(map_generator)
@@ -35,8 +42,21 @@ func _ready():
 	add_child(loot_spawner)
 	loot_spawner.setup(hex_grid)
 
+	# Register all spawned containers with network manager
+	_register_loot_containers()
+
 	# Generate spawn points
 	_generate_spawn_points(hex_grid)
+
+func _register_loot_containers():
+	# Wait a frame for containers to be added to scene
+	await get_tree().process_frame
+
+	var containers = get_tree().get_nodes_in_group("loot_containers")
+	for container in containers:
+		if container is LootContainer:
+			loot_manager.register_container(container)
+	print("[ServerWorld] Registered %d loot containers" % containers.size())
 
 func _generate_spawn_points(grid: HexGrid):
 	spawn_points.clear()

@@ -193,7 +193,28 @@ func _find_interact_target() -> Node3D:
 ## Handle interact with target (called locally for immediate feedback)
 func _handle_interact(target: Node3D):
 	if target is LootContainer:
-		target.interact(player)
+		# Try to use network loot manager if available
+		var loot_manager = _get_loot_manager()
+		if loot_manager and target.has_meta("network_id"):
+			var container_id = target.get_meta("network_id")
+			loot_manager.request_open_container(container_id)
+		else:
+			# Fallback to local interaction (offline mode)
+			target.interact(player)
+
+## Get the network loot manager
+func _get_loot_manager() -> NetworkLootManager:
+	# Try client world first
+	var client_world = get_node_or_null("/root/NetworkManager/GameClient/ClientWorld")
+	if client_world and client_world.loot_manager:
+		return client_world.loot_manager
+
+	# Try server world
+	var server_world = get_node_or_null("/root/NetworkManager/GameServer/ServerWorld")
+	if server_world and server_world.loot_manager:
+		return server_world.loot_manager
+
+	return null
 
 ## Handle reload (called locally for immediate feedback)
 func _handle_reload():

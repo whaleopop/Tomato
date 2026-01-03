@@ -8,6 +8,7 @@ var local_player: Player = null
 var map_seed: int = 0
 var map_generator: MapGenerator = null
 var loot_spawner: LootSpawner = null
+var loot_manager: NetworkLootManager = null
 var hex_grid: HexGrid = null
 
 # Spawn queue for handling spawns before map is ready
@@ -15,9 +16,11 @@ var is_map_ready: bool = false
 var pending_spawns: Array = []  # Array of {player_id: int, position: Vector3}
 
 func _ready():
-	# Map will be generated when seed is received from server
-	# For now, don't generate map - wait for server seed
-	pass
+	# Create network loot manager for client
+	loot_manager = NetworkLootManager.new()
+	loot_manager.name = "NetworkLootManager"
+	loot_manager.is_server = false
+	add_child(loot_manager)
 
 func generate_map_with_seed(seed_value: int, radius: int = 20):
 	print("[ClientWorld] Generating client map with seed: %d..." % seed_value)
@@ -43,7 +46,18 @@ func generate_map_with_seed(seed_value: int, radius: int = 20):
 	add_child(loot_spawner)
 	loot_spawner.setup(hex_grid)
 
-	print("[ClientWorld] ✓ Client map generated with seed: %d" % seed_value)
+	# Register containers with network loot manager
+	await get_tree().process_frame
+	_register_loot_containers()
+
+	print("[ClientWorld] Client map generated with seed: %d" % seed_value)
+
+func _register_loot_containers():
+	var containers = get_tree().get_nodes_in_group("loot_containers")
+	for container in containers:
+		if container is LootContainer:
+			loot_manager.register_container(container)
+	print("[ClientWorld] Registered %d loot containers" % containers.size())
 
 	# Map is now ready - process any pending spawns
 	is_map_ready = true
