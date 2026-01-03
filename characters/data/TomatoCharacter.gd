@@ -9,6 +9,8 @@ func _init():
 	base_speed = 6.0
 	model_path = "res://models/Tomato.glb"
 	color = Color(0.9, 0.2, 0.2)  # Red
+	model_scale = 0.8
+	model_offset = Vector3(0, 0, 0)
 	
 	# Active ability: Tomato Splash - throws acidic juice
 	var active_ability_data = AbilityData.new()

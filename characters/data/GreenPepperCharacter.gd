@@ -9,6 +9,8 @@ func _init():
 	base_speed = 8.0
 	model_path = "res://models/Green Pepper.glb"
 	color = Color(0.3, 0.8, 0.3)  # Light green
+	model_scale = 0.7
+	model_offset = Vector3(0, 0, 0)
 	
 	# Active ability: Spicy Dash - fast movement with damage trail
 	var active_ability_data = AbilityData.new()

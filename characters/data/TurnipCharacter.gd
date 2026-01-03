@@ -9,6 +9,8 @@ func _init():
 	base_speed = 6.0
 	model_path = "res://models/Turnip.glb"
 	color = Color(0.9, 0.85, 0.8)  # Light cream/white
+	model_scale = 0.75
+	model_offset = Vector3(0, 0, 0)
 	
 	# Active ability: Turnip Toss - throws self for area damage
 	var active_ability_data = AbilityData.new()

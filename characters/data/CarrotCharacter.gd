@@ -9,6 +9,8 @@ func _init():
 	base_speed = 7.5
 	model_path = "res://models/Carrot.glb"
 	color = Color(1.0, 0.6, 0.2)  # Orange
+	model_scale = 0.7
+	model_offset = Vector3(0, 0.1, 0)
 	
 	# Active ability: Carrot Strike - fast dash attack
 	var active_ability_data = AbilityData.new()

@@ -9,6 +9,8 @@ func _init():
 	base_speed = 5.5
 	model_path = "res://models/Corn.glb"
 	color = Color(1.0, 0.9, 0.3)  # Yellow
+	model_scale = 0.6
+	model_offset = Vector3(0, 0, 0)
 	
 	# Active ability: Kernel Barrage - shoots multiple projectiles
 	var active_ability_data = AbilityData.new()
