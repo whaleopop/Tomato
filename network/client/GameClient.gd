@@ -87,20 +87,16 @@ func disconnect_from_server():
 
 func send_input(input_data: Dictionary):
 	if not is_connected:
-		print("[GameClient] WARNING: Cannot send input, not connected to server")
 		return
-	
-	if not multiplayer.multiplayer_peer:
-		print("[GameClient] WARNING: No multiplayer peer, cannot send input")
-		return
-	
+
 	if not input_data is Dictionary:
-		print("[GameClient] ERROR: input_data is not a Dictionary, got type: %s" % typeof(input_data))
+		print("[GameClient] ERROR: input_data is not a Dictionary")
 		return
-	
-	# Send input to server (ID 1 is always the server)
-	# NOTE: Server will identify us by multiplayer.get_remote_sender_id()
-	rpc_id(1, "receive_player_input", input_data)
+
+	# Send input via NetworkManager (consistent RPC path)
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.send_player_input(input_data)
 
 func _on_connected_to_server():
 	print("[GameClient] ✓ Successfully connected to server!")
@@ -162,4 +158,3 @@ func receive_player_input(_input_data: Dictionary):
 	if not multiplayer.is_server():
 		print("[GameClient] WARNING: receive_player_input RPC called on client (should only be called on server)")
 	pass
-

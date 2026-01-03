@@ -14,14 +14,21 @@ func _ready():
 	pass
 
 func setup_server(p_lobby_manager: LobbyManager):
+	if is_server and lobby_manager == p_lobby_manager:
+		return  # Already setup with same manager
+
 	is_server = true
 	lobby_manager = p_lobby_manager
 
-	# Connect signals
-	lobby_manager.player_ready_changed.connect(_on_player_ready_changed)
-	lobby_manager.spawn_selected.connect(_on_spawn_selected)
-	lobby_manager.countdown_tick.connect(_on_countdown_tick)
-	lobby_manager.match_started.connect(_on_match_started)
+	# Connect signals (check if not already connected)
+	if not lobby_manager.player_ready_changed.is_connected(_on_player_ready_changed):
+		lobby_manager.player_ready_changed.connect(_on_player_ready_changed)
+	if not lobby_manager.spawn_selected.is_connected(_on_spawn_selected):
+		lobby_manager.spawn_selected.connect(_on_spawn_selected)
+	if not lobby_manager.countdown_tick.is_connected(_on_countdown_tick):
+		lobby_manager.countdown_tick.connect(_on_countdown_tick)
+	if not lobby_manager.match_started.is_connected(_on_match_started):
+		lobby_manager.match_started.connect(_on_match_started)
 
 # === Client -> Server RPCs ===
 

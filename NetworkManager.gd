@@ -114,3 +114,60 @@ func stop_client():
 	else:
 		print("[NetworkManager] No client to stop")
 	_cleanup_network_lobby()
+
+# === RPC Methods (must be at same path on client and server) ===
+
+func send_map_seed_to_client(player_id: int, map_seed: int):
+	if not multiplayer.multiplayer_peer or not multiplayer.is_server():
+		return
+	print("[NetworkManager] Sending map seed %d to player %d" % [map_seed, player_id])
+	_receive_map_seed.rpc_id(player_id, map_seed)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_map_seed(seed_value: int):
+	print("[NetworkManager] Received map seed: %d" % seed_value)
+	if game_client:
+		var world = game_client.ensure_client_world()
+		if world:
+			world.generate_map_with_seed(seed_value)
+
+func send_spawn_player(player_id: int, position: Vector3):
+	if not multiplayer.multiplayer_peer or not multiplayer.is_server():
+		return
+	print("[NetworkManager] Sending spawn_player RPC for player %d at %s" % [player_id, position])
+	_receive_spawn_player.rpc(player_id, position)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_spawn_player(player_id: int, position: Vector3):
+	print("[NetworkManager] Received spawn_player for player %d at %s" % [player_id, position])
+	if game_client:
+		var world = game_client.ensure_client_world()
+		if world:
+			world.spawn_player(player_id, position)
+
+func send_world_state(state: Dictionary):
+	if not multiplayer.multiplayer_peer or not multiplayer.is_server():
+		return
+	_receive_world_state.rpc(state)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_world_state(state: Dictionary):
+	if game_client:
+		var world = game_client.ensure_client_world()
+		if world:
+			world.apply_world_state(state)
+
+func send_player_input(input_data: Dictionary):
+	if not multiplayer.multiplayer_peer:
+		return
+	# Send to server (ID 1)
+	_receive_player_input.rpc_id(1, input_data)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _receive_player_input(input_data: Dictionary):
+	if not is_server() or not game_server:
+		return
+	var sender_id = multiplayer.get_remote_sender_id()
+	if game_server.players.has(sender_id):
+		var server_player = game_server.players[sender_id]
+		server_player.process_input(input_data)

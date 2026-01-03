@@ -123,6 +123,9 @@ func _spawn_supply_drop():
 	var valid_tiles: Array = []
 
 	for tile in tiles:
+		# Check if tile is still valid (not freed)
+		if not is_instance_valid(tile):
+			continue
 		if tile.is_destroyed or tile.biome_type == HexTile.BiomeType.WATER:
 			continue
 		valid_tiles.append(tile)

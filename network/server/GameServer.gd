@@ -188,19 +188,13 @@ func _on_peer_disconnected(player_id: int):
 
 func _on_player_spawned(player_id: int, position: Vector3):
 	print("[GameServer] Player %d spawned at position %s, notifying clients..." % [player_id, position])
-	# Notify all clients about new player
-	if not multiplayer.multiplayer_peer:
-		print("[GameServer] WARNING: No multiplayer peer, cannot send spawn notification")
-		return
-	
-	if not multiplayer.is_server():
-		print("[GameServer] WARNING: Not server, cannot send spawn notification")
-		return
-	
-	print("[GameServer] Sending RPC spawn_player(player_id=%d, position=%s)" % [player_id, position])
-	# Use string-based rpc() call - this is more reliable in Godot 4
-	rpc("spawn_player", player_id, position)
-	print("[GameServer] ✓ Spawn notification sent for player %d" % player_id)
+	# Notify all clients about new player via NetworkManager
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.send_spawn_player(player_id, position)
+		print("[GameServer] ✓ Spawn notification sent for player %d" % player_id)
+	else:
+		print("[GameServer] WARNING: NetworkManager not found")
 
 @rpc("any_peer", "reliable")
 func receive_player_input(input_data: Dictionary):
@@ -242,29 +236,12 @@ func receive_map_seed(_seed: int):
 	pass
 
 func _send_map_seed_to_client(player_id: int):
-	if not multiplayer.multiplayer_peer or not multiplayer.is_server():
-		return
-	
-	var map_seed = server_world.map_seed
-	print("[GameServer] Sending map seed %d to player %d" % [map_seed, player_id])
-	rpc_id(player_id, "receive_map_seed", map_seed)
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.send_map_seed_to_client(player_id, server_world.map_seed)
 
 func send_world_state(state: Dictionary):
-	# Server-side method to send state to clients
-	if not multiplayer.multiplayer_peer:
-		print("[GameServer] WARNING: No multiplayer peer, cannot send world state")
-		return
-	
-	if not multiplayer.is_server():
-		print("[GameServer] WARNING: Not server, cannot send world state")
-		return
-	
-	print("[GameServer] Sending RPC update_world_state(state with tick: %d, players: %d)" % [state.get("tick", 0), state.get("players", {}).size()])
-	# Ensure we're passing only one argument (state Dictionary)
-	# Use string-based rpc() call - this is more reliable in Godot 4
-	if not state is Dictionary:
-		print("[GameServer] ERROR: state is not a Dictionary!")
-		return
-	# IMPORTANT: Pass only the state Dictionary as a single argument
-	rpc("update_world_state", state)
-	print("[GameServer] ✓ World state sent to clients")
+	# Server-side method to send state to clients via NetworkManager
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.send_world_state(state)

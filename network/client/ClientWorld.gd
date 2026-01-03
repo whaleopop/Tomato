@@ -202,4 +202,3 @@ func _setup_camera_for_local_player(player: Player):
 			print("[ClientWorld] WARNING: PlayerHUD not found")
 	else:
 		print("[ClientWorld] WARNING: GameScene not found, cannot attach camera/HUD")
-

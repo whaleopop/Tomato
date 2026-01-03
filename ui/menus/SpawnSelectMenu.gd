@@ -160,10 +160,13 @@ func setup(grid_data: Dictionary, p_reserved_spawns: Array, player_id: int):
 	reserved_spawns = p_reserved_spawns
 	my_player_id = player_id
 
-	# Ensure UI is created (may be called before _ready)
+	# Defer UI creation and map building to avoid "parent busy" errors
+	call_deferred("_deferred_setup")
+
+func _deferred_setup():
+	# Ensure UI is created
 	if not map_container:
 		_create_ui()
-
 	_build_map()
 
 func _build_map():
