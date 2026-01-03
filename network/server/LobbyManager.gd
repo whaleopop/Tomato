@@ -14,6 +14,7 @@ enum LobbyState { WAITING, SELECTING_SPAWN, COUNTDOWN, STARTED }
 var state: LobbyState = LobbyState.WAITING
 var players_ready: Dictionary = {}  # player_id -> bool
 var players_spawn: Dictionary = {}  # player_id -> Vector2i (hex coords)
+var players_names: Dictionary = {}  # player_id -> String (player nickname)
 var reserved_spawns: Dictionary = {}  # Vector2i -> player_id (reserved spawn points)
 var available_spawns: Array[Vector2i] = []  # Available spawn hex coordinates
 
@@ -46,10 +47,16 @@ func setup_available_spawns(hex_grid: HexGrid):
 
 	print("[LobbyManager] %d spawn points available" % available_spawns.size())
 
-func add_player(player_id: int):
+func add_player(player_id: int, player_name: String = ""):
 	players_ready[player_id] = false
 	players_spawn[player_id] = Vector2i(-9999, -9999)  # Invalid coords
-	print("[LobbyManager] Player %d joined lobby" % player_id)
+	players_names[player_id] = player_name if player_name != "" else "Player_%d" % player_id
+	print("[LobbyManager] Player %d (%s) joined lobby" % [player_id, players_names[player_id]])
+
+func set_player_name(player_id: int, player_name: String):
+	if players_ready.has(player_id):
+		players_names[player_id] = player_name
+		print("[LobbyManager] Player %d name set to: %s" % [player_id, player_name])
 
 func remove_player(player_id: int):
 	# Free up reserved spawn
@@ -60,6 +67,7 @@ func remove_player(player_id: int):
 
 	players_ready.erase(player_id)
 	players_spawn.erase(player_id)
+	players_names.erase(player_id)
 	print("[LobbyManager] Player %d left lobby" % player_id)
 
 	# Check if we need to cancel countdown
@@ -219,6 +227,7 @@ func get_lobby_state() -> Dictionary:
 		"state": state,
 		"players_ready": players_ready.duplicate(),
 		"players_spawn": players_spawn.duplicate(),
+		"players_names": players_names.duplicate(),
 		"reserved_spawns": reserved_spawns.keys(),
 		"countdown": ceili(countdown_timer) if state == LobbyState.COUNTDOWN else 0
 	}

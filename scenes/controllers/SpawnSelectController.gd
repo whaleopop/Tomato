@@ -27,10 +27,24 @@ func _ready():
 		spawn_menu.spawn_confirmed.connect(_on_spawn_confirmed)
 		spawn_menu.ready_toggled.connect(_on_ready_toggled)
 
-	# Request initial state
+	# Request initial state and set player name
 	if network_lobby:
 		await get_tree().process_frame
+		# Send player name based on selected character
+		_send_player_name()
+		# Request map data (especially important for clients)
+		if not is_host:
+			network_lobby.client_request_map_data()
 		network_lobby.client_request_state()
+
+func _send_player_name():
+	var game_manager = get_node_or_null("/root/GameManager")
+	if game_manager and game_manager.selected_character:
+		var char_name = game_manager.selected_character.character_name
+		# Generate nickname: CharacterName_RandomNumber
+		var nickname = "%s_%d" % [char_name, randi() % 1000]
+		if network_lobby:
+			network_lobby.client_set_name(nickname)
 
 func _setup_network():
 	var network_manager = get_node_or_null("/root/NetworkManager")
@@ -91,13 +105,15 @@ func _on_lobby_state_updated(state: Dictionary):
 	var reserved = state.get("reserved_spawns", [])
 	spawn_menu.update_reserved_spawns(reserved)
 
-	# Update players list
-	var players_ready = state.get("players_ready", {})
+	# Update players list with names from server
+	var players_ready_state = state.get("players_ready", {})
+	var players_names_state = state.get("players_names", {})
 	var players_data: Dictionary = {}
-	for player_id in players_ready.keys():
+	for player_id in players_ready_state.keys():
+		var player_name = players_names_state.get(player_id, "Player_%d" % player_id)
 		players_data[player_id] = {
-			"name": "Player %d" % player_id,
-			"ready": players_ready[player_id]
+			"name": player_name,
+			"ready": players_ready_state[player_id]
 		}
 	spawn_menu.update_players_list(players_data)
 

@@ -68,6 +68,25 @@ func request_lobby_state():
 	var state = lobby_manager.get_lobby_state()
 	_receive_lobby_state.rpc_id(player_id, state)
 
+@rpc("any_peer", "call_remote", "reliable")
+func request_map_data():
+	if not is_server:
+		return
+
+	var player_id = multiplayer.get_remote_sender_id()
+	var game_server = get_node_or_null("/root/NetworkManager/GameServer")
+	if game_server and game_server.server_world and game_server.server_world.hex_grid:
+		send_map_data_to_player(player_id, game_server.server_world.hex_grid)
+
+@rpc("any_peer", "call_remote", "reliable")
+func set_player_name(player_name: String):
+	if not is_server or not lobby_manager:
+		return
+
+	var player_id = multiplayer.get_remote_sender_id()
+	lobby_manager.set_player_name(player_id, player_name)
+	_broadcast_lobby_state()
+
 # === Server -> Client RPCs ===
 
 @rpc("authority", "call_remote", "reliable")
@@ -184,3 +203,19 @@ func client_request_state():
 			lobby_state_updated.emit(lobby_manager.get_lobby_state())
 	else:
 		request_lobby_state.rpc_id(1)
+
+func client_request_map_data():
+	if is_server:
+		# Local server player - map is already shown via SpawnSelectController
+		pass
+	else:
+		request_map_data.rpc_id(1)
+
+func client_set_name(player_name: String):
+	if is_server:
+		# Local server player
+		if lobby_manager:
+			lobby_manager.set_player_name(1, player_name)
+			_broadcast_lobby_state()
+	else:
+		set_player_name.rpc_id(1, player_name)
