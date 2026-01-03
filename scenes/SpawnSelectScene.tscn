@@ -1,7 +1,7 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=3 format=3 uid="uid://dmw4h0mlubdap"]
 
-[ext_resource type="Script" path="res://ui/menus/SpawnSelectMenu.gd" id="1"]
-[ext_resource type="Script" path="res://scenes/controllers/SpawnSelectController.gd" id="2"]
+[ext_resource type="Script" uid="uid://cel5mfa1dc50b" path="res://ui/menus/SpawnSelectMenu.gd" id="1"]
+[ext_resource type="Script" uid="uid://b221j0k1xoub1" path="res://scenes/controllers/SpawnSelectController.gd" id="2"]
 
 [node name="SpawnSelectScene" type="Control"]
 layout_mode = 3

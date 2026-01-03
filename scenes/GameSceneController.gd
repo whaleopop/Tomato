@@ -160,7 +160,44 @@ func _setup_as_client():
 		if client_world and client_world.map_seed == 0:
 			print("[GameSceneController] Waiting for map seed from server...")
 
+		# Setup camera and HUD for local player if already exists
+		if client_world and client_world.local_player:
+			print("[GameSceneController] Local player already exists, setting up camera...")
+			_setup_client_camera_and_hud(client_world.local_player)
+		else:
+			# Wait for player to spawn and setup camera then
+			print("[GameSceneController] Waiting for local player to spawn...")
+			_wait_for_local_player(client_world)
+
 	print("[GameSceneController] Client setup complete")
+
+func _wait_for_local_player(client_world: ClientWorld):
+	# Check periodically for local player
+	for i in range(300):  # Wait up to 5 seconds (300 frames)
+		await get_tree().process_frame
+		if client_world and client_world.local_player:
+			print("[GameSceneController] Local player found, setting up camera...")
+			_setup_client_camera_and_hud(client_world.local_player)
+			return
+	print("[GameSceneController] WARNING: Local player not found after waiting")
+
+func _setup_client_camera_and_hud(player: Player):
+	# Setup camera
+	var camera = get_node_or_null("Camera")
+	if camera and camera.has_method("set_target"):
+		camera.set_target(player)
+		print("[GameSceneController] ✓ Camera attached to client player")
+	else:
+		print("[GameSceneController] WARNING: Camera not found")
+
+	# Setup HUD
+	var hud = get_node_or_null("UI/PlayerHUD")
+	if hud and hud.has_method("setup"):
+		hud.setup(player)
+		print("[GameSceneController] ✓ HUD attached to client player")
+
+	# Setup Inventory Menu
+	_setup_inventory_menu(player)
 
 func _setup_offline_debug():
 	# For testing without network
