@@ -87,6 +87,15 @@ func set_player_name(player_name: String):
 	lobby_manager.set_player_name(player_id, player_name)
 	_broadcast_lobby_state()
 
+@rpc("any_peer", "call_remote", "reliable")
+func set_player_character(character_name: String):
+	if not is_server or not lobby_manager:
+		return
+
+	var player_id = multiplayer.get_remote_sender_id()
+	lobby_manager.set_player_character(player_id, character_name)
+	print("[NetworkLobby] Player %d selected character: %s" % [player_id, character_name])
+
 # === Server -> Client RPCs ===
 
 @rpc("authority", "call_remote", "reliable")
@@ -223,3 +232,11 @@ func client_set_name(player_name: String):
 			_broadcast_lobby_state()
 	else:
 		set_player_name.rpc_id(1, player_name)
+
+func client_set_character(character_name: String):
+	if is_server:
+		# Local server player
+		if lobby_manager:
+			lobby_manager.set_player_character(1, character_name)
+	else:
+		set_player_character.rpc_id(1, character_name)

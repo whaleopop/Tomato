@@ -15,6 +15,7 @@ var state: LobbyState = LobbyState.WAITING
 var players_ready: Dictionary = {}  # player_id -> bool
 var players_spawn: Dictionary = {}  # player_id -> Vector2i (hex coords)
 var players_names: Dictionary = {}  # player_id -> String (player nickname)
+var players_characters: Dictionary = {}  # player_id -> String (character class name)
 var reserved_spawns: Dictionary = {}  # Vector2i -> player_id (reserved spawn points)
 var available_spawns: Array[Vector2i] = []  # Available spawn hex coordinates
 
@@ -51,12 +52,21 @@ func add_player(player_id: int, player_name: String = ""):
 	players_ready[player_id] = false
 	players_spawn[player_id] = Vector2i(-9999, -9999)  # Invalid coords
 	players_names[player_id] = player_name if player_name != "" else "Player_%d" % player_id
+	players_characters[player_id] = ""
 	print("[LobbyManager] Player %d (%s) joined lobby" % [player_id, players_names[player_id]])
 
 func set_player_name(player_id: int, player_name: String):
 	if players_ready.has(player_id):
 		players_names[player_id] = player_name
 		print("[LobbyManager] Player %d name set to: %s" % [player_id, player_name])
+
+func set_player_character(player_id: int, character_name: String):
+	if players_ready.has(player_id):
+		players_characters[player_id] = character_name
+		print("[LobbyManager] Player %d character set to: %s" % [player_id, character_name])
+
+func get_player_character(player_id: int) -> String:
+	return players_characters.get(player_id, "")
 
 func remove_player(player_id: int):
 	# Free up reserved spawn
@@ -68,6 +78,7 @@ func remove_player(player_id: int):
 	players_ready.erase(player_id)
 	players_spawn.erase(player_id)
 	players_names.erase(player_id)
+	players_characters.erase(player_id)
 	print("[LobbyManager] Player %d left lobby" % player_id)
 
 	# Check if we need to cancel countdown

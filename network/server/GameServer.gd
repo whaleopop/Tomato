@@ -136,6 +136,12 @@ func _spawn_player_deferred(player_id: int):
 		print("[GameServer] Player %d disconnected before spawn, skipping" % player_id)
 		return
 
+	# Set character name on ServerPlayer from lobby
+	var server_player = players[player_id]
+	if lobby_manager:
+		server_player.character_name = lobby_manager.get_player_character(player_id)
+		print("[GameServer] Player %d character: %s" % [player_id, server_player.character_name])
+
 	# Get spawn position from lobby if available
 	var spawn_pos: Vector3
 	if lobby_manager and server_world.hex_grid:

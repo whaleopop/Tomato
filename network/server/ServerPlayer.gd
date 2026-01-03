@@ -5,6 +5,7 @@ class_name ServerPlayer
 var player_id: int = -1
 var player_entity: Player = null
 var last_input_time: float = 0.0
+var character_name: String = ""  # Character class name for syncing
 
 # Lag compensation: buffer of recent inputs with timestamps
 var input_buffer: Array = []
@@ -89,14 +90,15 @@ func process_input(input_data: Dictionary):
 func get_sync_data() -> Dictionary:
 	if player_entity == null:
 		return {}
-	
+
 	# Get position from entity
 	var position = player_entity.global_position if player_entity else Vector3.ZERO
-	
+
 	var data = {
 		"player_id": player_id,
 		"position": player_entity.global_position,
 		"rotation": player_entity.global_rotation,
+		"character_name": character_name,
 	}
 	
 	# Add component data

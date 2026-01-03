@@ -45,6 +45,8 @@ func _send_player_name():
 		var nickname = "%s_%d" % [char_name, randi() % 1000]
 		if network_lobby:
 			network_lobby.client_set_name(nickname)
+			# Also send character class for model sync
+			network_lobby.client_set_character(char_name)
 
 func _setup_network():
 	var network_manager = get_node_or_null("/root/NetworkManager")

@@ -4,6 +4,7 @@ class_name ClientWorld
 
 var players: Dictionary = {}  # player_id -> Player entity
 var local_player: Player = null
+var players_character_applied: Dictionary = {}  # player_id -> bool (track if character was applied)
 
 var map_seed: int = 0
 var map_generator: MapGenerator = null
@@ -108,6 +109,7 @@ func spawn_player(player_id: int, position: Vector3):
 		var game_manager = get_node_or_null("/root/GameManager")
 		if game_manager and game_manager.selected_character:
 			player.setup_character(game_manager.selected_character)
+			players_character_applied[player_id] = true
 			print("[ClientWorld] Applied character: %s" % game_manager.selected_character.character_name)
 	else:
 		print("[ClientWorld] Player %d is remote player" % player_id)
@@ -128,43 +130,76 @@ func spawn_player(player_id: int, position: Vector3):
 
 func remove_player(player_id: int):
 	print("[ClientWorld] Removing player %d..." % player_id)
-	
+
 	if not players.has(player_id):
 		print("[ClientWorld] WARNING: Player %d not found" % player_id)
 		return
-	
+
 	var player = players[player_id]
 	players.erase(player_id)
-	
+	players_character_applied.erase(player_id)
+
 	if player == local_player:
 		print("[ClientWorld] Removed player was local player")
 		local_player = null
-	
+
 	if is_instance_valid(player):
 		player.queue_free()
-	
+
 	print("[ClientWorld] ✓ Player %d removed (remaining players: %d)" % [player_id, players.size()])
 
 func apply_world_state(state: Dictionary):
 	if not state.has("players"):
 		return
-	
+
 	var player_states = state["players"]
-	
+
 	for player_id in player_states:
 		var player_data = player_states[player_id]
-		
+
 		if not players.has(player_id):
 			# Spawn new player
 			if player_data.has("position"):
 				spawn_player(player_id, player_data["position"])
-		
+
 		var player = players.get(player_id)
 		if player:
+			# Apply character data to remote players (only once)
+			if not players_character_applied.get(player_id, false):
+				if player_data.has("character_name") and player_data["character_name"] != "":
+					var char_data = _get_character_by_name(player_data["character_name"])
+					if char_data:
+						player.setup_character(char_data)
+						players_character_applied[player_id] = true
+						print("[ClientWorld] Applied character %s to player %d" % [player_data["character_name"], player_id])
+
 			# Apply sync data
 			var networking = player.get_component("NetworkingComponent")
 			if networking:
 				networking.apply_sync_data(player_data)
+
+func _get_character_by_name(char_name: String) -> CharacterData:
+	# Map character names to their data classes
+	match char_name:
+		"Tomato":
+			return TomatoCharacter.new()
+		"Carrot":
+			return CarrotCharacter.new()
+		"Pumpkin":
+			return PumpkinCharacter.new()
+		"Corn":
+			return CornCharacter.new()
+		"Broccoli":
+			return BroccoliCharacter.new()
+		"Beet":
+			return BeetCharacter.new()
+		"Green Pepper":
+			return GreenPepperCharacter.new()
+		"Turnip":
+			return TurnipCharacter.new()
+		_:
+			print("[ClientWorld] Unknown character: %s" % char_name)
+			return null
 
 func get_local_player() -> Player:
 	return local_player
