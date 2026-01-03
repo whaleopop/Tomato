@@ -125,9 +125,13 @@ func _on_spawn_selected(_player_id: int, _coords: Vector2i):
 
 func _on_countdown_tick(seconds: int):
 	_receive_countdown.rpc(seconds)
+	# Also emit locally for host UI
+	countdown_update.emit(seconds)
 
 func _on_match_started():
 	_receive_match_start.rpc()
+	# Also emit locally for host
+	match_starting.emit()
 
 func _broadcast_lobby_state():
 	if not lobby_manager:
