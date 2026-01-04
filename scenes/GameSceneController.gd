@@ -141,36 +141,60 @@ func _setup_host_input_and_camera(player: Player, client_world: ClientWorld):
 
 func _setup_as_client():
 	# Client setup: create ClientWorld directly in GameScene
+	print("[GameSceneController] ==> _setup_as_client() called")
+
 	var network_manager = get_node_or_null("/root/NetworkManager")
+	if not network_manager:
+		print("[GameSceneController] ERROR: NetworkManager not found!")
+		return
 
-	if network_manager and network_manager.game_client:
-		var game_client = network_manager.game_client
+	print("[GameSceneController] NetworkManager found: %s" % network_manager)
 
-		print("[GameSceneController] Creating ClientWorld for client...")
+	if not network_manager.game_client:
+		print("[GameSceneController] ERROR: game_client is null!")
+		return
 
-		# Create ClientWorld directly here (not via ensure_client_world)
-		var client_world = ClientWorld.new()
-		client_world.name = "ClientWorld"
-		add_child(client_world)
+	var game_client = network_manager.game_client
+	print("[GameSceneController] game_client found, pending_map_seed = %d" % game_client.pending_map_seed)
 
-		# Register with GameClient
-		game_client.client_world = client_world
-		print("[GameSceneController] ClientWorld created and registered")
+	print("[GameSceneController] Creating ClientWorld for client...")
 
-		# Apply pending map seed if exists
-		if game_client.pending_map_seed > 0:
-			print("[GameSceneController] Applying pending map seed: %d" % game_client.pending_map_seed)
-			await client_world.generate_map_with_seed(game_client.pending_map_seed)
-			game_client.pending_map_seed = 0
-			print("[GameSceneController] Map generation complete")
-		else:
-			print("[GameSceneController] No pending map seed, waiting for server...")
+	# Create ClientWorld directly here (not via ensure_client_world)
+	var client_world = ClientWorld.new()
+	client_world.name = "ClientWorld"
+	add_child(client_world)
 
-		# Wait for local player to spawn
-		print("[GameSceneController] Waiting for local player to spawn...")
-		_wait_for_local_player(client_world)
+	# Register with GameClient
+	game_client.client_world = client_world
+	print("[GameSceneController] ClientWorld created and registered")
+
+	# Apply pending map seed if exists, or wait for it
+	if game_client.pending_map_seed > 0:
+		print("[GameSceneController] Applying pending map seed: %d" % game_client.pending_map_seed)
+		await client_world.generate_map_with_seed(game_client.pending_map_seed)
+		game_client.pending_map_seed = 0
+		print("[GameSceneController] ✓ Map generation complete")
+	else:
+		print("[GameSceneController] No pending map seed yet, waiting for server to send it...")
+		# Wait for map to be ready (will be generated when receive_map_seed RPC arrives)
+		await _wait_for_map_ready(client_world)
+		print("[GameSceneController] ✓ Map received and generated")
+
+	# Wait for local player to spawn
+	print("[GameSceneController] Waiting for local player to spawn...")
+	_wait_for_local_player(client_world)
 
 	print("[GameSceneController] Client setup complete")
+
+func _wait_for_map_ready(client_world: ClientWorld):
+	# Wait for map to be generated (by receive_map_seed RPC)
+	print("[GameSceneController] Waiting for map to be ready...")
+	for i in range(300):  # Wait up to 5 seconds (300 frames)
+		await get_tree().process_frame
+		if client_world and client_world.is_map_ready:
+			print("[GameSceneController] Map is ready!")
+			return
+	print("[GameSceneController] ERROR: Map not ready after waiting 5 seconds")
 
 func _wait_for_local_player(client_world: ClientWorld):
 	# Check periodically for local player
