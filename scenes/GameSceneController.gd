@@ -149,19 +149,26 @@ func _setup_as_client():
 		# Ensure ClientWorld exists and is in the right place
 		var client_world = game_client.ensure_client_world()
 
-		# If ClientWorld is not a child of GameScene, move it
-		if client_world and client_world.get_parent() != self:
-			print("[GameSceneController] Moving ClientWorld to GameScene...")
-			client_world.get_parent().remove_child(client_world)
-			add_child(client_world)
-			print("[GameSceneController] ClientWorld moved successfully")
+		if not client_world:
+			print("[GameSceneController] ERROR: Failed to create ClientWorld")
+			return
 
-		# Request map seed if not already received
-		if client_world and client_world.map_seed == 0:
+		# ClientWorld should already be added to GameScene by ensure_client_world
+		# But check just in case
+		if client_world.get_parent() != self:
+			print("[GameSceneController] WARNING: ClientWorld parent is not GameScene, fixing...")
+			if client_world.get_parent():
+				client_world.get_parent().remove_child(client_world)
+			add_child(client_world)
+
+		# Check if map is ready
+		if client_world.map_seed == 0:
 			print("[GameSceneController] Waiting for map seed from server...")
+		else:
+			print("[GameSceneController] Map seed already received: %d" % client_world.map_seed)
 
 		# Setup camera and HUD for local player if already exists
-		if client_world and client_world.local_player:
+		if client_world.local_player:
 			print("[GameSceneController] Local player already exists, setting up camera...")
 			_setup_client_camera_and_hud(client_world.local_player)
 		else:

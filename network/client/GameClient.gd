@@ -12,6 +12,7 @@ var peer: ENetMultiplayerPeer = null
 var client_world: ClientWorld = null
 var local_player_id: int = -1
 var is_connected: bool = false
+var pending_map_seed: int = 0  # Store map seed until GameScene is ready
 
 func _ready():
 	# Don't create ClientWorld here - it will be created when GameScene loads
@@ -29,21 +30,27 @@ func ensure_client_world():
 		return client_world
 
 	print("[GameClient] Creating ClientWorld...")
-	client_world = ClientWorld.new()
-	client_world.name = "ClientWorld"
 
-	# Find GameScene to add ClientWorld to it
+	# Find GameScene FIRST - don't create ClientWorld if GameScene doesn't exist
 	var game_scene = get_tree().get_first_node_in_group("game_scene")
 	if not game_scene:
 		game_scene = get_node_or_null("/root/GameScene")
 
-	if game_scene and game_scene is Node3D:
-		game_scene.add_child(client_world)
-		print("[GameClient] ClientWorld added to GameScene")
-	else:
-		# Fallback: add to self (not ideal but works)
-		add_child(client_world)
-		print("[GameClient] WARNING: GameScene not found, ClientWorld added to GameClient")
+	if not game_scene or not game_scene is Node3D:
+		print("[GameClient] GameScene not ready yet, deferring ClientWorld creation")
+		return null
+
+	# Create ClientWorld only when GameScene exists
+	client_world = ClientWorld.new()
+	client_world.name = "ClientWorld"
+	game_scene.add_child(client_world)
+	print("[GameClient] ClientWorld added to GameScene")
+
+	# Generate map if we have pending seed
+	if pending_map_seed > 0:
+		print("[GameClient] Applying pending map seed: %d" % pending_map_seed)
+		client_world.generate_map_with_seed(pending_map_seed)
+		pending_map_seed = 0  # Clear after use
 
 	return client_world
 
@@ -144,11 +151,16 @@ func update_world_state(state: Dictionary):
 @rpc("authority", "reliable")
 func receive_map_seed(seed_value: int):
 	print("[GameClient] Received map seed: %d" % seed_value)
+
+	# Try to create world (will only succeed if GameScene exists)
 	var world = ensure_client_world()
 	if world:
+		# GameScene ready - generate map immediately
 		world.generate_map_with_seed(seed_value)
 	else:
-		print("[GameClient] ERROR: Could not create client_world, cannot generate map")
+		# GameScene not ready - save seed for later
+		print("[GameClient] GameScene not ready, storing map seed for later")
+		pending_map_seed = seed_value
 
 # This RPC method exists on server, so we need it here too for checksum
 # But it should never be called on client (only server receives input)

@@ -126,10 +126,9 @@ func send_map_seed_to_client(player_id: int, map_seed: int):
 @rpc("authority", "call_remote", "reliable")
 func _receive_map_seed(seed_value: int):
 	print("[NetworkManager] Received map seed: %d" % seed_value)
+	# Delegate to GameClient which handles pending seeds properly
 	if game_client:
-		var world = game_client.ensure_client_world()
-		if world:
-			world.generate_map_with_seed(seed_value)
+		game_client.receive_map_seed(seed_value)
 
 func send_spawn_player(player_id: int, position: Vector3):
 	if not multiplayer.multiplayer_peer or not multiplayer.is_server():
