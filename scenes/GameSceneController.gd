@@ -182,6 +182,13 @@ func _wait_for_local_player(client_world: ClientWorld):
 	print("[GameSceneController] WARNING: Local player not found after waiting")
 
 func _setup_client_camera_and_hud(player: Player):
+	# Setup input handler
+	var input_handler = preload("res://core/input/PlayerInputHandler.gd").new()
+	input_handler.name = "InputHandler"
+	player.add_child(input_handler)
+	input_handler.setup(player)
+	print("[GameSceneController] ✓ Input handler attached to client player")
+
 	# Setup camera
 	var camera = get_node_or_null("Camera")
 	if camera and camera.has_method("set_target"):
