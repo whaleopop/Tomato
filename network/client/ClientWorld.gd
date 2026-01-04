@@ -97,7 +97,15 @@ func spawn_player(player_id: int, position: Vector3):
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	var client = network_manager.game_client if network_manager else null
 
-	var is_local = client and player_id == client.local_player_id
+	# Get local player ID - also check multiplayer directly as fallback
+	var local_id = -1
+	if client:
+		local_id = client.local_player_id
+	if local_id <= 0 and multiplayer.multiplayer_peer:
+		local_id = multiplayer.get_unique_id()
+
+	print("[ClientWorld] Checking if player %d is local (local_id=%d)" % [player_id, local_id])
+	var is_local = local_id > 0 and player_id == local_id
 
 	if is_local:
 		print("[ClientWorld] Player %d is local player" % player_id)
@@ -120,10 +128,8 @@ func spawn_player(player_id: int, position: Vector3):
 	# Now spawn (creates visual representation with correct color)
 	player.spawn(position)
 
-	# Setup input and camera for local player AFTER spawning
-	if is_local:
-		_setup_input_handler(player)
-		_setup_camera_for_local_player(player)
+	# Note: Camera and HUD setup is handled by GameSceneController, not here
+	# This prevents duplicate signal connections and ensures proper initialization order
 
 	print("[ClientWorld] ✓ Player %d spawned (total players: %d)" % [player_id, players.size()])
 
@@ -202,62 +208,3 @@ func _get_character_by_name(char_name: String) -> CharacterData:
 
 func get_local_player() -> Player:
 	return local_player
-
-func _setup_input_handler(player: Player):
-	print("[ClientWorld] Setting up input handler for local player...")
-	var input_handler = preload("res://core/input/PlayerInputHandler.gd").new()
-	input_handler.name = "InputHandler"
-	player.add_child(input_handler)
-	input_handler.setup(player)
-	print("[ClientWorld] ✓ Input handler attached to local player")
-
-func _setup_camera_for_local_player(player: Player):
-	print("[ClientWorld] Setting up camera and HUD for local player...")
-	# Find camera in GameScene
-	var game_scene = get_node_or_null("/root/GameScene")
-	if not game_scene:
-		game_scene = get_tree().get_first_node_in_group("game_scene")
-
-	if not game_scene:
-		# Scene not ready yet, defer setup
-		print("[ClientWorld] GameScene not ready, deferring camera setup...")
-		_deferred_camera_setup(player)
-		return
-
-	_do_camera_setup(player, game_scene)
-
-func _deferred_camera_setup(player: Player):
-	# Wait for scene to be ready then setup camera
-	for i in range(60):  # Try for up to 60 frames (~1 second)
-		await get_tree().process_frame
-
-		if not is_instance_valid(player):
-			print("[ClientWorld] Player freed, canceling camera setup")
-			return
-
-		var game_scene = get_node_or_null("/root/GameScene")
-		if not game_scene:
-			game_scene = get_tree().get_first_node_in_group("game_scene")
-
-		if game_scene:
-			_do_camera_setup(player, game_scene)
-			return
-
-	print("[ClientWorld] WARNING: Could not find GameScene after waiting")
-
-func _do_camera_setup(player: Player, game_scene: Node):
-	# Setup camera
-	var camera = game_scene.get_node_or_null("Camera")
-	if camera and camera is CameraController:
-		camera.set_target(player)
-		print("[ClientWorld] ✓ Camera attached to local player")
-	else:
-		print("[ClientWorld] WARNING: Camera not found or not CameraController")
-
-	# Setup HUD
-	var hud = game_scene.get_node_or_null("UI/PlayerHUD")
-	if hud and hud is PlayerHUD:
-		hud.setup(player)
-		print("[ClientWorld] ✓ HUD attached to local player")
-	else:
-		print("[ClientWorld] WARNING: PlayerHUD not found")

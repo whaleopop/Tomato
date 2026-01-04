@@ -13,6 +13,7 @@ script = ExtResource("4_environment")
 
 [node name="Camera" type="Camera3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 10, 8)
+current = true
 script = ExtResource("2_camera")
 
 [node name="UI" type="CanvasLayer" parent="."]
