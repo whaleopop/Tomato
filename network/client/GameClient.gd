@@ -25,32 +25,11 @@ func _ready():
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
 
 func ensure_client_world():
-	# Create ClientWorld if it doesn't exist, and add to GameScene
-	if client_world:
-		return client_world
-
-	print("[GameClient] Creating ClientWorld...")
-
-	# Find GameScene FIRST - don't create ClientWorld if GameScene doesn't exist
-	var game_scene = get_tree().get_first_node_in_group("game_scene")
-	if not game_scene:
-		game_scene = get_node_or_null("/root/GameScene")
-
-	if not game_scene or not game_scene is Node3D:
-		print("[GameClient] GameScene not ready yet, deferring ClientWorld creation")
+	# Simply return existing ClientWorld (created by GameSceneController)
+	# Don't try to create it here - GameSceneController handles creation
+	if not client_world:
+		print("[GameClient] ClientWorld not ready yet (GameScene may still be loading)")
 		return null
-
-	# Create ClientWorld only when GameScene exists
-	client_world = ClientWorld.new()
-	client_world.name = "ClientWorld"
-	game_scene.add_child(client_world)
-	print("[GameClient] ClientWorld added to GameScene")
-
-	# Generate map if we have pending seed
-	if pending_map_seed > 0:
-		print("[GameClient] Applying pending map seed: %d" % pending_map_seed)
-		client_world.generate_map_with_seed(pending_map_seed)
-		pending_map_seed = 0  # Clear after use
 
 	return client_world
 
@@ -129,37 +108,40 @@ func _on_server_disconnected():
 @rpc("authority", "reliable")
 func spawn_player(player_id: int, position: Vector3):
 	print("[GameClient] RPC: spawn_player called with player_id=%d, position=%s" % [player_id, position])
-	var world = ensure_client_world()
-	if world:
-		world.spawn_player(player_id, position)
-	else:
-		print("[GameClient] ERROR: Could not create client_world, cannot spawn player")
+
+	# Wait for ClientWorld to be created by GameSceneController
+	if not client_world:
+		print("[GameClient] ClientWorld not ready, ignoring spawn_player RPC (will be handled by world state sync)")
+		return
+
+	client_world.spawn_player(player_id, position)
 
 @rpc("authority", "reliable")
 func update_world_state(state: Dictionary):
-	print("[GameClient] RPC: update_world_state called with state (tick: %d, players: %d)" % [state.get("tick", 0), state.get("players", {}).size()])
 	if not state is Dictionary:
 		print("[GameClient] ERROR: state is not a Dictionary, got type: %s" % typeof(state))
 		return
-	var world = ensure_client_world()
-	if world:
-		world.apply_world_state(state)
-	else:
-		print("[GameClient] ERROR: Could not create client_world, cannot apply world state")
+
+	# Wait for ClientWorld to be created by GameSceneController
+	if not client_world:
+		# Silently ignore - next state update will come soon
+		return
+
+	client_world.apply_world_state(state)
 
 # RPC to receive map seed from server
 @rpc("authority", "reliable")
 func receive_map_seed(seed_value: int):
 	print("[GameClient] Received map seed: %d" % seed_value)
 
-	# Try to create world (will only succeed if GameScene exists)
-	var world = ensure_client_world()
-	if world:
+	# Check if ClientWorld exists (created by GameSceneController)
+	if client_world:
 		# GameScene ready - generate map immediately
-		world.generate_map_with_seed(seed_value)
+		print("[GameClient] ClientWorld ready, generating map immediately")
+		client_world.generate_map_with_seed(seed_value)
 	else:
-		# GameScene not ready - save seed for later
-		print("[GameClient] GameScene not ready, storing map seed for later")
+		# GameScene not ready - save seed for GameSceneController to apply later
+		print("[GameClient] ClientWorld not ready, storing map seed for later")
 		pending_map_seed = seed_value
 
 # This RPC method exists on server, so we need it here too for checksum

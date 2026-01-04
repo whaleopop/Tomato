@@ -140,41 +140,34 @@ func _setup_host_input_and_camera(player: Player, client_world: ClientWorld):
 	_setup_inventory_menu(player)
 
 func _setup_as_client():
-	# Client needs to create ClientWorld here since GameClient may have created it too early
+	# Client setup: create ClientWorld directly in GameScene
 	var network_manager = get_node_or_null("/root/NetworkManager")
 
 	if network_manager and network_manager.game_client:
 		var game_client = network_manager.game_client
 
-		# Ensure ClientWorld exists and is in the right place
-		var client_world = game_client.ensure_client_world()
+		print("[GameSceneController] Creating ClientWorld for client...")
 
-		if not client_world:
-			print("[GameSceneController] ERROR: Failed to create ClientWorld")
-			return
+		# Create ClientWorld directly here (not via ensure_client_world)
+		var client_world = ClientWorld.new()
+		client_world.name = "ClientWorld"
+		add_child(client_world)
 
-		# ClientWorld should already be added to GameScene by ensure_client_world
-		# But check just in case
-		if client_world.get_parent() != self:
-			print("[GameSceneController] WARNING: ClientWorld parent is not GameScene, fixing...")
-			if client_world.get_parent():
-				client_world.get_parent().remove_child(client_world)
-			add_child(client_world)
+		# Register with GameClient
+		game_client.client_world = client_world
+		print("[GameSceneController] ClientWorld created and registered")
 
-		# Check if map is ready
-		if client_world.map_seed == 0:
-			print("[GameSceneController] Waiting for map seed from server...")
+		# Apply pending map seed if exists
+		if game_client.pending_map_seed > 0:
+			print("[GameSceneController] Applying pending map seed: %d" % game_client.pending_map_seed)
+			client_world.generate_map_with_seed(game_client.pending_map_seed)
+			game_client.pending_map_seed = 0
 		else:
-			print("[GameSceneController] Map seed already received: %d" % client_world.map_seed)
+			print("[GameSceneController] No pending map seed, waiting for server...")
 
-		# Setup camera and HUD for local player if already exists
-		if client_world.local_player:
-			print("[GameSceneController] Local player already exists, setting up camera...")
-			_setup_client_camera_and_hud(client_world.local_player)
-		else:
-			# Wait for player to spawn and setup camera then
-			print("[GameSceneController] Waiting for local player to spawn...")
-			_wait_for_local_player(client_world)
+		# Wait for local player to spawn
+		print("[GameSceneController] Waiting for local player to spawn...")
+		_wait_for_local_player(client_world)
 
 	print("[GameSceneController] Client setup complete")
 
