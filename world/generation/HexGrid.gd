@@ -65,7 +65,9 @@ func _hex_round(hex: Vector2) -> Vector2i:
 func get_all_tiles() -> Array:
 	var result: Array = []
 	for tile in tiles.values():
-		result.append(tile)
+		# Filter out invalid/freed tiles
+		if is_instance_valid(tile):
+			result.append(tile)
 	return result
 
 func remove_tile(coords: Vector2i):

@@ -57,17 +57,25 @@ func _destroy_edge_tiles():
 	
 	# Find edge tiles (tiles with fewer than 6 neighbors)
 	for tile in all_tiles:
+		# Skip invalid or freed tiles
+		if not is_instance_valid(tile):
+			continue
+
 		if tile.is_destroyed:
 			continue
-		
+
 		var coords = tile.hex_coords
 		var neighbors = grid.get_neighbors(coords)
 		var active_neighbors = 0
-		
+
 		for neighbor in neighbors:
+			# Skip invalid or freed neighbors
+			if not is_instance_valid(neighbor):
+				continue
+
 			if not neighbor.is_destroyed:
 				active_neighbors += 1
-		
+
 		# Edge tile if has less than 6 neighbors
 		if active_neighbors < 6:
 			edge_tiles.append(tile)
@@ -75,12 +83,16 @@ func _destroy_edge_tiles():
 	# Destroy random edge tiles
 	var tiles_to_destroy = min(destruction_radius * 10, edge_tiles.size())
 	edge_tiles.shuffle()
-	
+
 	for i in range(tiles_to_destroy):
 		if i >= edge_tiles.size():
 			break
-		
+
 		var tile = edge_tiles[i]
+		# Skip invalid or freed tiles
+		if not is_instance_valid(tile):
+			continue
+
 		if not tile.is_destroyed:
 			tile_destroyer.destroy_tile(tile)
 
