@@ -64,14 +64,26 @@ func start_server(port: int = PORT):
 	
 	print("[GameServer] Server created successfully, setting multiplayer peer...")
 	multiplayer.multiplayer_peer = peer
-	
+
 	# Connect multiplayer signals
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
-	
+
 	is_running = true
+
+	# Create ServerPlayer for host (ID = 1)
+	print("[GameServer] Creating ServerPlayer for host (ID=1)...")
+	var host_player = ServerPlayer.new()
+	host_player.player_id = 1
+	players[1] = host_player
+	add_child(host_player)
+
+	# Add host to lobby
+	if lobby_manager:
+		lobby_manager.add_player(1)
+
 	server_started.emit()
-	
+
 	print("[GameServer] ✓ Server started successfully on port %d (max players: %d)" % [port, MAX_PLAYERS])
 	return true
 

@@ -117,16 +117,30 @@ func spawn_player_at(player_id: int, position: Vector3) -> Vector3:
 func _create_player_at(player_id: int, spawn_pos: Vector3) -> Vector3:
 	print("[ServerWorld] Selected spawn position: %s" % spawn_pos)
 
-	# Create player entity
-	print("[ServerWorld] Creating Player entity for player %d..." % player_id)
-	var player = Player.new()
-	player.entity_id = player_id
-	player.name = "Player_%d" % player_id
-	players[player_id] = player
-	add_child(player)
+	# For host (player_id == 1), try to find existing player in ClientWorld
+	var player = null
+	if player_id == 1:
+		# Host - look for existing player in ClientWorld
+		var game_scene = get_tree().get_first_node_in_group("game_scene")
+		if game_scene:
+			var client_world = game_scene.get_node_or_null("ClientWorld")
+			if client_world and client_world.players.has(player_id):
+				player = client_world.players[player_id]
+				print("[ServerWorld] Using existing host player from ClientWorld")
 
-	# Spawn player
-	player.spawn(spawn_pos)
+	# Create new player if not found (for clients or if host not yet created)
+	if not player:
+		print("[ServerWorld] Creating Player entity for player %d..." % player_id)
+		player = Player.new()
+		player.entity_id = player_id
+		player.name = "Player_%d" % player_id
+		add_child(player)
+
+		# Spawn player
+		player.spawn(spawn_pos)
+
+	# Store player reference
+	players[player_id] = player
 
 	# Link player to ServerPlayer
 	var network_manager = get_node_or_null("/root/NetworkManager")
