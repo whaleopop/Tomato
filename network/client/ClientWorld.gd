@@ -77,15 +77,21 @@ func _process_pending_spawns():
 func spawn_player(player_id: int, position: Vector3):
 	print("[ClientWorld] Spawning player %d at position %s..." % [player_id, position])
 
-	# If map is not ready yet, queue the spawn for later
-	if not is_map_ready:
-		print("[ClientWorld] Map not ready, queuing spawn for player %d" % player_id)
-		pending_spawns.append({"player_id": player_id, "position": position})
-		return
-
-	# Check if player already exists
+	# Check if player already exists (before any other checks)
 	if players.has(player_id):
 		print("[ClientWorld] Player %d already exists, skipping" % player_id)
+		return
+
+	# If map is not ready yet, queue the spawn for later
+	if not is_map_ready:
+		# Check if already in pending queue to avoid duplicates
+		for pending in pending_spawns:
+			if pending.player_id == player_id:
+				print("[ClientWorld] Player %d already in spawn queue, skipping" % player_id)
+				return
+
+		print("[ClientWorld] Map not ready, queuing spawn for player %d" % player_id)
+		pending_spawns.append({"player_id": player_id, "position": position})
 		return
 
 	# Create player entity
