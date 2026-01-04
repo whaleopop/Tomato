@@ -24,6 +24,11 @@ func _ready():
 	add_child(loot_manager)
 
 func generate_map_with_seed(seed_value: int, radius: int = 20):
+	# Prevent duplicate generation
+	if is_map_ready or map_seed == seed_value:
+		print("[ClientWorld] Map already generated or in progress, skipping")
+		return
+
 	print("[ClientWorld] Generating client map with seed: %d..." % seed_value)
 	map_seed = seed_value
 	is_map_ready = false
@@ -38,6 +43,8 @@ func generate_map_with_seed(seed_value: int, radius: int = 20):
 	add_child(map_generator)
 	hex_grid = await map_generator.generate_map(radius, seed_value)
 
+	print("[ClientWorld] Hex grid generated, spawning loot...")
+
 	# Spawn loot containers (same seed = same positions)
 	if loot_spawner:
 		loot_spawner.queue_free()
@@ -47,16 +54,24 @@ func generate_map_with_seed(seed_value: int, radius: int = 20):
 	add_child(loot_spawner)
 	loot_spawner.setup(hex_grid)
 
+	print("[ClientWorld] Loot spawned, registering containers...")
+
 	# Register containers with network loot manager
 	await get_tree().process_frame
 	_register_loot_containers()
 
-	print("[ClientWorld] Client map generated with seed: %d" % seed_value)
+	print("[ClientWorld] ✓ Client map fully generated with seed: %d" % seed_value)
 
 func _register_loot_containers():
+	if not is_instance_valid(loot_manager):
+		print("[ClientWorld] WARNING: loot_manager is not valid, skipping container registration")
+		is_map_ready = true
+		_process_pending_spawns()
+		return
+
 	var containers = get_tree().get_nodes_in_group("loot_containers")
 	for container in containers:
-		if container is LootContainer:
+		if is_instance_valid(container) and container is LootContainer:
 			loot_manager.register_container(container)
 	print("[ClientWorld] Registered %d loot containers" % containers.size())
 
@@ -101,7 +116,11 @@ func spawn_player(player_id: int, position: Vector3):
 
 	# Check if this is local player BEFORE spawning (so color is set correctly)
 	var network_manager = get_node_or_null("/root/NetworkManager")
-	var client = network_manager.game_client if network_manager else null
+	var client = null
+	if network_manager and is_instance_valid(network_manager):
+		client = network_manager.game_client
+		if client and not is_instance_valid(client):
+			client = null
 
 	# Get local player ID - also check multiplayer directly as fallback
 	var local_id = -1
@@ -120,7 +139,7 @@ func spawn_player(player_id: int, position: Vector3):
 
 		# Apply selected character from GameManager BEFORE spawning
 		var game_manager = get_node_or_null("/root/GameManager")
-		if game_manager and game_manager.selected_character:
+		if game_manager and is_instance_valid(game_manager) and game_manager.selected_character:
 			player.setup_character(game_manager.selected_character)
 			players_character_applied[player_id] = true
 			print("[ClientWorld] Applied character: %s" % game_manager.selected_character.character_name)

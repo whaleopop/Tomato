@@ -136,8 +136,10 @@ func receive_map_seed(seed_value: int):
 
 	# Check if ClientWorld exists (created by GameSceneController)
 	if client_world:
-		# GameScene ready - generate map immediately
-		print("[GameClient] ClientWorld ready, generating map immediately")
+		# GameScene ready - generate map immediately (in background)
+		print("[GameClient] ClientWorld ready, starting map generation...")
+		# Don't await here - RPC handlers should return quickly
+		# generate_map_with_seed has duplicate prevention
 		client_world.generate_map_with_seed(seed_value)
 	else:
 		# GameScene not ready - save seed for GameSceneController to apply later

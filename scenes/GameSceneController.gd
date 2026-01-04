@@ -160,8 +160,9 @@ func _setup_as_client():
 		# Apply pending map seed if exists
 		if game_client.pending_map_seed > 0:
 			print("[GameSceneController] Applying pending map seed: %d" % game_client.pending_map_seed)
-			client_world.generate_map_with_seed(game_client.pending_map_seed)
+			await client_world.generate_map_with_seed(game_client.pending_map_seed)
 			game_client.pending_map_seed = 0
+			print("[GameSceneController] Map generation complete")
 		else:
 			print("[GameSceneController] No pending map seed, waiting for server...")
 
