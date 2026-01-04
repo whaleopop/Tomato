@@ -140,9 +140,5 @@ func _on_countdown_update(seconds: int):
 func _on_match_starting():
 	print("[SpawnSelectController] Match starting!")
 
-	# Transition to game scene
-	var scene_transition = get_node_or_null("/root/SceneTransition")
-	if scene_transition:
-		scene_transition.fade_to_scene("res://scenes/GameScene.tscn")
-	else:
-		get_tree().change_scene_to_file("res://scenes/GameScene.tscn")
+	# NOTE: Scene transition is handled by NetworkManager via RPC
+	# Don't call change_scene here - it causes duplicate GameScene instances!
