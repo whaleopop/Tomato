@@ -20,4 +20,3 @@ func _on_remove(entity):  # entity: Entity
 	if health:
 		var current_resistance = health.damage_resistance
 		health.set_damage_resistance(max(0.0, current_resistance - resistance_percent))
-

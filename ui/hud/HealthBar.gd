@@ -1,51 +1,86 @@
-## Health bar UI component
-extends Control
+## Health card (top-left): character name, glowing HP bar and numbers
+extends GlassPanel
 class_name HealthBar
 
 var health_bar: ProgressBar = null
 var health_label: Label = null
+var name_label: Label = null
+var damage_bar: ProgressBar = null  # Trailing "recent damage" bar
 
 var health_component: HealthComponent = null
+var _shown_percent: float = 1.0
+
+func _init():
+	super._init()
+	padding = 16
+	tint = UITheme.GLASS_TINT_HUD
+	custom_minimum_size = Vector2(300, 0)
 
 func _ready():
-	# Try to get existing nodes, create if they don't exist
-	health_bar = get_node_or_null("HealthBar")
-	if health_bar == null:
-		health_bar = ProgressBar.new()
-		health_bar.name = "HealthBar"
-		health_bar.custom_minimum_size = Vector2(200, 20)
-		health_bar.position = Vector2(10, 10)
-		health_bar.max_value = 100.0
-		health_bar.value = 100.0
-		add_child(health_bar)
-	
-	health_label = get_node_or_null("HealthLabel")
-	if health_label == null:
-		health_label = Label.new()
-		health_label.name = "HealthLabel"
-		health_label.position = Vector2(10, 35)
-		health_label.text = "100 / 100"
-		add_child(health_label)
+	var box = VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	add_child(box)
+
+	var head = HBoxContainer.new()
+	box.add_child(head)
+	name_label = UITheme.create_heading("", head)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	health_label = UITheme.create_label("100 / 100", head, UITheme.FONT_SMALL)
+	health_label.add_theme_font_override("font", UITheme.font_black())
+	health_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+
+	# Two stacked bars: the white one lags behind to show the damage you just took
+	var bars = Control.new()
+	bars.custom_minimum_size = Vector2(0, 14)
+	box.add_child(bars)
+
+	damage_bar = UITheme.create_progress_bar(1.0, 1.0, Color(1, 1, 1, 0.55), bars)
+	damage_bar.set_anchors_preset(Control.PRESET_FULL_RECT)
+	health_bar = UITheme.create_progress_bar(1.0, 1.0, UITheme.ACCENT_SUCCESS, bars)
+	health_bar.set_anchors_preset(Control.PRESET_FULL_RECT)
+	health_bar.add_theme_stylebox_override("background", UITheme.empty_box())
 
 func setup(p_health_component: HealthComponent):
 	health_component = p_health_component
-	
 	if health_component:
 		health_component.health_changed.connect(_on_health_changed)
 		_update_health()
+		var player = health_component.entity
+		if player and player.get("character_data"):
+			name_label.text = player.character_data.character_name
+			name_label.add_theme_color_override("font_color", player.character_data.color.lightened(0.35))
+		else:
+			name_label.text = "You"
 
-func _on_health_changed(current: float, max_health: float):
+func _process(delta: float):
+	if damage_bar and health_bar:
+		damage_bar.value = move_toward(damage_bar.value, health_bar.value, delta * 0.6)
+
+func _on_health_changed(_current: float, _max_health: float):
 	_update_health()
 
 func _update_health():
-	if not health_component:
+	if not health_component or not health_bar:
 		return
-	
-	if not health_bar:
-		return
-	
+
 	var percent = health_component.get_health_percent()
-	health_bar.value = percent * 100.0
-	
-	if health_label:
-		health_label.text = "%d / %d" % [int(health_component.current_health), int(health_component.max_health)]
+	if percent < _shown_percent:
+		_flash()
+	_shown_percent = percent
+	health_bar.value = percent
+	if damage_bar.value < percent:
+		damage_bar.value = percent
+
+	var color = UITheme.ACCENT_SUCCESS
+	if percent < 0.3:
+		color = UITheme.ACCENT_DANGER
+	elif percent < 0.6:
+		color = UITheme.ACCENT_WARNING
+	UITheme.set_bar_color(health_bar, color)
+
+	health_label.text = "%d / %d" % [int(ceil(health_component.current_health)), int(health_component.max_health)]
+
+func _flash():
+	var tween = create_tween()
+	tween.tween_property(self, "modulate", Color(1.4, 0.8, 0.8), 0.06)
+	tween.tween_property(self, "modulate", Color.WHITE, 0.25)

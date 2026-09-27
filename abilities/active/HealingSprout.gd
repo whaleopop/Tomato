@@ -12,18 +12,12 @@ func _init():
 	duration = heal_duration
 
 func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity
-	# Heal self
+	# Heal self only: it's every veggie for themselves, the old "allies in radius" were enemies.
+	# A replay on someone else's copy is visual only (their health comes from the server).
 	var health = entity.get_component("HealthComponent")
-	if health:
+	if health and not replay:
 		health.heal(heal_amount)
-	
-	# Heal nearby allies
-	var allies = _find_allies_in_radius(entity)
-	for ally in allies:
-		var ally_health = ally.get_component("HealthComponent")
-		if ally_health:
-			ally_health.heal(heal_amount)
-	
+
 	# Create visual effect
 	_create_healing_effect(entity)
 	

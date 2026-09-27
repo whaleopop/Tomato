@@ -1,0 +1,6 @@
+; Flat colors for rig_and_animate.py --palette. One material per line: '#paint name ~#shade ~#shade'.
+; '~' shades = how that material looks lit/shadowed on the AI model (they map to the paint color).
+#dc4a27 body   ~#882513 ~#ee5630 ~#bc351b ~#dd4825 ~#cc3c1c ~#9d3424 ~#f76d47
+#5f9c34 leaf anchored   ~#77aa45 ~#37521f ~#57832a
+#ebdcc2 eyes front   ~#e6d5bb
+#33251a dark front   ~#382814   ; pupils

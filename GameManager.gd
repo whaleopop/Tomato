@@ -1,45 +1,25 @@
-## Main game manager
+## Main game manager (autoload): cross-scene match state
 extends Node
 
-signal game_started
-signal game_ended
-
-var game_server: GameServer = null
-var game_client: GameClient = null
-var is_host: bool = false
-var is_client: bool = false
 var selected_character: CharacterData = null  # Character selected in CharacterSelect menu
+var map_seed: int = 0  # Map seed for generation
+var last_error: String = ""  # Shown by the main menu after a failed/lost connection
+
+# Cutscene data - set by SpawnSelectController / NetworkLobby before cutscene
+var cutscene_spawn_positions: Dictionary = {}  # player_id -> Vector3
+var cutscene_player_characters: Dictionary = {}  # player_id -> String
+var cutscene_fast_forward: bool = false  # For late joiners
+var cutscene_elapsed: float = 0.0  # Elapsed time for fast forward
 
 func _ready():
-	# Add to group so it can be found by GameClient
-	add_to_group("game_scene")
-	print("[GameManager] GameScene ready")
+	# NOTE: this autoload must NOT be in the "game_scene" group: code looks the game scene
+	# up by that group and the autoload would always be found first.
+	print("[GameManager] Ready")
 
-func start_as_host():
-	is_host = true
-	game_server = GameServer.new()
-	add_child(game_server)
-	game_server.start_server()
-	game_started.emit()
-
-func start_as_client(ip: String = "127.0.0.1"):
-	is_client = true
-	game_client = GameClient.new()
-	add_child(game_client)
-	game_client.connect_to_server(ip)
-	game_started.emit()
-
-func stop_game():
-	if game_server:
-		game_server.stop_server()
-		game_server.queue_free()
-		game_server = null
-	
-	if game_client:
-		game_client.disconnect_from_server()
-		game_client.queue_free()
-		game_client = null
-	
-	is_host = false
-	is_client = false
-	game_ended.emit()
+## Forget everything about the previous match (keeps the selected character)
+func reset_match_state():
+	map_seed = 0
+	cutscene_spawn_positions = {}
+	cutscene_player_characters = {}
+	cutscene_fast_forward = false
+	cutscene_elapsed = 0.0

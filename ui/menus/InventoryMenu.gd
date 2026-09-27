@@ -1,84 +1,76 @@
-## Inventory menu UI - styled programmatically
+## Inventory overlay (toggle with I)
 extends Control
 class_name InventoryMenu
 
 var inventory_component: InventoryComponent = null
 var slot_buttons: Array[Button] = []
 var slots_container: GridContainer = null
-var panel: PanelContainer = null
+var panel: GlassPanel = null
 var title_label: Label = null
 var info_label: Label = null
+var selected_slot: int = -1
 
-const SLOT_SIZE = Vector2(70, 70)
+const SLOT_SIZE = Vector2(78, 78)
 const SLOTS_PER_ROW = 5
 
 func _ready():
 	visible = false
+	add_to_group("blocks_game_input")  # PlayerInputHandler ignores the game while we're open
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	set_anchors_and_offsets_preset(PRESET_FULL_RECT)
 	_create_ui()
 
 func _create_ui():
-	# Semi-transparent background
-	var overlay = ColorRect.new()
-	overlay.color = Color(0, 0, 0, 0.5)
-	overlay.set_anchors_preset(PRESET_FULL_RECT)
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(overlay)
+	var dim = ColorRect.new()
+	dim.color = Color(0.02, 0.03, 0.06, 0.5)
+	dim.set_anchors_preset(PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(dim)
 
-	# Center container
 	var center = CenterContainer.new()
 	center.set_anchors_preset(PRESET_FULL_RECT)
 	add_child(center)
 
-	# Main panel
-	panel = UITheme.create_panel()
-	panel.custom_minimum_size = Vector2(420, 450)
-	center.add_child(panel)
+	panel = UITheme.create_panel(center, 26)
+	panel.tint = UITheme.GLASS_TINT_DARK
 
 	var vbox = VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", UITheme.SPACING_MEDIUM)
 	panel.add_child(vbox)
 
-	# Header
 	var header = HBoxContainer.new()
 	header.add_theme_constant_override("separation", 10)
 	vbox.add_child(header)
 
 	title_label = UITheme.create_title("INVENTORY", header)
+	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	UITheme.create_spacer(false, header).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	UITheme.create_pill("I", UITheme.TEXT_SECONDARY, header).size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
-	UITheme.create_spacer(true, header)
-
-	var close_btn = Button.new()
-	close_btn.text = "X"
-	close_btn.custom_minimum_size = Vector2(35, 35)
+	var close_btn = UITheme.create_button("✕", header, Vector2(44, 44))
 	close_btn.pressed.connect(func(): visible = false)
-	header.add_child(close_btn)
 
-	# Separator
-	UITheme.create_separator(vbox)
-
-	# Slots grid
 	slots_container = GridContainer.new()
 	slots_container.columns = SLOTS_PER_ROW
-	slots_container.add_theme_constant_override("h_separation", 8)
-	slots_container.add_theme_constant_override("v_separation", 8)
+	slots_container.add_theme_constant_override("h_separation", 10)
+	slots_container.add_theme_constant_override("v_separation", 10)
 	vbox.add_child(slots_container)
 
-	# Info label (selected item info)
-	info_label = UITheme.create_label("", vbox)
+	info_label = UITheme.create_label("Select an item", vbox, UITheme.FONT_SMALL)
 	info_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	info_label.custom_minimum_size.y = 40
+	info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info_label.custom_minimum_size = Vector2(0, 40)
 
-	# Actions
 	var actions = HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 15)
-	actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	actions.add_theme_constant_override("separation", 12)
 	vbox.add_child(actions)
 
-	var use_btn = UITheme.create_button("USE", actions, Vector2(100, 40))
+	var use_btn = UITheme.create_primary_button("USE", actions, Vector2(0, 48))
+	use_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	use_btn.pressed.connect(_on_use_pressed)
 
-	var drop_btn = UITheme.create_danger_button("DROP", actions, Vector2(100, 40))
+	var drop_btn = UITheme.create_danger_button("DROP", actions, Vector2(0, 48))
+	drop_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	drop_btn.pressed.connect(_on_drop_pressed)
 
 func setup(p_inventory_component: InventoryComponent):
@@ -89,7 +81,6 @@ func setup(p_inventory_component: InventoryComponent):
 		_update_inventory()
 
 func _update_inventory():
-	# Clear existing slots
 	for button in slot_buttons:
 		button.queue_free()
 	slot_buttons.clear()
@@ -101,60 +92,43 @@ func _update_inventory():
 	if not inventory:
 		return
 
-	# Create slot buttons
 	for i in range(inventory.max_size):
-		var slot = inventory.slots[i]
-		var button = _create_slot_button(slot, i)
+		var button = _create_slot_button(inventory.slots[i], i)
 		slots_container.add_child(button)
 		slot_buttons.append(button)
+
+func _item_color(item) -> Color:
+	if item is RangedWeapon:
+		return UITheme.ACCENT_SECONDARY
+	if item is AmmoItem:
+		return UITheme.ACCENT_INFO
+	return UITheme.ACCENT_PRIMARY
 
 func _create_slot_button(slot, index: int) -> Button:
 	var button = Button.new()
 	button.custom_minimum_size = SLOT_SIZE
-
-	# Style
-	var style = StyleBoxFlat.new()
-	style.bg_color = UITheme.BG_MEDIUM
-	style.corner_radius_top_left = 4
-	style.corner_radius_top_right = 4
-	style.corner_radius_bottom_left = 4
-	style.corner_radius_bottom_right = 4
-	style.border_width_left = 2
-	style.border_width_right = 2
-	style.border_width_top = 2
-	style.border_width_bottom = 2
-	style.border_color = Color(0.3, 0.3, 0.4)
-	button.add_theme_stylebox_override("normal", style)
-
-	var hover_style = style.duplicate()
-	hover_style.border_color = UITheme.ACCENT_PRIMARY
-	button.add_theme_stylebox_override("hover", hover_style)
+	button.focus_mode = Control.FOCUS_NONE
+	button.clip_text = true
+	button.add_theme_font_size_override("font_size", 12)
 
 	if slot.item:
-		# Item name (shortened)
-		var name = slot.item.item_name
-		if name.length() > 8:
-			name = name.substr(0, 7) + ".."
-		button.text = name
-
+		var item_name: String = slot.item.item_name
+		if item_name.length() > 9:
+			item_name = item_name.substr(0, 8) + "…"
+		button.text = item_name
 		if slot.count > 1:
-			button.text += "\nx%d" % slot.count
-
-		# Color based on item type
-		if slot.item is RangedWeapon:
-			style.border_color = Color(0.7, 0.5, 0.2)
-		elif slot.item is AmmoItem:
-			style.border_color = Color(0.6, 0.6, 0.3)
+			button.text += "\n×%d" % slot.count
+		var color = _item_color(slot.item)
+		button.add_theme_stylebox_override("normal", UITheme.glass_box(Color(color, 0.10), Color(color, 0.45), 16, 6, 6))
+		button.add_theme_stylebox_override("hover", UITheme.glow_box(Color(color, 0.22), 0.3, 16, 10))
 	else:
-		button.text = ""
-		style.bg_color = Color(0.1, 0.1, 0.12)
+		button.add_theme_stylebox_override("normal", UITheme.glass_box(Color(1, 1, 1, 0.03), Color(1, 1, 1, 0.07), 16, 6, 6))
 
-	button.add_theme_font_size_override("font_size", 11)
+	if index == selected_slot:
+		button.add_theme_stylebox_override("normal", UITheme.glow_box(Color(UITheme.ACCENT_PRIMARY, 0.25), 0.4, 16, 10))
+
 	button.pressed.connect(_on_slot_pressed.bind(index))
-
 	return button
-
-var selected_slot: int = -1
 
 func _on_slot_pressed(slot: int):
 	selected_slot = slot
@@ -168,24 +142,17 @@ func _on_slot_pressed(slot: int):
 
 	var item_slot = inventory.slots[slot]
 	if item_slot.item:
-		info_label.text = "%s" % item_slot.item.item_name
+		info_label.text = item_slot.item.item_name
 		if item_slot.item.description:
-			info_label.text += " - %s" % item_slot.item.description
+			info_label.text += "  ·  %s" % item_slot.item.description
 	else:
 		info_label.text = "Empty slot"
-
-	# Update selection highlight
-	for i in range(slot_buttons.size()):
-		var btn = slot_buttons[i]
-		var style = btn.get_theme_stylebox("normal") as StyleBoxFlat
-		if style:
-			if i == slot and inventory.slots[i].item:
-				style.border_color = UITheme.ACCENT_SUCCESS
-			else:
-				style.border_color = Color(0.3, 0.3, 0.4)
+	_update_inventory()
 
 func _on_use_pressed():
 	if selected_slot >= 0 and inventory_component:
+		# The server does it for real (else the next health sync undoes a heal); here for feedback
+		_send_to_server({"use_item": selected_slot})
 		inventory_component.use_item(selected_slot)
 		_update_inventory()
 
@@ -193,12 +160,22 @@ func _on_drop_pressed():
 	if selected_slot >= 0 and inventory_component:
 		var inventory = inventory_component.get_inventory()
 		if inventory and selected_slot < inventory.slots.size():
-			inventory.remove_item(selected_slot)
+			_send_to_server({"drop_item": selected_slot})
+			inventory_component.remove_item(selected_slot)
 			_update_inventory()
 			info_label.text = "Item dropped"
+
+func _send_to_server(action: Dictionary):
+	var owner_entity = inventory_component.entity if inventory_component else null
+	var handler = owner_entity.get_node_or_null("InputHandler") if owner_entity else null
+	if handler and handler.has_method("send_ui_action"):
+		handler.send_ui_action(action)
 
 func _input(event: InputEvent):
 	if event.is_action_pressed("inventory"):
 		visible = not visible
 		if visible:
 			_update_inventory()
+	elif visible and event.is_action_pressed("pause"):
+		visible = false
+		get_viewport().set_input_as_handled()

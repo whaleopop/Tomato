@@ -1,4 +1,4 @@
-## Enhanced character selection menu with 3D preview
+## Character selection: roster (left), 3D showcase (center), stats & abilities (right)
 extends Control
 class_name CharacterSelect
 
@@ -9,213 +9,149 @@ var selected_character: CharacterData = null
 var selected_index: int = 0
 
 # UI Elements
-var character_list: ItemList = null
-var preview_viewport: SubViewport = null
-var preview_camera: Camera3D = null
-var preview_model: Node3D = null
-var preview_container: SubViewportContainer = null
-
-# Info panel elements
+var roster_buttons: Array[Button] = []
+var roster_scroll: ScrollContainer = null
+var showcase: CharacterShowcase = null
 var name_label: Label = null
-var description_label: RichTextLabel = null
+var description_label: Label = null
 var stats_container: VBoxContainer = null
 var ability_container: VBoxContainer = null
 var select_button: Button = null
 
-# Animation
-var rotation_speed: float = 30.0  # degrees per second
-
 func _ready():
-	_load_characters()
+	available_characters = CharacterRegistry.get_all()
 	_create_ui()
-	_setup_preview_viewport()
 
-	if available_characters.size() > 0:
-		_select_character(0)
-
-func _process(delta: float):
-	# Rotate preview model
-	if preview_model:
-		preview_model.rotation.y += deg_to_rad(rotation_speed * delta)
+	# Keep the previous pick when coming back from the lobby
+	var start_index = 0
+	var game_manager = get_node_or_null("/root/GameManager")
+	if game_manager and game_manager.selected_character:
+		for i in available_characters.size():
+			if available_characters[i].character_name == game_manager.selected_character.character_name:
+				start_index = i
+	_select_character(start_index)
 
 func get_selected_character() -> CharacterData:
 	return selected_character
 
-func _load_characters():
-	available_characters = [
-		TomatoCharacter.new(),
-		CarrotCharacter.new(),
-		PumpkinCharacter.new(),
-		CornCharacter.new(),
-		BroccoliCharacter.new(),
-		BeetCharacter.new(),
-		GreenPepperCharacter.new(),
-		TurnipCharacter.new(),
-	]
-
 func _create_ui():
-	# Background
-	var bg = ColorRect.new()
-	bg.color = Color(0.1, 0.1, 0.15)
-	bg.set_anchors_preset(PRESET_FULL_RECT)
-	add_child(bg)
+	UITheme.create_background(self)
 
-	# Main horizontal layout
-	var main_hbox = HBoxContainer.new()
-	main_hbox.set_anchors_preset(PRESET_FULL_RECT)
-	main_hbox.set_anchor_and_offset(SIDE_LEFT, 0, 20)
-	main_hbox.set_anchor_and_offset(SIDE_RIGHT, 1, -20)
-	main_hbox.set_anchor_and_offset(SIDE_TOP, 0, 20)
-	main_hbox.set_anchor_and_offset(SIDE_BOTTOM, 1, -20)
-	main_hbox.add_theme_constant_override("separation", 20)
-	add_child(main_hbox)
+	var margin = UITheme.create_screen_margin(self, 32)
+	var root = VBoxContainer.new()
+	root.add_theme_constant_override("separation", 18)
+	margin.add_child(root)
 
-	# Left panel - character list
-	var left_panel = VBoxContainer.new()
-	left_panel.custom_minimum_size.x = 220
-	main_hbox.add_child(left_panel)
+	# ---- Header
+	var header = HBoxContainer.new()
+	header.add_theme_constant_override("separation", 14)
+	root.add_child(header)
 
-	var list_title = Label.new()
-	list_title.text = "CHARACTERS"
-	list_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	list_title.add_theme_font_size_override("font_size", 20)
-	left_panel.add_child(list_title)
+	var back_button = UITheme.create_button("←  BACK", header, Vector2(130, 46))
+	back_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	back_button.pressed.connect(_on_back_pressed)
 
-	character_list = ItemList.new()
-	character_list.size_flags_vertical = SIZE_EXPAND_FILL
-	character_list.item_selected.connect(_on_character_list_selected)
-	character_list.add_theme_font_size_override("font_size", 16)
-	left_panel.add_child(character_list)
+	var title_box = VBoxContainer.new()
+	title_box.add_theme_constant_override("separation", 0)
+	header.add_child(title_box)
+	var title = UITheme.create_title("CHOOSE YOUR VEGGIE", title_box)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var hint = UITheme.create_label("← →  to browse   ·   Enter to confirm", title_box, UITheme.FONT_SMALL)
+	hint.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 
-	for character in available_characters:
-		character_list.add_item(character.character_name)
+	UITheme.create_spacer(false, header).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager and network_manager.is_server():
+		UITheme.create_pill("Hosting", UITheme.ACCENT_PRIMARY, header).size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	elif network_manager and network_manager.game_client:
+		UITheme.create_pill("Connected", UITheme.ACCENT_INFO, header).size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
-	# Center panel - 3D preview
-	var center_panel = VBoxContainer.new()
-	center_panel.size_flags_horizontal = SIZE_EXPAND_FILL
-	main_hbox.add_child(center_panel)
+	# ---- Body
+	var body = HBoxContainer.new()
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("separation", 22)
+	root.add_child(body)
 
-	var preview_title = Label.new()
-	preview_title.text = "PREVIEW"
-	preview_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	preview_title.add_theme_font_size_override("font_size", 20)
-	center_panel.add_child(preview_title)
+	# Roster
+	var roster_card = UITheme.create_panel(body, 14)
+	roster_card.custom_minimum_size.x = 250
+	roster_scroll = ScrollContainer.new()
+	roster_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	roster_card.add_child(roster_scroll)
+	var roster = VBoxContainer.new()
+	roster.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	roster.add_theme_constant_override("separation", 8)
+	roster_scroll.add_child(roster)
 
-	# Preview container with border
-	var preview_frame = PanelContainer.new()
-	preview_frame.size_flags_vertical = SIZE_EXPAND_FILL
-	center_panel.add_child(preview_frame)
+	for i in available_characters.size():
+		var character = available_characters[i]
+		var button = UITheme.create_button("", roster, Vector2(0, 58))
+		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.text = "      %s" % character.character_name
+		button.pressed.connect(_select_character.bind(i))
 
-	preview_container = SubViewportContainer.new()
-	preview_container.stretch = true
-	preview_frame.add_child(preview_container)
+		# Colored orb in front of the name
+		var orb = Panel.new()
+		orb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var orb_box = StyleBoxFlat.new()
+		orb_box.bg_color = character.color
+		orb_box.set_corner_radius_all(99)
+		orb_box.shadow_color = Color(character.color, 0.6)
+		orb_box.shadow_size = 6
+		orb.add_theme_stylebox_override("panel", orb_box)
+		orb.position = Vector2(16, 21)
+		orb.size = Vector2(16, 16)
+		button.add_child(orb)
 
-	# Right panel - stats and abilities
-	var right_panel = VBoxContainer.new()
-	right_panel.custom_minimum_size.x = 280
-	right_panel.add_theme_constant_override("separation", 15)
-	main_hbox.add_child(right_panel)
+		roster_buttons.append(button)
 
-	name_label = Label.new()
-	name_label.add_theme_font_size_override("font_size", 28)
-	name_label.add_theme_color_override("font_color", Color(1, 0.9, 0.6))
-	right_panel.add_child(name_label)
+	# Showcase
+	var center = VBoxContainer.new()
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(center)
+	showcase = CharacterShowcase.new()
+	showcase.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	center.add_child(showcase)
 
-	description_label = RichTextLabel.new()
-	description_label.custom_minimum_size.y = 60
-	description_label.bbcode_enabled = true
-	description_label.fit_content = true
-	description_label.scroll_active = false
-	right_panel.add_child(description_label)
+	# Info card
+	var info_card = UITheme.create_panel(body, 26)
+	info_card.custom_minimum_size.x = 350
+	var info = VBoxContainer.new()
+	info.add_theme_constant_override("separation", 12)
+	info_card.add_child(info)
 
-	# Stats section
-	var stats_title = Label.new()
-	stats_title.text = "STATS"
-	stats_title.add_theme_font_size_override("font_size", 18)
-	stats_title.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
-	right_panel.add_child(stats_title)
+	name_label = UITheme.create_title("", info)
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	name_label.add_theme_font_size_override("font_size", 40)
 
+	description_label = UITheme.create_label("", info)
+	description_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+	UITheme.create_separator(info)
+	UITheme.create_caption("Stats", info)
 	stats_container = VBoxContainer.new()
 	stats_container.add_theme_constant_override("separation", 8)
-	right_panel.add_child(stats_container)
+	info.add_child(stats_container)
 
-	# Abilities section
-	var ability_title = Label.new()
-	ability_title.text = "ABILITIES"
-	ability_title.add_theme_font_size_override("font_size", 18)
-	ability_title.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
-	right_panel.add_child(ability_title)
-
+	UITheme.create_caption("Abilities", info)
 	ability_container = VBoxContainer.new()
-	ability_container.add_theme_constant_override("separation", 10)
-	right_panel.add_child(ability_container)
+	ability_container.add_theme_constant_override("separation", 12)
+	info.add_child(ability_container)
 
-	# Spacer
-	var spacer = Control.new()
-	spacer.size_flags_vertical = SIZE_EXPAND_FILL
-	right_panel.add_child(spacer)
+	UITheme.create_spacer(true, info)
 
-	# Buttons
-	select_button = Button.new()
-	select_button.text = "SELECT & PLAY"
-	select_button.custom_minimum_size.y = 50
-	select_button.add_theme_font_size_override("font_size", 18)
+	select_button = UITheme.create_primary_button("SELECT & CONTINUE", info, Vector2(0, 60))
 	select_button.pressed.connect(_on_select_pressed)
-	right_panel.add_child(select_button)
 
-	var back_button = Button.new()
-	back_button.text = "BACK"
-	back_button.custom_minimum_size.y = 40
-	back_button.pressed.connect(_on_back_pressed)
-	right_panel.add_child(back_button)
-
-func _setup_preview_viewport():
-	preview_viewport = SubViewport.new()
-	preview_viewport.size = Vector2i(400, 500)
-	preview_viewport.transparent_bg = true
-	preview_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	preview_container.add_child(preview_viewport)
-
-	# Environment
-	var world_env = WorldEnvironment.new()
-	var env = Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.15, 0.15, 0.2)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.5, 0.5, 0.6)
-	env.ambient_light_energy = 1.0
-	world_env.environment = env
-	preview_viewport.add_child(world_env)
-
-	# Key light
-	var key_light = DirectionalLight3D.new()
-	key_light.rotation = Vector3(deg_to_rad(-45), deg_to_rad(45), 0)
-	key_light.light_energy = 1.2
-	preview_viewport.add_child(key_light)
-
-	# Fill light (softer, from other side)
-	var fill_light = DirectionalLight3D.new()
-	fill_light.rotation = Vector3(deg_to_rad(-30), deg_to_rad(-45), 0)
-	fill_light.light_energy = 0.5
-	fill_light.light_color = Color(0.8, 0.9, 1.0)
-	preview_viewport.add_child(fill_light)
-
-	# Camera
-	preview_camera = Camera3D.new()
-	preview_camera.position = Vector3(0, 1.0, 2.5)
-	preview_viewport.add_child(preview_camera)
-	# Must call look_at after camera is in tree
-	preview_camera.look_at(Vector3(0, 0.7, 0))
-
-	# Floor for reference
-	var floor_mesh = MeshInstance3D.new()
-	var plane = PlaneMesh.new()
-	plane.size = Vector2(3, 3)
-	floor_mesh.mesh = plane
-	var floor_mat = StandardMaterial3D.new()
-	floor_mat.albedo_color = Color(0.2, 0.2, 0.25)
-	floor_mesh.set_surface_override_material(0, floor_mat)
-	preview_viewport.add_child(floor_mesh)
+func _unhandled_input(event: InputEvent):
+	if event.is_action_pressed("ui_right") or event.is_action_pressed("ui_down"):
+		_select_character((selected_index + 1) % available_characters.size())
+	elif event.is_action_pressed("ui_left") or event.is_action_pressed("ui_up"):
+		_select_character((selected_index - 1 + available_characters.size()) % available_characters.size())
+	elif event.is_action_pressed("ui_accept"):
+		_on_select_pressed()
+	elif event.is_action_pressed("ui_cancel"):
+		_on_back_pressed()
 
 func _select_character(index: int):
 	if index < 0 or index >= available_characters.size():
@@ -223,163 +159,46 @@ func _select_character(index: int):
 
 	selected_index = index
 	selected_character = available_characters[index]
-	character_list.select(index)
 
-	_update_preview()
+	for i in roster_buttons.size():
+		UITheme.style_selectable(roster_buttons[i], i == index, available_characters[i].color)
+	if roster_scroll and index < roster_buttons.size():
+		roster_scroll.call_deferred("ensure_control_visible", roster_buttons[index])
+
+	showcase.show_character(selected_character)
 	_update_info_panel()
-	_play_select_animation()
-
-func _update_preview():
-	# Remove old model
-	if preview_model:
-		preview_model.queue_free()
-		preview_model = null
-
-	# Create new model container
-	preview_model = Node3D.new()
-	preview_model.name = "PreviewModel"
-	preview_viewport.add_child(preview_model)
-
-	# Try to load character model
-	if selected_character.model_path != "" and ResourceLoader.exists(selected_character.model_path):
-		var model_scene = load(selected_character.model_path)
-		if model_scene:
-			var model_instance = model_scene.instantiate()
-			model_instance.scale = Vector3.ONE * selected_character.model_scale
-			model_instance.position = selected_character.model_offset
-			preview_model.add_child(model_instance)
-			return
-
-	# Fallback - create capsule with character color
-	var mesh = MeshInstance3D.new()
-	var capsule = CapsuleMesh.new()
-	capsule.radius = 0.35
-	capsule.height = 1.2
-	mesh.mesh = capsule
-
-	var material = StandardMaterial3D.new()
-	material.albedo_color = selected_character.color
-	material.metallic = 0.1
-	material.roughness = 0.7
-	mesh.set_surface_override_material(0, material)
-	mesh.position.y = 0.6
-
-	preview_model.add_child(mesh)
-
-	# Add simple face (eyes)
-	var eye_mesh = SphereMesh.new()
-	eye_mesh.radius = 0.08
-	eye_mesh.height = 0.16
-
-	var eye_mat = StandardMaterial3D.new()
-	eye_mat.albedo_color = Color.WHITE
-
-	var left_eye = MeshInstance3D.new()
-	left_eye.mesh = eye_mesh
-	left_eye.set_surface_override_material(0, eye_mat)
-	left_eye.position = Vector3(-0.12, 0.95, 0.28)
-	preview_model.add_child(left_eye)
-
-	var right_eye = MeshInstance3D.new()
-	right_eye.mesh = eye_mesh
-	right_eye.set_surface_override_material(0, eye_mat)
-	right_eye.position = Vector3(0.12, 0.95, 0.28)
-	preview_model.add_child(right_eye)
 
 func _update_info_panel():
-	name_label.text = selected_character.character_name
-	description_label.text = selected_character.description if selected_character.description else "A brave vegetable warrior!"
+	var c = selected_character
+	name_label.text = c.character_name
+	name_label.add_theme_color_override("font_color", c.color.lightened(0.3))
+	description_label.text = c.description if c.description else "A brave vegetable warrior!"
 
-	# Clear and rebuild stats
 	for child in stats_container.get_children():
 		child.queue_free()
+	UITheme.create_stat_row("Health", c.base_health, 150.0, UITheme.ACCENT_SUCCESS, stats_container)
+	UITheme.create_stat_row("Speed", c.base_speed, 8.0, UITheme.ACCENT_INFO, stats_container)
 
-	_add_stat_bar("Health", selected_character.base_health, 150.0, Color(0.3, 0.8, 0.3))
-	_add_stat_bar("Speed", selected_character.base_speed, 10.0, Color(0.3, 0.6, 0.9))
-
-	# Clear and rebuild abilities
 	for child in ability_container.get_children():
 		child.queue_free()
+	if c.active_ability:
+		_add_ability_info(c.active_ability, "Active · F", UITheme.ACCENT_SECONDARY)
+	if c.passive_ability:
+		_add_ability_info(c.passive_ability, "Passive", UITheme.ACCENT_BEET)
 
-	if selected_character.active_ability:
-		_add_ability_info(selected_character.active_ability, "ACTIVE", Color(1, 0.7, 0.2))
-	if selected_character.passive_ability:
-		_add_ability_info(selected_character.passive_ability, "PASSIVE", Color(0.5, 0.8, 1.0))
+func _add_ability_info(ability_data: AbilityData, tag: String, tag_color: Color):
+	var box = VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	ability_container.add_child(box)
 
-func _add_stat_bar(stat_name: String, value: float, max_value: float, color: Color):
-	var hbox = HBoxContainer.new()
-	stats_container.add_child(hbox)
+	var head = HBoxContainer.new()
+	head.add_theme_constant_override("separation", 10)
+	box.add_child(head)
+	UITheme.create_heading(ability_data.ability_name, head)
+	UITheme.create_pill(tag, tag_color, head).size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
-	var label = Label.new()
-	label.text = stat_name
-	label.custom_minimum_size.x = 70
-	hbox.add_child(label)
-
-	var progress = ProgressBar.new()
-	progress.max_value = max_value
-	progress.value = value
-	progress.size_flags_horizontal = SIZE_EXPAND_FILL
-	progress.show_percentage = false
-	progress.custom_minimum_size.y = 20
-
-	# Custom style
-	var style = StyleBoxFlat.new()
-	style.bg_color = color
-	style.corner_radius_top_left = 3
-	style.corner_radius_top_right = 3
-	style.corner_radius_bottom_left = 3
-	style.corner_radius_bottom_right = 3
-	progress.add_theme_stylebox_override("fill", style)
-
-	var bg_style = StyleBoxFlat.new()
-	bg_style.bg_color = Color(0.2, 0.2, 0.2)
-	bg_style.corner_radius_top_left = 3
-	bg_style.corner_radius_top_right = 3
-	bg_style.corner_radius_bottom_left = 3
-	bg_style.corner_radius_bottom_right = 3
-	progress.add_theme_stylebox_override("background", bg_style)
-
-	hbox.add_child(progress)
-
-	var value_label = Label.new()
-	value_label.text = str(int(value))
-	value_label.custom_minimum_size.x = 40
-	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	hbox.add_child(value_label)
-
-func _add_ability_info(ability_data: AbilityData, ability_type: String, type_color: Color):
-	var vbox = VBoxContainer.new()
-	ability_container.add_child(vbox)
-
-	var type_label = Label.new()
-	type_label.text = "[%s]" % ability_type
-	type_label.add_theme_font_size_override("font_size", 12)
-	type_label.add_theme_color_override("font_color", type_color)
-	vbox.add_child(type_label)
-
-	var name_label_ab = Label.new()
-	name_label_ab.text = ability_data.ability_name
-	name_label_ab.add_theme_font_size_override("font_size", 16)
-	name_label_ab.add_theme_color_override("font_color", Color(1, 0.95, 0.8))
-	vbox.add_child(name_label_ab)
-
-	var desc_label = Label.new()
-	desc_label.text = ability_data.description if ability_data.description else "No description"
-	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD
-	desc_label.add_theme_font_size_override("font_size", 12)
-	desc_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
-	vbox.add_child(desc_label)
-
-func _play_select_animation():
-	if preview_model:
-		var tween = create_tween()
-		preview_model.scale = Vector3.ONE * 0.8
-		tween.tween_property(preview_model, "scale", Vector3.ONE, 0.25)
-		tween.set_ease(Tween.EASE_OUT)
-		tween.set_trans(Tween.TRANS_BACK)
-
-func _on_character_list_selected(index: int):
-	_select_character(index)
+	var desc = UITheme.create_label(ability_data.description if ability_data.description else "No description", box, UITheme.FONT_SMALL)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 func _on_select_pressed():
 	if not selected_character:
@@ -387,13 +206,11 @@ func _on_select_pressed():
 
 	character_selected.emit(selected_character)
 
-	# Store in GameManager
 	var game_manager = get_node_or_null("/root/GameManager")
 	if game_manager:
 		game_manager.selected_character = selected_character
-		print("[CharacterSelect] Stored character: %s" % selected_character.character_name)
 
-	# Transition to spawn selection
+	select_button.disabled = true
 	var scene_transition = get_node_or_null("/root/SceneTransition")
 	if scene_transition:
 		scene_transition.fade_to_scene("res://scenes/SpawnSelectScene.tscn")

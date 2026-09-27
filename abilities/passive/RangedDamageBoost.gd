@@ -19,4 +19,3 @@ func _on_remove(entity):  # entity: Entity
 	if combat:
 		combat.set_ranged_damage_multiplier(1.0)
 		print("[RangedDamageBoost] Removed ranged damage boost from %s" % entity.name)
-

@@ -24,7 +24,7 @@ func _init():
 	# Passive ability: Agile - increased dodge chance
 	var passive_ability_data = AbilityData.new()
 	passive_ability_data.ability_name = "Agile"
-	passive_ability_data.description = "10% chance to dodge attacks"
+	passive_ability_data.description = "15% chance to dodge attacks"
 	passive_ability_data.ability_type = "passive"
 	passive_ability_data.script_path = "res://abilities/passive/DodgeChance.gd"
 	passive_ability = passive_ability_data

@@ -9,6 +9,7 @@ func _init():
 	ability_name = "Tomato Splash"
 	cooldown = 8.0
 	duration = 0.5
+	max_range = 9.0  # a throw, not a sniper: clamped towards the cursor
 
 func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity
 	# Find targets in splash radius

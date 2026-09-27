@@ -1,62 +1,119 @@
 ## Server-side world management
+## On a listen server (host) this world is also what the host sees and plays in:
+## the host's game scene adopts this map/loot instead of generating a second copy.
 extends Node
 class_name ServerWorld
 
 signal player_spawned(player_id: int, position: Vector3)
 signal player_removed(player_id: int)
+signal map_ready
 
 var map_generator: MapGenerator = null
 var destruction_system: DestructionSystem = null
 var loot_spawner: LootSpawner = null
-var loot_manager: NetworkLootManager = null
+var cover_spawner: CoverSpawner = null
 var players: Dictionary = {}  # player_id -> Player entity
 var spawn_points: Array[Vector3] = []
 var hex_grid: HexGrid = null
 
 var map_seed: int = 0
+var map_radius: int = MapGenerator.MATCH_MAP_RADIUS
+var is_map_ready: bool = false
+var destroyed_tiles: Array = []  # Vector2i coords destroyed so far (sent to late joiners)
+
+# The host's entity is created by the game scene as its local player.
+# The server only decides where it spawns.
+var host_spawn_position: Vector3 = Vector3.ZERO
+var has_host_spawn: bool = false
+
+var _pending_destroyed: Array = []
 
 func _ready():
-	# Create network loot manager
-	loot_manager = NetworkLootManager.new()
-	loot_manager.name = "NetworkLootManager"
-	loot_manager.is_server = true
-	add_child(loot_manager)
-
-	# Create map generator
 	map_generator = MapGenerator.new()
+	map_generator.name = "ServerMap"
 	add_child(map_generator)
 
-	# Generate map with random seed (will be synced to clients)
+	# Random seed, synced to clients
 	map_seed = randi()
-	hex_grid = await map_generator.generate_map(20, map_seed)
+	hex_grid = await map_generator.generate_map(map_radius, map_seed)
+	if not is_inside_tree() or not is_instance_valid(hex_grid):
+		return  # Server was stopped while the map was generating
 	print("[ServerWorld] Map generated with seed: %d" % map_seed)
 
-	# Create destruction system
+	# Destruction runs only once the match starts (see start_match)
 	destruction_system = DestructionSystem.new()
+	destruction_system.name = "DestructionSystem"
 	add_child(destruction_system)
-	destruction_system.start(hex_grid)
+	destruction_system.tile_destroyed.connect(_on_tile_destroyed)
 
-	# Create loot spawner
+	# Loot is seeded from the map seed so every client spawns the same containers
 	loot_spawner = LootSpawner.new()
 	loot_spawner.name = "LootSpawner"
 	add_child(loot_spawner)
-	loot_spawner.setup(hex_grid)
-
-	# Register all spawned containers with network manager
+	loot_spawner.setup(hex_grid, map_seed)
+	loot_spawner.supply_drop_spawned.connect(_on_supply_drop_spawned)
 	_register_loot_containers()
 
-	# Generate spawn points
+	# Walls and bushes, seeded the same way (after the loot: bushes avoid container tiles)
+	cover_spawner = CoverSpawner.new()
+	cover_spawner.name = "CoverSpawner"
+	add_child(cover_spawner)
+	cover_spawner.setup(hex_grid, map_seed, CoverSpawner.container_tiles(hex_grid, loot_spawner))
+
 	_generate_spawn_points(hex_grid)
 
-func _register_loot_containers():
-	# Wait a frame for containers to be added to scene
-	await get_tree().process_frame
+	is_map_ready = true
+	map_ready.emit()
 
-	var containers = get_tree().get_nodes_in_group("loot_containers")
-	for container in containers:
-		if container is LootContainer:
-			loot_manager.register_container(container)
-	print("[ServerWorld] Registered %d loot containers" % containers.size())
+func _get_loot_manager() -> NetworkLootManager:
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	return network_manager.loot_manager if network_manager else null
+
+func _register_loot_containers():
+	var loot_manager = _get_loot_manager()
+	if not loot_manager:
+		return
+	for container in loot_spawner.spawned_containers:
+		loot_manager.register_container(container)
+	print("[ServerWorld] Registered %d loot containers" % loot_spawner.spawned_containers.size())
+
+## Called when the lobby countdown finishes
+func start_match():
+	if destruction_system and hex_grid:
+		destruction_system.start(hex_grid)
+	if loot_spawner:
+		loot_spawner.start_supply_drops()
+
+## The match is decided: the island stops crumbling, no more supply drops
+func stop_match():
+	if destruction_system:
+		destruction_system.stop()
+	if loot_spawner:
+		loot_spawner.enable_supply_drops = false
+
+func _on_supply_drop_spawned(container: LootContainer):
+	var loot_manager = _get_loot_manager()
+	if not loot_manager:
+		return
+	var container_id = loot_manager.register_container(container)
+	var ground_pos = container.position - Vector3(0, 20.0, 0)
+	loot_manager.record_supply_drop(ground_pos, container.loot_seed, container_id)  # for late joiners
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.broadcast_supply_drop(ground_pos, container.loot_seed, container_id)
+
+func _on_tile_destroyed(coords: Vector2i):
+	destroyed_tiles.append(coords)
+	# Batch all tiles destroyed this frame into one RPC
+	if _pending_destroyed.is_empty():
+		call_deferred("_flush_destroyed_tiles")
+	_pending_destroyed.append(coords)
+
+func _flush_destroyed_tiles():
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.broadcast_tiles_destroyed(_pending_destroyed.duplicate())
+	_pending_destroyed.clear()
 
 func _generate_spawn_points(grid: HexGrid):
 	spawn_points.clear()
@@ -69,7 +126,8 @@ func _generate_spawn_points(grid: HexGrid):
 		for r in range(-spawn_radius, spawn_radius + 1):
 			var coords = center_coords + Vector2i(q, r)
 			var tile = grid.get_tile(coords)
-			if tile and not tile.is_destroyed and tile.biome_type != HexTile.BiomeType.WATER:
+			# Проверяем can_spawn - нельзя спавниться на горах и в воде
+			if tile and not tile.is_destroyed and tile.can_spawn:
 				var world_pos = grid.hex_to_world(coords)
 				# Spawn player ON TOP of the tile (tile height + offset for player)
 				world_pos.y = (tile.height * HexTile.HEX_HEIGHT) + HexTile.HEX_HEIGHT + 1.0
@@ -78,99 +136,81 @@ func _generate_spawn_points(grid: HexGrid):
 	spawn_points.shuffle()
 	print("[ServerWorld] Generated %d spawn points" % spawn_points.size())
 
-func spawn_player(player_id: int) -> Vector3:
-	print("[ServerWorld] Spawning player %d..." % player_id)
-
-	# Check for duplicate spawn
-	if players.has(player_id):
-		print("[ServerWorld] WARNING: Player %d already exists, returning existing position" % player_id)
-		var existing_player = players[player_id]
-		if is_instance_valid(existing_player):
-			return existing_player.global_position
-		else:
-			# Clean up invalid reference
-			players.erase(player_id)
-
-	# Get random spawn point
+func get_random_spawn_point() -> Vector3:
 	if spawn_points.is_empty():
-		print("[ServerWorld] WARNING: No spawn points available, using center")
-		# Fallback to center
-		spawn_points.append(Vector3.ZERO)
+		return Vector3(0, 3, 0)
+	return spawn_points.pop_back()
 
-	var spawn_pos = spawn_points.pop_back()
-	return _create_player_at(player_id, spawn_pos)
+func spawn_player(player_id: int, character_name: String = "") -> Vector3:
+	return spawn_player_at(player_id, get_random_spawn_point(), character_name)
 
-func spawn_player_at(player_id: int, position: Vector3) -> Vector3:
-	print("[ServerWorld] Spawning player %d at specific position %s..." % [player_id, position])
-
-	# Check for duplicate spawn
+func spawn_player_at(player_id: int, position: Vector3, character_name: String = "") -> Vector3:
+	# Already spawned?
 	if players.has(player_id):
-		print("[ServerWorld] WARNING: Player %d already exists, returning existing position" % player_id)
 		var existing_player = players[player_id]
 		if is_instance_valid(existing_player):
 			return existing_player.global_position
-		else:
-			players.erase(player_id)
+		players.erase(player_id)
 
-	return _create_player_at(player_id, position)
-
-func _create_player_at(player_id: int, spawn_pos: Vector3) -> Vector3:
-	print("[ServerWorld] Selected spawn position: %s" % spawn_pos)
-
-	# For host (player_id == 1), try to find existing player in ClientWorld
-	var player = null
 	if player_id == 1:
-		# Host - look for existing player in ClientWorld
-		var game_scene = get_tree().get_first_node_in_group("game_scene")
-		if game_scene:
-			var client_world = game_scene.get_node_or_null("ClientWorld")
-			if client_world and client_world.players.has(player_id):
-				player = client_world.players[player_id]
-				print("[ServerWorld] Using existing host player from ClientWorld")
+		# Host: remember the spot, the game scene spawns the host's local player there
+		host_spawn_position = position
+		has_host_spawn = true
+		print("[ServerWorld] Host spawn reserved at %s" % position)
+		player_spawned.emit(player_id, position)
+		return position
 
-	# Create new player if not found (for clients or if host not yet created)
-	if not player:
-		print("[ServerWorld] Creating Player entity for player %d..." % player_id)
-		player = Player.new()
-		player.entity_id = player_id
-		player.name = "Player_%d" % player_id
-		add_child(player)
+	print("[ServerWorld] Creating Player entity for player %d (%s) at %s" % [player_id, character_name, position])
+	var player = Player.new()
+	player.entity_id = player_id
+	player.name = "Player_%d" % player_id
+	add_child(player)
 
-		# Spawn player
-		player.spawn(spawn_pos)
+	# Same stats/abilities/model as on the owning client, otherwise speed and health differ
+	var char_data = CharacterRegistry.get_by_name(character_name)
+	if char_data:
+		player.setup_character(char_data)
 
-	# Store player reference
+	player.spawn(position)
+	player.give_starting_loadout()
+
+	_register_entity(player_id, player)
+	player_spawned.emit(player_id, position)
+	return position
+
+## The host's local player (created by GameSceneController) becomes the server entity for id 1
+func register_host_player(player: Player):
+	_register_entity(1, player)
+
+func _register_entity(player_id: int, player: Player):
 	players[player_id] = player
 
-	# Link player to ServerPlayer
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager and network_manager.game_server and network_manager.game_server.players.has(player_id):
 		var server_player = network_manager.game_server.players[player_id]
 		server_player.player_entity = player
-		print("[ServerWorld] ✓ Player entity linked to ServerPlayer")
-
-	print("[ServerWorld] ✓ Player %d spawned at %s" % [player_id, spawn_pos])
-	player_spawned.emit(player_id, spawn_pos)
-	return spawn_pos
+		server_player.connect_to_entity_signals()
 
 func remove_player(player_id: int):
-	print("[ServerWorld] Removing player %d..." % player_id)
-	
 	if not players.has(player_id):
-		print("[ServerWorld] WARNING: Player %d not found in players dictionary" % player_id)
 		return
-	
+
 	var player = players[player_id]
 	players.erase(player_id)
-	
-	if is_instance_valid(player):
+
+	if is_instance_valid(player) and player_id != 1:
 		player.queue_free()
-	
+
 	print("[ServerWorld] ✓ Player %d removed (remaining players: %d)" % [player_id, players.size()])
 	player_removed.emit(player_id)
 
 func get_player(player_id: int) -> Player:
-	return players.get(player_id, null)
+	var player = players.get(player_id, null)
+	return player if is_instance_valid(player) else null
 
 func get_all_players() -> Array[Player]:
-	return players.values()
+	var result: Array[Player] = []
+	for player in players.values():
+		if is_instance_valid(player):
+			result.append(player)
+	return result

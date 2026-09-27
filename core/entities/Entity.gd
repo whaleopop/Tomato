@@ -12,6 +12,11 @@ var entity_id: int = -1
 var is_server_authoritative: bool = false
 
 func _ready():
+	# Set collision layer for player detection (layer 2)
+	# Layer 1 = environment, Layer 2 = players, Layer 3 = items
+	collision_layer = 2
+	collision_mask = 1 | 4  # Collide with environment (1) and items (4)
+
 	# Setup collision shape if not present
 	if not has_node("CollisionShape3D"):
 		_create_default_collision()

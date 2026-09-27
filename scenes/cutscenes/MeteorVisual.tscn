@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3 uid="uid://bx7meteor_visual"]
+
+[ext_resource type="Script" path="res://scenes/cutscenes/MeteorVisual.gd" id="1_meteor"]
+
+[node name="MeteorVisual" type="Node3D"]
+script = ExtResource("1_meteor")
+meteor_radius = 3.0
+num_floating_rocks = 12
+rock_orbit_radius = 4.5
+rock_orbit_speed = 1.5

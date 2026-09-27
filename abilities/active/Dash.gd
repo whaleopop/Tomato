@@ -25,9 +25,13 @@ func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity
 		if dash_direction.length_squared() < 0.01:
 			dash_direction = entity.global_transform.basis.z
 	
-	# Apply dash
-	var dash_velocity = dash_direction * dash_speed
-	movement.velocity = dash_velocity
+	# Apply dash: dash_distance at dash_speed, along the ground
+	dash_direction.y = 0.0
+	if dash_direction.length_squared() < 0.01:
+		dash_direction = entity.global_transform.basis.z
+	dash_direction = dash_direction.normalized()
+	if not replay:
+		movement.dash(dash_direction * dash_speed, dash_distance / dash_speed)
 	
 	# Create dash effect
 	_create_dash_effect(entity, dash_direction)

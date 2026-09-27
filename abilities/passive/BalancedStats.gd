@@ -19,7 +19,10 @@ func _on_apply(entity):  # entity: Entity
 	if health:
 		if original_max_health < 0:
 			original_max_health = health.max_health
+		var before = health.max_health
 		health.set_max_health(original_max_health * stat_multiplier, false)
+		if health.max_health > before:
+			health.heal(health.max_health - before)  # the extra max HP comes filled
 
 	# Apply to movement
 	var movement = entity.get_component("MovementComponent")
@@ -55,4 +58,3 @@ func _on_remove(entity):  # entity: Entity
 		original_damage = -1.0
 
 	print("[BalancedStats] Removed stat boost from %s" % entity.name)
-

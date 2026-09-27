@@ -1,88 +1,58 @@
-## Server tick system for authoritative updates
+## Server tick system: broadcasts the authoritative world state to clients.
+## Entities simulate themselves in Entity._physics_process; updating their components here as
+## well made every server-side player move and cool down roughly twice as fast.
 extends Node
 class_name TickSystem
 
 signal tick_processed(tick: int)
 
 const TICK_RATE: float = 1.0 / 20.0  # 20 ticks per second
-const SYNC_RATE: float = 1.0 / 10.0  # Sync 10 times per second
-const TICK_DELTA: float = TICK_RATE  # Delta time for each tick
+const SYNC_RATE: float = 1.0 / 20.0  # State sync 20 times per second
 
 var tick_timer: float = 0.0
 var sync_timer: float = 0.0
 var current_tick: int = 0
 var server: GameServer = null
 
-func _ready():
-	print("[TickSystem] Initialized with tick rate: %.1f ticks/sec" % (1.0 / TICK_RATE))
-
 func _process(delta: float):
 	tick_timer += delta
 	sync_timer += delta
-	
-	# Process game ticks
+
 	if tick_timer >= TICK_RATE:
-		tick_timer = 0.0
-		_process_tick()
-	
-	# Sync with clients
+		tick_timer -= TICK_RATE
+		current_tick += 1
+		tick_processed.emit(current_tick)
+
 	if sync_timer >= SYNC_RATE:
 		sync_timer = 0.0
 		_sync_clients()
 
-func _process_tick():
-	current_tick += 1
-
-	if server == null:
-		return
-
-	# Update all player entities with server-authoritative logic
-	for player_id in server.players:
-		var server_player = server.players[player_id]
-		if server_player and server_player.player_entity:
-			_update_player_entity(server_player.player_entity)
-
-	# Update destruction system if available
-	if server.server_world and server.server_world.has_method("tick_update"):
-		server.server_world.tick_update(TICK_DELTA)
-
-	# Emit tick signal for other systems to hook into
-	tick_processed.emit(current_tick)
-
-func _update_player_entity(player: Player):
-	if not is_instance_valid(player):
-		return
-
-	# Update movement component (physics simulation)
-	var movement = player.get_component("MovementComponent")
-	if movement and movement.enabled:
-		movement.update(TICK_DELTA)
-
-	# Update combat component (cooldowns, weapon state)
-	var combat = player.get_component("CombatComponent")
-	if combat and combat.enabled:
-		combat.update(TICK_DELTA)
-
-	# Update ability component (cooldowns)
-	var ability = player.get_component("AbilityComponent")
-	if ability and ability.enabled:
-		ability.update(TICK_DELTA)
-
-	# Update health component (regeneration, damage over time)
-	var health = player.get_component("HealthComponent")
-	if health and health.enabled:
-		health.update(TICK_DELTA)
-	
 func _sync_clients():
-	if server == null:
+	# Nothing to sync while players sit in the lobby
+	if server == null or not is_instance_valid(server) or not server.game_started:
 		return
-	
-	# Collect world state
-	var world_state = _collect_world_state()
-	
-	# Send to all clients via GameServer
-	if server and is_instance_valid(server):
-		server.send_world_state(world_state)
+	var peers = server.multiplayer.get_peers()
+	if peers.is_empty():
+		return
+	var full = _collect_world_state()
+	var world = server.server_world
+	# Every client gets its own copy: positions of players it can't see are left out, so a
+	# modified client has nothing to reveal (server-side fog of war, see ServerVisibility)
+	for peer_id in peers:
+		var viewer = world.get_player(peer_id) if world else null
+		var state = {"tick": full.tick, "timestamp": full.timestamp, "players": {}}
+		for player_id in full.players:
+			var data: Dictionary = full.players[player_id]
+			if data.is_empty() or player_id == peer_id:
+				state.players[player_id] = data
+				continue
+			var target = world.get_player(player_id) if world else null
+			if ServerVisibility.can_see(viewer, target, world.hex_grid if world else null):
+				state.players[player_id] = data
+			else:
+				# Still in the match (alive count, deaths), but where is none of your business
+				state.players[player_id] = {"hidden": true, "health": data.get("health", 0.0), "max_health": data.get("max_health", 0.0)}
+		server.send_world_state_to(peer_id, state)
 
 func _collect_world_state() -> Dictionary:
 	var state = {
@@ -91,14 +61,11 @@ func _collect_world_state() -> Dictionary:
 		"players": {},
 	}
 
-	# Add player states
-	if server:
-		for player_id in server.players:
-			var server_player = server.players[player_id]
-			state.players[player_id] = server_player.get_sync_data()
+	for player_id in server.players:
+		var server_player = server.players[player_id]
+		state.players[player_id] = server_player.get_sync_data()
 
 	return state
 
 func set_server(p_server: GameServer):
 	server = p_server
-

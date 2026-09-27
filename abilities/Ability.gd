@@ -6,6 +6,10 @@ var ability_name: String = ""
 var description: String = ""
 var cooldown: float = 5.0
 var enabled: bool = true
+## True while replaying someone else's cast on a client (AbilityComponent.play_remote_cast):
+## only the visuals matter - damage is server-only anyway, and moving the caster would fight
+## the network interpolation of their position
+var replay: bool = false
 
 func _init(p_name: String = "", p_cooldown: float = 5.0):
 	ability_name = p_name

@@ -24,4 +24,3 @@ func _on_remove(entity):  # entity: Entity
 		movement.set_speed(original_speed)
 		print("[SpeedBoost] Removed speed boost from %s, restored speed to %.1f" % [entity.name, original_speed])
 		original_speed = -1.0  # Reset for next application
-

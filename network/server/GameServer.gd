@@ -1,4 +1,4 @@
-## Main dedicated game server
+## Main game server (listen server: the host plays as player 1)
 extends Node
 class_name GameServer
 
@@ -18,166 +18,199 @@ var lobby_manager: LobbyManager = null
 var network_lobby: NetworkLobby = null
 var is_running: bool = false
 var game_started: bool = false
+var match_over: bool = false
+var _participants: Dictionary = {}  # player_id -> true: everyone in the match when it started
+var _end_check_timer: float = 0.0
+const END_CHECK_INTERVAL: float = 0.5
+# Joining a running match: only early on, and never a second time (an eliminated player going
+# back to the menu and joining again used to get a fresh, full-health character)
+const LATE_JOIN_WINDOW: float = 45.0
+var _match_tokens: Dictionary = {}  # client token -> true: everyone who played this match
+var _match_start_time: float = 0.0
 
 func _ready():
-	# Create server world
 	server_world = ServerWorld.new()
+	server_world.name = "ServerWorld"
 	add_child(server_world)
 
-	# Create tick system
 	tick_system = TickSystem.new()
+	tick_system.name = "TickSystem"
 	tick_system.set_server(self)
 	add_child(tick_system)
 
-	# Create lobby manager
 	lobby_manager = LobbyManager.new()
 	lobby_manager.name = "LobbyManager"
 	add_child(lobby_manager)
 
-	# Get network lobby from NetworkManager (created before GameServer)
-	# This ensures consistent RPC paths between client and server
+	# NetworkLobby lives under NetworkManager (consistent RPC path on every peer)
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager:
 		network_lobby = network_manager.get_network_lobby()
 		if network_lobby:
 			network_lobby.setup_server(lobby_manager)
 
-	# Connect signals
 	server_world.player_spawned.connect(_on_player_spawned)
+	server_world.map_ready.connect(_on_map_ready)
 	lobby_manager.match_started.connect(_on_match_started)
 
-func start_server(port: int = PORT):
+func start_server(port: int = PORT) -> bool:
 	print("[GameServer] Starting server on port %d..." % port)
-	
+
 	if is_running:
 		print("[GameServer] ERROR: Server is already running!")
 		return false
-	
-	print("[GameServer] Creating ENet peer...")
+
 	peer = ENetMultiplayerPeer.new()
 	var error = peer.create_server(port, MAX_PLAYERS)
-	
-	if error != OK:
-		push_error("[GameServer] ERROR: Failed to create server: %d" % error)
-		print("[GameServer] Error code: %d" % error)
-		return false
-	
-	print("[GameServer] Server created successfully, setting multiplayer peer...")
-	multiplayer.multiplayer_peer = peer
 
-	# Connect multiplayer signals
+	if error != OK:
+		push_error("[GameServer] Failed to create server on port %d: %d (port already in use?)" % [port, error])
+		peer = null
+		return false
+
+	multiplayer.multiplayer_peer = peer
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 
 	is_running = true
 
-	# Create ServerPlayer for host (ID = 1)
-	print("[GameServer] Creating ServerPlayer for host (ID=1)...")
+	# The host is player 1 and joins its own lobby
 	var host_player = ServerPlayer.new()
 	host_player.player_id = 1
+	host_player.name = "ServerPlayer_1"
 	players[1] = host_player
 	add_child(host_player)
-
-	# Add host to lobby
-	if lobby_manager:
-		lobby_manager.add_player(1)
+	lobby_manager.add_player(1)
 
 	server_started.emit()
-
-	print("[GameServer] ✓ Server started successfully on port %d (max players: %d)" % [port, MAX_PLAYERS])
+	print("[GameServer] ✓ Server started on port %d (max players: %d)" % [port, MAX_PLAYERS])
 	return true
 
 func stop_server():
-	print("[GameServer] Stopping server...")
-	
 	if not is_running:
-		print("[GameServer] Server is not running, nothing to stop")
 		return
-	
+
+	if multiplayer.peer_connected.is_connected(_on_peer_connected):
+		multiplayer.peer_connected.disconnect(_on_peer_connected)
+	if multiplayer.peer_disconnected.is_connected(_on_peer_disconnected):
+		multiplayer.peer_disconnected.disconnect(_on_peer_disconnected)
+
 	if peer:
-		print("[GameServer] Closing peer connection...")
 		peer.close()
 		peer = null
-	
-	print("[GameServer] Clearing players (%d players)" % players.size())
+	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+
 	players.clear()
 	is_running = false
+	game_started = false
+	match_over = false
+	_participants.clear()
+	_match_tokens.clear()
 	server_stopped.emit()
-	
 	print("[GameServer] ✓ Server stopped")
+
+func _on_map_ready():
+	lobby_manager.setup_available_spawns(server_world.hex_grid)
+	# Clients that connected while the map was still generating
+	for player_id in multiplayer.get_peers():
+		_send_map_to_peer(player_id)
+
+func _send_map_to_peer(player_id: int):
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.send_map_info_to_client(player_id, server_world.map_seed, server_world.map_radius, server_world.destroyed_tiles)
+	if network_lobby:
+		network_lobby.send_map_data_to_player(player_id, server_world.hex_grid)
 
 func _on_peer_connected(player_id: int):
 	print("[GameServer] ===== Player connected: %d =====" % player_id)
 
-	# Check for duplicate connection
 	if players.has(player_id):
-		print("[GameServer] WARNING: Player %d already in players dict, ignoring duplicate" % player_id)
 		return
 
 	player_connected.emit(player_id)
 
-	# Create server player
-	print("[GameServer] Creating ServerPlayer for player %d..." % player_id)
 	var server_player = ServerPlayer.new()
 	server_player.player_id = player_id
+	server_player.name = "ServerPlayer_%d" % player_id
 	players[player_id] = server_player
 	add_child(server_player)
 
-	# Send map seed to client FIRST
-	_send_map_seed_to_client(player_id)
+	lobby_manager.add_player(player_id)
 
-	# Add player to lobby
-	if lobby_manager:
-		lobby_manager.add_player(player_id)
-		# Setup available spawns if not done yet
-		if server_world.hex_grid and lobby_manager.available_spawns.is_empty():
-			lobby_manager.setup_available_spawns(server_world.hex_grid)
+	# Otherwise it is sent from _on_map_ready
+	if server_world.is_map_ready:
+		_send_map_to_peer(player_id)
 
-	# Send map data for spawn selection
-	if network_lobby and server_world.hex_grid:
-		await get_tree().process_frame
-		network_lobby.send_map_data_to_player(player_id, server_world.hex_grid)
+	# Late joiners are spawned once they picked their character (see spawn_late_joiner)
 
-	# If game already started, spawn immediately
-	if game_started:
-		call_deferred("_spawn_player_deferred", player_id)
-
-func _spawn_player_deferred(player_id: int):
-	# Verify player still exists (may have disconnected)
-	if not players.has(player_id):
-		print("[GameServer] Player %d disconnected before spawn, skipping" % player_id)
+## A client joined after the match had started and told us its character
+func spawn_late_joiner(player_id: int):
+	if not game_started or not players.has(player_id) or server_world.players.has(player_id):
 		return
+	var reason = can_late_join(player_id)
+	if reason != "":
+		_refuse_join(player_id, reason)
+		return
+	print("[GameServer] Spawning late joiner %d" % player_id)
+	_match_tokens[lobby_manager.get_player_token(player_id)] = true
+	_participants[player_id] = true  # counts for "last one standing" from now on
+	_spawn_player(player_id)
 
-	# Set character name on ServerPlayer from lobby
+## "" if this client may still enter the running match, else why not
+func can_late_join(player_id: int) -> String:
+	if match_over:
+		return "The match just ended - join the next one"
+	var token = lobby_manager.get_player_token(player_id)
+	if token != "" and _match_tokens.has(token):
+		return "You already played in this match - wait for the next one"
+	if Time.get_ticks_msec() / 1000.0 - _match_start_time > LATE_JOIN_WINDOW:
+		return "A match is in progress - wait for the next one"
+	return ""
+
+func _refuse_join(player_id: int, reason: String):
+	print("[GameServer] Refusing player %d: %s" % [player_id, reason])
+	if network_lobby:
+		network_lobby._receive_join_refused.rpc_id(player_id, reason)
+	# Give the message a moment to arrive, then let them go
+	get_tree().create_timer(0.5).timeout.connect(func():
+		if peer and multiplayer.get_peers().has(player_id):
+			peer.disconnect_peer(player_id)
+	)
+
+func _spawn_player(player_id: int):
+	if not players.has(player_id):
+		return  # Disconnected in the meantime
+
 	var server_player = players[player_id]
-	if lobby_manager:
-		server_player.character_name = lobby_manager.get_player_character(player_id)
-		print("[GameServer] Player %d character: %s" % [player_id, server_player.character_name])
+	server_player.character_name = lobby_manager.get_player_character(player_id)
 
-	# Get spawn position from lobby if available
-	var spawn_pos: Vector3
-	if lobby_manager and server_world.hex_grid:
+	var spawn_pos = Vector3.ZERO
+	if server_world.hex_grid:
 		spawn_pos = lobby_manager.get_spawn_position(player_id, server_world.hex_grid)
-		if spawn_pos == Vector3.ZERO:
-			# Fallback to random spawn
-			spawn_pos = server_world.spawn_player(player_id)
-		else:
-			# Spawn at selected position
-			spawn_pos = server_world.spawn_player_at(player_id, spawn_pos)
-	else:
-		spawn_pos = server_world.spawn_player(player_id)
 
-	print("[GameServer] ✓ Player %d fully connected and spawned at %s" % [player_id, spawn_pos])
+	if spawn_pos == Vector3.ZERO:
+		server_world.spawn_player(player_id, server_player.character_name)
+	else:
+		server_world.spawn_player_at(player_id, spawn_pos, server_player.character_name)
 
 func _on_match_started():
 	print("[GameServer] ===== MATCH STARTED =====")
 	game_started = true
-
-	# Spawn all players at their selected positions
+	match_over = false
+	_participants.clear()
+	_match_tokens.clear()
+	_match_start_time = Time.get_ticks_msec() / 1000.0
 	for player_id in players.keys():
-		call_deferred("_spawn_player_deferred", player_id)
+		_participants[player_id] = true
+		var token = lobby_manager.get_player_token(player_id)
+		if token != "":
+			_match_tokens[token] = true
+	server_world.start_match()
 
-	# Notify all clients via NetworkManager (consistent RPC path)
+	for player_id in players.keys():
+		_spawn_player(player_id)
+
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager:
 		network_manager.notify_match_start()
@@ -186,77 +219,78 @@ func _on_peer_disconnected(player_id: int):
 	print("[GameServer] Player disconnected: %d" % player_id)
 	player_disconnected.emit(player_id)
 
-	# Remove player from lobby
-	if lobby_manager:
-		lobby_manager.remove_player(player_id)
+	lobby_manager.remove_player(player_id)
+	# Others must see them leave (and a cancelled countdown)
+	if network_lobby and not game_started:
+		network_lobby._broadcast_lobby_state()
 
-	# Remove player from world
 	if players.has(player_id):
-		print("[GameServer] Removing player %d from world..." % player_id)
 		var server_player = players[player_id]
 		server_world.remove_player(player_id)
 		server_player.queue_free()
 		players.erase(player_id)
-		print("[GameServer] ✓ Player %d removed (remaining players: %d)" % [player_id, players.size()])
-	else:
-		print("[GameServer] WARNING: Player %d not found in players dictionary" % player_id)
+
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.send_player_left(player_id)
+
+# ---------------------------------------------------------------- match end
+
+func _process(delta: float):
+	if not game_started or match_over:
+		return
+	_end_check_timer += delta
+	if _end_check_timer >= END_CHECK_INTERVAL:
+		_end_check_timer = 0.0
+		_check_match_end()
+
+## Last one standing wins. A participant who is still connected but not spawned yet (the
+## host plays the cutscene first) counts as alive; one who left counts as out.
+## A solo match (practice) never ends.
+func _check_match_end():
+	if _participants.size() < 2:
+		return
+	var alive: Array = []
+	for player_id in _participants:
+		if not players.has(player_id):
+			continue
+		var entity = server_world.players.get(player_id)
+		if entity == null or not is_instance_valid(entity):
+			alive.append(player_id)
+			continue
+		var health = entity.get_component("HealthComponent")
+		if health == null or not health.is_dead:
+			alive.append(player_id)
+	if alive.size() > 1:
+		return
+
+	match_over = true
+	var winner_id: int = alive[0] if alive.size() == 1 else 0
+	var winner_name = lobby_manager.get_player_character(winner_id) if winner_id != 0 else ""
+	print("[GameServer] ===== MATCH OVER: winner %d (%s) =====" % [winner_id, winner_name])
+	server_world.stop_match()
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.broadcast_match_end(winner_id, winner_name)
 
 func _on_player_spawned(player_id: int, position: Vector3):
-	print("[GameServer] Player %d spawned at position %s, notifying clients..." % [player_id, position])
-	# Notify all clients about new player via NetworkManager
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager:
 		network_manager.send_spawn_player(player_id, position)
-		print("[GameServer] ✓ Spawn notification sent for player %d" % player_id)
-	else:
-		print("[GameServer] WARNING: NetworkManager not found")
-
-@rpc("any_peer", "reliable")
-func receive_player_input(input_data: Dictionary):
-	# SECURITY FIX: Use actual sender ID instead of trusting client-provided ID
-	var sender_id = multiplayer.get_remote_sender_id()
-
-	if not players.has(sender_id):
-		print("[GameServer] WARNING: Received input from unknown player %d" % sender_id)
-		return
-
-	if not input_data is Dictionary:
-		print("[GameServer] ERROR: input_data is not a Dictionary, got type: %s" % typeof(input_data))
-		return
-
-	var server_player = players[sender_id]
-	server_player.process_input(input_data)
-
-# RPC methods - must match client signatures exactly
-# These are called on clients, empty implementation on server
-@rpc("authority", "reliable")
-func spawn_player(player_id: int, position: Vector3):
-	# This should only be called on clients, not on server
-	# If called on server, it means something is wrong
-	if multiplayer.is_server():
-		print("[GameServer] WARNING: spawn_player RPC called on server (should only be called on clients)")
-	pass
-
-@rpc("authority", "reliable")
-func update_world_state(state: Dictionary):
-	# This should only be called on clients, not on server
-	# If called on server, it means something is wrong
-	if multiplayer.is_server():
-		print("[GameServer] WARNING: update_world_state RPC called on server (should only be called on clients)")
-	pass
-
-@rpc("authority", "reliable")
-func receive_map_seed(_seed: int):
-	# This is called on clients, not on server
-	pass
-
-func _send_map_seed_to_client(player_id: int):
-	var network_manager = get_node_or_null("/root/NetworkManager")
-	if network_manager:
-		network_manager.send_map_seed_to_client(player_id, server_world.map_seed)
 
 func send_world_state(state: Dictionary):
-	# Server-side method to send state to clients via NetworkManager
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager:
 		network_manager.send_world_state(state)
+
+## One client's filtered view of the world (TickSystem)
+func send_world_state_to(peer_id: int, state: Dictionary):
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.send_world_state_to(peer_id, state)
+
+## Broadcast shot effect to all clients
+func broadcast_shot_effect(shooter_id: int, from_pos: Vector3, to_pos: Vector3, weapon_type: int, hit: bool, show_on_host: bool = false):
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.broadcast_shot_effect(shooter_id, from_pos, to_pos, weapon_type, hit, show_on_host)

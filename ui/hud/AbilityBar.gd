@@ -1,193 +1,108 @@
-## Ability bar UI component with cooldown visualization and pulse effects
-extends Control
+## Ability bar (bottom-center): glass slots with key hint and a radial cooldown sweep
+extends HBoxContainer
 class_name AbilityBar
 
-var ability_component: AbilityComponent = null
-var ability_buttons: Array[Button] = []
-var cooldown_overlays: Array[ColorRect] = []
-var cooldown_labels: Array[Label] = []
-var pulse_timers: Array[float] = []
+const SLOT_SIZE: Vector2 = Vector2(76, 76)
 
-const BUTTON_SIZE: Vector2 = Vector2(80, 80)
-const BUTTON_SPACING: float = 10.0
+var ability_component: AbilityComponent = null
+var slots: Array[AbilitySlot] = []
 
 func _ready():
-	pass
+	add_theme_constant_override("separation", 12)
+	alignment = BoxContainer.ALIGNMENT_CENTER
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func setup(p_ability_component: AbilityComponent):
 	ability_component = p_ability_component
-
 	if ability_component:
-		ability_component.ability_activated.connect(_on_ability_activated)
 		ability_component.ability_cooldown_finished.connect(_on_cooldown_finished)
-		_update_abilities()
+		_rebuild()
 
-func _process(delta: float):
-	_update_cooldown_display(delta)
-	_update_pulse_effects(delta)
-
-func _update_abilities():
-	# Clear existing buttons
-	for button in ability_buttons:
-		button.queue_free()
-	ability_buttons.clear()
-	cooldown_overlays.clear()
-	cooldown_labels.clear()
-	pulse_timers.clear()
-
+func _rebuild():
+	for slot in slots:
+		slot.queue_free()
+	slots.clear()
 	if not ability_component:
 		return
 
-	# Create buttons for each active ability
-	for i in range(ability_component.active_abilities.size()):
-		var ability = ability_component.active_abilities[i]
+	for i in ability_component.active_abilities.size():
+		var slot = AbilitySlot.new()
+		slot.ability = ability_component.active_abilities[i]
+		slot.component = ability_component
+		slot.key_text = _key_for_action("ability_%d" % (i + 1))
+		slot.custom_minimum_size = SLOT_SIZE
+		add_child(slot)
+		slots.append(slot)
 
-		# Container for button and overlay
-		var container = Control.new()
-		container.custom_minimum_size = BUTTON_SIZE
-		container.position = Vector2(i * (BUTTON_SIZE.x + BUTTON_SPACING), 0)
-		add_child(container)
-
-		# Main button
-		var button = Button.new()
-		button.text = ability.ability_name
-		button.custom_minimum_size = BUTTON_SIZE
-		button.size = BUTTON_SIZE
-		container.add_child(button)
-		ability_buttons.append(button)
-
-		# Cooldown overlay (fills from bottom to top)
-		var overlay = ColorRect.new()
-		overlay.color = Color(0, 0, 0, 0.7)
-		overlay.size = BUTTON_SIZE
-		overlay.position = Vector2.ZERO
-		overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		container.add_child(overlay)
-		cooldown_overlays.append(overlay)
-
-		# Cooldown text label
-		var label = Label.new()
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.size = BUTTON_SIZE
-		label.position = Vector2.ZERO
-		label.add_theme_font_size_override("font_size", 20)
-		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		container.add_child(label)
-		cooldown_labels.append(label)
-
-		# Initialize pulse timer
-		pulse_timers.append(0.0)
-
-		# Hotkey hint
-		var hotkey = Label.new()
-		hotkey.text = str(i + 1)
-		hotkey.position = Vector2(5, 5)
-		hotkey.add_theme_font_size_override("font_size", 14)
-		hotkey.add_theme_color_override("font_color", Color(1, 1, 0.7))
-		container.add_child(hotkey)
-
-		# Connect button
-		button.pressed.connect(_on_ability_button_pressed.bind(i))
-
-func _update_cooldown_display(_delta: float):
-	if not ability_component:
-		return
-
-	for i in range(ability_component.active_abilities.size()):
-		if i >= cooldown_overlays.size():
-			continue
-
-		var ability = ability_component.active_abilities[i]
-		var overlay = cooldown_overlays[i]
-		var label = cooldown_labels[i]
-
-		if ability.is_ready():
-			# Ability ready - hide overlay
-			overlay.visible = false
-			label.text = ""
-		else:
-			# On cooldown - show overlay
-			overlay.visible = true
-			var cooldown_ratio = ability.get_cooldown_remaining() / ability.cooldown
-
-			# Overlay shrinks from top as cooldown progresses
-			var overlay_height = BUTTON_SIZE.y * cooldown_ratio
-			overlay.size.y = overlay_height
-			overlay.position.y = 0
-
-			# Show remaining time
-			var remaining = ability.get_cooldown_remaining()
-			if remaining > 1.0:
-				label.text = "%d" % ceil(remaining)
-			else:
-				label.text = "%.1f" % remaining
-
-func _update_pulse_effects(delta: float):
-	if not ability_component:
-		return
-
-	for i in range(ability_component.active_abilities.size()):
-		if i >= ability_buttons.size():
-			continue
-
-		var ability = ability_component.active_abilities[i]
-		var button = ability_buttons[i]
-
-		if ability.is_ready():
-			# Pulse effect when ready
-			pulse_timers[i] += delta * 3.0
-			var pulse = (sin(pulse_timers[i]) + 1.0) * 0.5
-			button.modulate = Color(1.0 + pulse * 0.3, 1.0 + pulse * 0.3, 1.0)
-
-			# Glow border effect
-			if pulse_timers[i] < 0.1:
-				# Just became ready - flash effect
-				button.modulate = Color(1.5, 1.5, 1.2)
-		else:
-			# On cooldown - dimmed
-			pulse_timers[i] = 0.0
-			button.modulate = Color(0.6, 0.6, 0.6)
-
-func _on_ability_button_pressed(index: int):
-	if ability_component:
-		# Get mouse position in world
-		var camera = get_viewport().get_camera_3d()
-		if camera:
-			var mouse_pos = get_viewport().get_mouse_position()
-			var ray_origin = camera.project_ray_origin(mouse_pos)
-			var ray_end = ray_origin + camera.project_ray_normal(mouse_pos) * 1000.0
-
-			# Get world_3d from viewport (Control doesn't have get_world_3d())
-			var world_3d = get_viewport().world_3d
-			if not world_3d:
-				return
-
-			var space_state = world_3d.direct_space_state
-			var query = PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-			var result = space_state.intersect_ray(query)
-
-			var target_pos = Vector3.ZERO
-			if result:
-				target_pos = result.position
-
-			ability_component.activate_ability(index, target_pos)
-
-func _on_ability_activated(_ability: ActiveAbility):
-	# Reset pulse timer for visual feedback
-	for i in range(pulse_timers.size()):
-		if i < ability_component.active_abilities.size():
-			if ability_component.active_abilities[i] == _ability:
-				pulse_timers[i] = 0.0
-				break
+func _key_for_action(action: String) -> String:
+	if not InputMap.has_action(action):
+		return "?"
+	for event in InputMap.action_get_events(action):
+		if event is InputEventKey:
+			var code = event.physical_keycode if event.physical_keycode != 0 else event.keycode
+			return OS.get_keycode_string(code)
+	return "?"
 
 func _on_cooldown_finished(ability: ActiveAbility):
-	# Flash effect when ability becomes ready
-	for i in range(ability_component.active_abilities.size()):
-		if ability_component.active_abilities[i] == ability:
-			if i < ability_buttons.size():
-				var button = ability_buttons[i]
-				var tween = create_tween()
-				tween.tween_property(button, "modulate", Color(1.8, 1.8, 1.5), 0.1)
-				tween.tween_property(button, "modulate", Color.WHITE, 0.2)
-			break
+	for slot in slots:
+		if slot.ability == ability:
+			slot.flash()
+
+## One ability button
+class AbilitySlot extends Control:
+	var ability: ActiveAbility = null
+	var component: AbilityComponent = null
+	var key_text: String = ""
+	var _flash: float = 0.0
+	var _pulse: float = 0.0
+
+	func _ready():
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tooltip_text = ability.ability_name if ability else ""
+
+	func flash():
+		_flash = 1.0
+
+	func _process(delta: float):
+		_flash = max(0.0, _flash - delta * 2.5)
+		_pulse += delta * 2.0
+		queue_redraw()
+
+	func _draw():
+		var rect = Rect2(Vector2.ZERO, size)
+		var remaining: float = component.get_ability_cooldown(ability) if component and ability else 0.0
+		var is_ready_now = remaining <= 0.0
+		var accent = UITheme.ACCENT_SECONDARY
+
+		var fill = Color(1, 1, 1, 0.08) if is_ready_now else Color(0, 0, 0, 0.35)
+		var rim = Color(accent, 0.55 + 0.25 * sin(_pulse)) if is_ready_now else Color(1, 1, 1, 0.12)
+		var box = UITheme.glass_box(fill, rim, 18, 0, 0)
+		if is_ready_now:
+			box.shadow_color = Color(accent, 0.25 + 0.5 * _flash)
+			box.shadow_size = 8 + int(10 * _flash)
+		draw_style_box(box, rect)
+
+		var center = size / 2.0
+		var font = UITheme.font_black()
+
+		# Ability initial as the "icon"
+		var initial = ability.ability_name.substr(0, 1).to_upper() if ability else "?"
+		var icon_color = Color.WHITE if is_ready_now else Color(1, 1, 1, 0.35)
+		var icon_size = 30
+		var text_w = font.get_string_size(initial, HORIZONTAL_ALIGNMENT_LEFT, -1, icon_size).x
+		draw_string(font, Vector2(center.x - text_w / 2.0, center.y + icon_size * 0.35), initial, HORIZONTAL_ALIGNMENT_LEFT, -1, icon_size, icon_color)
+
+		if not is_ready_now and ability and ability.cooldown > 0:
+			var ratio = clamp(remaining / ability.cooldown, 0.0, 1.0)
+			# Radial sweep of the remaining cooldown
+			var radius = min(size.x, size.y) * 0.36
+			draw_arc(center, radius, -PI / 2.0, -PI / 2.0 + TAU * ratio, 40, Color(accent, 0.9), 4.0, true)
+			var label = ("%d" % ceil(remaining)) if remaining > 1.0 else ("%.1f" % remaining)
+			var w = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+			draw_string(font, Vector2(center.x - w / 2.0, size.y - 10), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
+
+		# Key hint chip
+		var chip = Rect2(Vector2(6, 6), Vector2(22, 20))
+		draw_style_box(UITheme.glass_box(Color(0, 0, 0, 0.45), Color(1, 1, 1, 0.2), 6, 0, 0), chip)
+		var kw = font.get_string_size(key_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+		draw_string(font, Vector2(chip.position.x + (chip.size.x - kw) / 2.0, chip.position.y + 15), key_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.9))

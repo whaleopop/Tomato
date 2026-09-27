@@ -7,10 +7,11 @@ func _init():
 	description = "A brave red warrior with juicy resilience"
 	base_health = 90.0
 	base_speed = 6.0
-	model_path = "res://models/Tomato.glb"
+	model_path = "res://models/characters/Tomato.glb"  # Generated from art/concepts/tomato.png
 	color = Color(0.9, 0.2, 0.2)  # Red
-	model_scale = 0.8
+	model_scale = 1.0  # Auto-normalized to the standard height
 	model_offset = Vector3(0, 0, 0)
+	model_origin_at_feet = true
 	
 	# Active ability: Tomato Splash - throws acidic juice
 	var active_ability_data = AbilityData.new()
@@ -28,4 +29,3 @@ func _init():
 	passive_ability_data.ability_type = "passive"
 	passive_ability_data.script_path = "res://abilities/passive/HealthRegeneration.gd"
 	passive_ability = passive_ability_data
-

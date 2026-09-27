@@ -28,4 +28,3 @@ func _init():
 	passive_ability_data.ability_type = "passive"
 	passive_ability_data.script_path = "res://abilities/passive/ToughSkin.gd"
 	passive_ability = passive_ability_data
-

@@ -13,8 +13,10 @@ func add_tile(coords: Vector2i, tile: HexTile):
 	add_child(tile)
 
 func get_tile(coords: Vector2i) -> HexTile:
-	var tile = tiles.get(coords, null)
-	if tile and not is_instance_valid(tile):
+	if not tiles.has(coords):
+		return null
+	var tile = tiles[coords]
+	if not is_instance_valid(tile):
 		tiles.erase(coords)
 		return null
 	return tile
@@ -35,14 +37,16 @@ func get_neighbors(coords: Vector2i) -> Array:
 	return neighbors
 
 func hex_to_world(coords: Vector2i) -> Vector3:
-	var x = coords.x * sqrt(3.0) * HexTile.HEX_SIZE
-	var z = (coords.y + coords.x * 0.5) * 1.5 * HexTile.HEX_SIZE
+	var x = sqrt(3.0) * HexTile.HEX_RADIUS * (coords.x + coords.y * 0.5)
+	var z = 1.5 * HexTile.HEX_RADIUS * coords.y
 	return Vector3(x, 0, z)
 
+
 func world_to_hex(world_pos: Vector3) -> Vector2i:
-	var q = (sqrt(3.0) / 3.0 * world_pos.x - 1.0 / 3.0 * world_pos.z) / HexTile.HEX_SIZE
-	var r = (2.0 / 3.0 * world_pos.z) / HexTile.HEX_SIZE
+	var q = (sqrt(3.0) / 3.0 * world_pos.x - 1.0 / 3.0 * world_pos.z) / HexTile.HEX_RADIUS
+	var r = (2.0 / 3.0 * world_pos.z) / HexTile.HEX_RADIUS
 	return _hex_round(Vector2(q, r))
+
 
 func _hex_round(hex: Vector2) -> Vector2i:
 	var q = round(hex.x)
@@ -64,15 +68,41 @@ func _hex_round(hex: Vector2) -> Vector2i:
 
 func get_all_tiles() -> Array:
 	var result: Array = []
-	for tile in tiles.values():
-		# Filter out invalid/freed tiles
+	var to_remove: Array[Vector2i] = []
+	for coords in tiles.keys():
+		var tile = tiles[coords]
 		if is_instance_valid(tile):
 			result.append(tile)
+		else:
+			to_remove.append(coords)
+	# Cleanup invalid references
+	for coords in to_remove:
+		tiles.erase(coords)
 	return result
 
 func remove_tile(coords: Vector2i):
-	if tiles.has(coords):
-		var tile = tiles[coords]
-		tiles.erase(coords)
+	if not tiles.has(coords):
+		return
+	var tile = tiles[coords]
+	tiles.erase(coords)
+	if is_instance_valid(tile):
+		tile.queue_free()
+	refresh_edges_around(coords)
+
+## Tell tiles what lies across their edges (HexTile.update_edges) - all of them, or `list`
+func update_tile_edges(list = null) -> void:
+	for tile in (get_all_tiles() if list == null else list):
 		if is_instance_valid(tile):
-			tile.queue_free()
+			tile.update_edges(self)
+
+## The tile at `coords` appeared, changed or vanished: it and its neighbours redraw their borders
+func refresh_edges_around(coords: Vector2i) -> void:
+	var list: Array = []
+	var own = get_tile(coords)
+	if own:
+		list.append(own)
+	for dir in HexTile.EDGE_DIRECTIONS:
+		var other = get_tile(coords + dir)
+		if other:
+			list.append(other)
+	update_tile_edges(list)

@@ -1,0 +1,3 @@
+# Windows scripts need CRLF (the repo root forces LF for text files)
+*.bat text eol=crlf
+*.cmd text eol=crlf

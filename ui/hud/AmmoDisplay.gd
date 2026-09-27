@@ -1,71 +1,51 @@
-## Displays current ammo count and reload status
-extends Control
+## Ammo card (bottom-right): big magazine count, reserve and reload progress
+extends GlassPanel
 class_name AmmoDisplay
 
 var combat_component: CombatComponent = null
 var inventory_component: InventoryComponent = null
 
+var weapon_label: Label = null
 var ammo_label: Label = null
+var magazine_label: Label = null
 var reserve_label: Label = null
 var reload_bar: ProgressBar = null
-var weapon_icon: TextureRect = null
-var container: HBoxContainer = null
 
-const RELOAD_COLOR = Color(1, 0.8, 0.3)
-const LOW_AMMO_COLOR = Color(1, 0.3, 0.3)
+const RELOAD_COLOR = UITheme.ACCENT_WARNING
+const LOW_AMMO_COLOR = UITheme.ACCENT_DANGER
 const NORMAL_COLOR = Color.WHITE
 
+func _init():
+	super._init()
+	padding = 16
+	tint = UITheme.GLASS_TINT_HUD
+	custom_minimum_size = Vector2(210, 0)
+
 func _ready():
-	_create_ui()
+	var box = VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	add_child(box)
 
-func _create_ui():
-	# Main container
-	container = HBoxContainer.new()
-	container.add_theme_constant_override("separation", 10)
-	add_child(container)
+	weapon_label = UITheme.create_caption("", box)
 
-	# Weapon icon placeholder
-	weapon_icon = TextureRect.new()
-	weapon_icon.custom_minimum_size = Vector2(48, 48)
-	weapon_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	container.add_child(weapon_icon)
+	var row = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	box.add_child(row)
 
-	# Ammo info container
-	var ammo_container = VBoxContainer.new()
-	ammo_container.add_theme_constant_override("separation", 2)
-	container.add_child(ammo_container)
-
-	# Current ammo / magazine size
 	ammo_label = Label.new()
-	ammo_label.text = "12 / 12"
-	ammo_label.add_theme_font_size_override("font_size", 24)
-	ammo_label.add_theme_color_override("font_color", NORMAL_COLOR)
-	ammo_container.add_child(ammo_label)
+	ammo_label.add_theme_font_override("font", UITheme.font_black())
+	ammo_label.add_theme_font_size_override("font_size", 40)
+	row.add_child(ammo_label)
 
-	# Reserve ammo
-	reserve_label = Label.new()
-	reserve_label.text = "Reserve: 60"
-	reserve_label.add_theme_font_size_override("font_size", 14)
-	reserve_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
-	ammo_container.add_child(reserve_label)
+	magazine_label = UITheme.create_label("", row, UITheme.FONT_HEADING)
+	magazine_label.size_flags_vertical = Control.SIZE_SHRINK_END
+	magazine_label.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 
-	# Reload progress bar (hidden by default)
-	reload_bar = ProgressBar.new()
-	reload_bar.custom_minimum_size = Vector2(100, 8)
-	reload_bar.max_value = 1.0
-	reload_bar.value = 0.0
+	reserve_label = UITheme.create_label("", box, UITheme.FONT_SMALL)
+
+	reload_bar = UITheme.create_progress_bar(1.0, 0.0, RELOAD_COLOR, box)
+	reload_bar.custom_minimum_size.y = 6
 	reload_bar.visible = false
-	reload_bar.show_percentage = false
-	ammo_container.add_child(reload_bar)
-
-	# Style reload bar
-	var bar_style = StyleBoxFlat.new()
-	bar_style.bg_color = RELOAD_COLOR
-	bar_style.corner_radius_top_left = 4
-	bar_style.corner_radius_top_right = 4
-	bar_style.corner_radius_bottom_left = 4
-	bar_style.corner_radius_bottom_right = 4
-	reload_bar.add_theme_stylebox_override("fill", bar_style)
 
 func setup(p_combat: CombatComponent, p_inventory: InventoryComponent = null):
 	combat_component = p_combat
@@ -80,43 +60,33 @@ func _process(_delta: float):
 	_update_display()
 
 func _update_display():
-	if not combat_component:
-		visible = false
-		return
-
-	var weapon = combat_component.equipped_ranged_weapon
+	var weapon = combat_component.equipped_ranged_weapon if combat_component else null
 	if not weapon:
 		visible = false
 		return
-
 	visible = true
 
-	# Update ammo count
-	var current = weapon.current_ammo
-	var magazine = weapon.magazine_size
+	weapon_label.text = weapon.item_name.to_upper()
+	ammo_label.text = str(weapon.current_ammo)
+	magazine_label.text = "/ %d" % weapon.magazine_size
 
-	ammo_label.text = "%d / %d" % [current, magazine]
-
-	# Color based on ammo state
+	var color = NORMAL_COLOR
 	if combat_component.is_reloading:
-		ammo_label.add_theme_color_override("font_color", RELOAD_COLOR)
-	elif current <= magazine * 0.25:
-		ammo_label.add_theme_color_override("font_color", LOW_AMMO_COLOR)
-	else:
-		ammo_label.add_theme_color_override("font_color", NORMAL_COLOR)
+		color = RELOAD_COLOR
+	elif weapon.current_ammo <= weapon.magazine_size * 0.25:
+		color = LOW_AMMO_COLOR
+	ammo_label.add_theme_color_override("font_color", color)
 
-	# Update reserve ammo
 	if inventory_component:
 		var reserve = inventory_component.get_ammo_count(weapon.ammo_type)
-		reserve_label.text = "Reserve: %d" % reserve
+		reserve_label.text = "Reserve  %d" % reserve if reserve > 0 else "No reserve ammo"
+		reserve_label.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY if reserve > 0 else LOW_AMMO_COLOR)
 	else:
 		reserve_label.text = ""
 
-	# Update reload bar
-	if combat_component.is_reloading:
+	if combat_component.is_reloading and weapon.reload_time > 0:
 		reload_bar.visible = true
-		var progress = 1.0 - (combat_component.reload_timer / weapon.reload_time)
-		reload_bar.value = clamp(progress, 0.0, 1.0)
+		reload_bar.value = clamp(1.0 - (combat_component.reload_timer / weapon.reload_time), 0.0, 1.0)
 	else:
 		reload_bar.visible = false
 
@@ -124,20 +94,12 @@ func _on_reload_started():
 	reload_bar.visible = true
 	reload_bar.value = 0.0
 
-	# Flash effect
-	var tween = create_tween()
-	tween.tween_property(ammo_label, "modulate", Color(1, 1, 0), 0.1)
-	tween.tween_property(ammo_label, "modulate", Color.WHITE, 0.1)
-
 func _on_reload_finished():
 	reload_bar.visible = false
-
-	# Success flash
 	var tween = create_tween()
-	tween.tween_property(ammo_label, "modulate", Color(0.3, 1, 0.3), 0.15)
-	tween.tween_property(ammo_label, "modulate", Color.WHITE, 0.15)
+	tween.tween_property(ammo_label, "modulate", Color(0.6, 1.4, 0.6), 0.12)
+	tween.tween_property(ammo_label, "modulate", Color.WHITE, 0.2)
 
-func _on_weapon_changed(_weapon: WeaponData):
-	# Reset display when weapon changes
+func _on_weapon_changed(_weapon):
 	reload_bar.visible = false
 	_update_display()

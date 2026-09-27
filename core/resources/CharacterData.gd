@@ -13,4 +13,6 @@ class_name CharacterData
 @export var color: Color = Color(0.5, 0.5, 0.5)  # Character color for visuals
 @export var model_scale: float = 1.0  # Scale multiplier for model normalization
 @export var model_offset: Vector3 = Vector3.ZERO  # Offset for model positioning
+## True for models whose origin is at the feet (AI-generated / rigged by tools/ai_models)
+@export var model_origin_at_feet: bool = false
 

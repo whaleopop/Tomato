@@ -168,12 +168,31 @@ static func apply_hit_damage(hit_result: Dictionary, damage_source: Node = null)
 	var damage = hit_result.get("damage", DEFAULT_DAMAGE)
 	var actual_damage = 0.0
 
-	# Try to find health component
+	# Try to find health component (entities like Player)
 	if collider.has_method("get_component"):
 		var health_comp = collider.get_component("HealthComponent")
 		if health_comp:
-			actual_damage = health_comp.take_damage(damage, damage_source)
-	elif collider.has_method("take_damage"):
-		actual_damage = collider.take_damage(damage, damage_source)
+			var result = health_comp.take_damage(damage, damage_source)
+			actual_damage = result if result != null else damage
+			return actual_damage
+
+	# Try take_damage method - check if it accepts 2 arguments or 1
+	if collider.has_method("take_damage"):
+		# Check method info to determine argument count
+		var method_list = collider.get_method_list()
+		var takes_two_args = false
+		for method in method_list:
+			if method.name == "take_damage":
+				# args is an array of argument info
+				takes_two_args = method.args.size() >= 2
+				break
+
+		if takes_two_args:
+			var result = collider.take_damage(damage, damage_source)
+			actual_damage = result if result != null else damage
+		else:
+			# HexTile and similar objects only take damage amount (may return void)
+			collider.take_damage(damage)
+			actual_damage = damage  # Assume full damage was applied
 
 	return actual_damage

@@ -3,6 +3,7 @@ extends Component
 class_name AbilityComponent
 
 signal ability_activated(ability: ActiveAbility)
+signal ability_cast(ability_index: int, target_position: Vector3)  # the server replicates it
 signal ability_cooldown_finished(ability: ActiveAbility)
 signal passive_ability_applied(ability: PassiveAbility)
 
@@ -74,14 +75,24 @@ func activate_ability(ability_index: int, target_position: Vector3 = Vector3.ZER
 	if ability_cooldowns.has(ability) and ability_cooldowns[ability] > 0.0:
 		return false
 	
-	# Activate ability (async)
-	_activate_ability_async(ability, target_position)
-	
-	# Set cooldown immediately
+	# Set the cooldown first: a failure that returns at once clears it again (the old order
+	# cleared it and then set it, so failed casts still cost the full cooldown)
 	ability_cooldowns[ability] = ability.cooldown
 	ability_activated.emit(ability)
-	
+	ability_cast.emit(ability_index, target_position)
+	_activate_ability_async(ability, target_position)
 	return true
+
+## Show another player's cast on our copy of them (visual replay: the server did the real one)
+func play_remote_cast(ability_index: int, target_position: Vector3):
+	if ability_index < 0 or ability_index >= active_abilities.size():
+		return
+	var ability = active_abilities[ability_index]
+	ability_cooldowns[ability] = ability.cooldown  # their HUD-less cooldown, just for consistency
+	ability_activated.emit(ability)
+	ability.replay = true
+	await ability.activate(entity, target_position)
+	ability.replay = false
 
 func _activate_ability_async(ability: ActiveAbility, target_position: Vector3):
 	var success = await ability.activate(entity, target_position)

@@ -16,14 +16,16 @@ var players_ready: Dictionary = {}  # player_id -> bool
 var players_spawn: Dictionary = {}  # player_id -> Vector2i (hex coords)
 var players_names: Dictionary = {}  # player_id -> String (player nickname)
 var players_characters: Dictionary = {}  # player_id -> String (character class name)
+var players_tokens: Dictionary = {}  # player_id -> client token (NetworkManager.client_token)
 var reserved_spawns: Dictionary = {}  # Vector2i -> player_id (reserved spawn points)
 var available_spawns: Array[Vector2i] = []  # Available spawn hex coordinates
 
 var countdown_timer: float = 0.0
 var countdown_duration: int = 5
+var _last_countdown_second: int = -1
 var min_players_to_start: int = 1  # For testing, normally 2+
 
-const SPAWN_EXCLUSION_RADIUS: int = 2  # Minimum hex distance between spawn points
+const SPAWN_EXCLUSION_RADIUS: int = 4  # Minimum hex distance between spawn points
 
 func _ready():
 	set_process(false)
@@ -32,7 +34,10 @@ func _process(delta: float):
 	if state == LobbyState.COUNTDOWN:
 		countdown_timer -= delta
 		var seconds_left = ceili(countdown_timer)
-		countdown_tick.emit(seconds_left)
+		# Only when the displayed second changes (it is replicated with a reliable RPC)
+		if seconds_left != _last_countdown_second and seconds_left > 0:
+			_last_countdown_second = seconds_left
+			countdown_tick.emit(seconds_left)
 
 		if countdown_timer <= 0:
 			_start_match()
@@ -40,20 +45,26 @@ func _process(delta: float):
 func setup_available_spawns(hex_grid: HexGrid):
 	available_spawns.clear()
 
-	# Get all valid spawn tiles (not water, not destroyed)
+	# Same rule as the map itself: no water, no mountains, nothing destroyed
 	for coords in hex_grid.tiles.keys():
 		var tile = hex_grid.get_tile(coords)
-		if tile and not tile.is_destroyed and tile.biome_type != HexTile.BiomeType.WATER:
+		if tile and not tile.is_destroyed and tile.can_spawn:
 			available_spawns.append(coords)
 
 	print("[LobbyManager] %d spawn points available" % available_spawns.size())
 
 func add_player(player_id: int, player_name: String = ""):
+	if players_ready.has(player_id):
+		return  # Already in the lobby (keeps ready state / spawn)
 	players_ready[player_id] = false
 	players_spawn[player_id] = Vector2i(-9999, -9999)  # Invalid coords
 	players_names[player_id] = player_name if player_name != "" else "Player_%d" % player_id
 	players_characters[player_id] = ""
 	print("[LobbyManager] Player %d (%s) joined lobby" % [player_id, players_names[player_id]])
+	# A newcomer isn't ready: a running countdown stops (else they'd spawn with no character)
+	if state == LobbyState.COUNTDOWN:
+		_check_ready_state()
+		player_ready_changed.emit(player_id, false)
 
 func set_player_name(player_id: int, player_name: String):
 	if players_ready.has(player_id):
@@ -68,6 +79,14 @@ func set_player_character(player_id: int, character_name: String):
 func get_player_character(player_id: int) -> String:
 	return players_characters.get(player_id, "")
 
+## The client's per-run identity (NetworkManager.client_token): recognises rejoining players
+func set_player_token(player_id: int, token: String):
+	if players_ready.has(player_id):
+		players_tokens[player_id] = token
+
+func get_player_token(player_id: int) -> String:
+	return players_tokens.get(player_id, "")
+
 func remove_player(player_id: int):
 	# Free up reserved spawn
 	if players_spawn.has(player_id):
@@ -79,6 +98,7 @@ func remove_player(player_id: int):
 	players_spawn.erase(player_id)
 	players_names.erase(player_id)
 	players_characters.erase(player_id)
+	players_tokens.erase(player_id)
 	print("[LobbyManager] Player %d left lobby" % player_id)
 
 	# Check if we need to cancel countdown
@@ -95,10 +115,11 @@ func set_player_ready(player_id: int, is_ready: bool):
 		return
 
 	players_ready[player_id] = is_ready
-	player_ready_changed.emit(player_id, is_ready)
 	print("[LobbyManager] Player %d ready: %s" % [player_id, is_ready])
-
+	# Cancel / start the countdown BEFORE the state is broadcast (the signal broadcasts it),
+	# otherwise everyone keeps seeing "Match starting in N..." after someone un-readies
 	_check_ready_state()
+	player_ready_changed.emit(player_id, is_ready)
 
 func _has_valid_spawn(player_id: int) -> bool:
 	if not players_spawn.has(player_id):
@@ -110,8 +131,8 @@ func select_spawn(player_id: int, hex_coords: Vector2i) -> bool:
 	if not players_ready.has(player_id):
 		return false
 
-	# Check if spawn is available
-	if not _is_spawn_available(hex_coords):
+	# Check if spawn is available (areas we reserved ourselves don't count)
+	if not _is_spawn_available(hex_coords, player_id):
 		print("[LobbyManager] Spawn %s not available for player %d" % [hex_coords, player_id])
 		return false
 
@@ -128,13 +149,12 @@ func select_spawn(player_id: int, hex_coords: Vector2i) -> bool:
 	print("[LobbyManager] Player %d selected spawn at %s" % [player_id, hex_coords])
 	return true
 
-func _is_spawn_available(coords: Vector2i) -> bool:
-	# Check if coords is in available list
+func _is_spawn_available(coords: Vector2i, player_id: int = -1) -> bool:
 	if coords not in available_spawns:
 		return false
 
-	# Check if it's already reserved or too close to reserved
-	if reserved_spawns.has(coords):
+	# Reserved (or too close to) someone else's spawn
+	if reserved_spawns.has(coords) and reserved_spawns[coords] != player_id:
 		return false
 
 	return true
@@ -167,6 +187,8 @@ func _hex_distance(a: Vector2i, b: Vector2i) -> int:
 	return (abs(a.x - b.x) + abs(a.x + a.y - b.x - b.y) + abs(a.y - b.y)) / 2
 
 func _check_ready_state():
+	if state == LobbyState.STARTED:
+		return
 	var ready_count = 0
 	var total_count = players_ready.size()
 
@@ -186,6 +208,7 @@ func _check_ready_state():
 func _start_countdown():
 	state = LobbyState.COUNTDOWN
 	countdown_timer = float(countdown_duration)
+	_last_countdown_second = -1
 	set_process(true)
 	countdown_started.emit(countdown_duration)
 	all_players_ready.emit()
@@ -240,5 +263,18 @@ func get_lobby_state() -> Dictionary:
 		"players_spawn": players_spawn.duplicate(),
 		"players_names": players_names.duplicate(),
 		"reserved_spawns": reserved_spawns.keys(),
+		"reserved_by": reserved_spawns.duplicate(),
 		"countdown": ceili(countdown_timer) if state == LobbyState.COUNTDOWN else 0
+	}
+
+## Returns data needed for spawn cutscene
+func get_cutscene_data(hex_grid: HexGrid) -> Dictionary:
+	var spawn_positions: Dictionary = {}
+	for player_id in players_spawn.keys():
+		spawn_positions[player_id] = get_spawn_position(player_id, hex_grid)
+
+	return {
+		"spawn_positions": spawn_positions,
+		"player_characters": players_characters.duplicate(),
+		"players_names": players_names.duplicate()
 	}

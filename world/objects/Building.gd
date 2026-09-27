@@ -18,4 +18,3 @@ func _create_visual():
 	mesh_instance.set_surface_override_material(0, material)
 	
 	add_child(mesh_instance)
-

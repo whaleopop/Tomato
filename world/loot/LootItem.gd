@@ -21,37 +21,175 @@ enum ItemType {
 var item_data: ItemData = null
 
 var is_active: bool = true
-var mesh_instance: MeshInstance3D = null
+var visual: Node3D = null            # the model: bobs and spins
+var halo: MeshInstance3D = null      # glow on the ground in the loot type's color
+var beam: MeshInstance3D = null      # light pillar for the good stuff (weapons, shields, boosts)
 var original_position: Vector3 = Vector3.ZERO
+var interact_prompt: Label3D = null
+var _picked_by_local_player: bool = false  # Screen effects only for our own pickups
+var _landed: bool = true             # false while popping out of a container
 
 # Bobbing animation
 var bob_time: float = 0.0
-var bob_height: float = 0.2
-var bob_speed: float = 2.0
-var rotation_speed: float = 1.0
+var bob_height: float = 0.12
+var bob_speed: float = 2.4
+var rotation_speed: float = 1.1
+
+const INTERACT_RANGE: float = 2.0
+const FLIGHT_TIME: float = 0.55
+const ARC_HEIGHT: float = 1.3
+const HOVER_HEIGHT: float = 0.45     # items rest this far above the ground
 
 func _ready():
 	add_to_group("loot_items")
+	add_to_group("interactable")  # For E key pickup
 	original_position = position
 
 	_create_visual()
 	_create_collision()
 
-	# Connect signal for pickup
+	# Connect signal for auto-pickup when walking over
 	body_entered.connect(_on_body_entered)
 
 func _process(delta: float):
 	if not is_active:
 		return
 
+	if not _landed:
+		return
+
 	# Bobbing animation
 	bob_time += delta * bob_speed
-	if mesh_instance:
-		mesh_instance.position.y = sin(bob_time) * bob_height
-		mesh_instance.rotation.y += delta * rotation_speed
+	if visual:
+		visual.position.y = sin(bob_time) * bob_height
+		visual.rotation.y += delta * rotation_speed
+	if halo:
+		halo.scale = Vector3.ONE * (1.0 + sin(bob_time * 1.3) * 0.08)
+
+	# Update interact prompt for E key pickup
+	_update_interact_prompt()
+
+func _update_interact_prompt():
+	# Find local player
+	var local_player: Player = null
+	var players = get_tree().get_nodes_in_group("players")
+	for p in players:
+		if p is Player and p.is_local_player:
+			local_player = p
+			break
+
+	if not local_player:
+		if interact_prompt and interact_prompt.visible:
+			interact_prompt.visible = false
+		return
+
+	var dist = global_position.distance_to(local_player.global_position)
+
+	if dist <= INTERACT_RANGE:
+		if not interact_prompt:
+			_create_interact_prompt()
+		interact_prompt.visible = true
+	elif interact_prompt:
+		interact_prompt.visible = false
+
+func _create_interact_prompt():
+	interact_prompt = Label3D.new()
+	interact_prompt.text = "[E] %s" % item_name
+	interact_prompt.position = Vector3(0, 0.8, 0)
+	interact_prompt.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	interact_prompt.font_size = 36
+	interact_prompt.outline_size = 6
+	interact_prompt.modulate = Color(1, 1, 0.8)
+	interact_prompt.no_depth_test = true
+	add_child(interact_prompt)
+
+## Called when player presses E near item
+func interact(player: Player):
+	if not is_active or not _landed:
+		return
+
+	# Check distance
+	var dist = global_position.distance_to(player.global_position)
+	if dist > INTERACT_RANGE:
+		return
+
+	print("[LootItem] Player pressing E to pickup: %s" % item_name)
+	_pickup(player)
 
 func _create_visual():
-	mesh_instance = MeshInstance3D.new()
+	visual = Node3D.new()
+	visual.name = "ItemVisual"
+	add_child(visual)
+	var model = LootVisuals.pickup_model(item_type, item_data)
+	visual.add_child(model if model else _fallback_mesh())
+
+	var color = LootVisuals.type_color(item_type)
+	halo = LootVisuals.halo(color, 0.55)
+	halo.position.y = -HOVER_HEIGHT + 0.03
+	add_child(halo)
+	if item_type in [ItemType.WEAPON, ItemType.SHIELD, ItemType.ABILITY_BOOST]:
+		beam = LootVisuals.beam(color, 2.2, 0.1)
+		beam.position.y += -HOVER_HEIGHT
+		(beam.material_override as StandardMaterial3D).albedo_color.a = 0.55
+		add_child(beam)
+
+## Pop out of an opening container: fly from `from` in an arc to where the item rests,
+## bounce and settle. It cannot be picked up before it lands.
+func launch(from: Vector3, delay: float = 0.0):
+	_landed = false
+	var rest = global_position
+	visual.visible = false
+	_show_glow(false)
+	global_position = from
+	var t = create_tween()
+	t.tween_interval(delay)
+	t.tween_callback(func(): visual.visible = true)
+	t.tween_method(_fly.bind(from, rest), 0.0, 1.0, FLIGHT_TIME)
+	t.tween_callback(_on_landed)
+
+func _fly(k: float, from: Vector3, rest: Vector3):
+	var p = from.lerp(rest, k)
+	p.y += sin(k * PI) * ARC_HEIGHT
+	global_position = p
+	visual.rotation = Vector3(k * TAU, k * TAU * 1.5, 0)
+	visual.scale = Vector3.ONE * lerp(0.4, 1.0, min(k * 3.0, 1.0))
+
+func _on_landed():
+	visual.rotation = Vector3.ZERO
+	visual.position.y = 0.0
+	visual.scale = Vector3(1.35, 0.65, 1.35)
+	create_tween().tween_property(visual, "scale", Vector3.ONE, 0.45).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+	_show_glow(true)
+	var puff = LootVisuals.sparkles(LootVisuals.type_color(item_type), 8, 2.5, 0.5)
+	puff.position.y = -HOVER_HEIGHT + 0.1
+	add_child(puff)
+	puff.emitting = true
+	get_tree().create_timer(0.8).timeout.connect(puff.queue_free)
+	bob_time = 0.0
+	_landed = true
+	# Whoever already stands on the landing spot gets it now (body_entered won't fire again)
+	await get_tree().physics_frame
+	if is_inside_tree() and is_active:
+		for body in get_overlapping_bodies():
+			_on_body_entered(body)
+			if not is_active:
+				break
+
+func _show_glow(on: bool):
+	for g in [halo, beam]:
+		if not g:
+			continue
+		g.visible = true
+		var mat: StandardMaterial3D = g.material_override
+		var target = (0.55 if g == beam else 1.0) if on else 0.0
+		if on:
+			mat.albedo_color.a = 0.0
+			create_tween().tween_property(mat, "albedo_color:a", target, 0.4)
+		else:
+			mat.albedo_color.a = 0.0
+
+func _fallback_mesh() -> MeshInstance3D:
+	var mesh_instance = MeshInstance3D.new()
 	mesh_instance.name = "ItemMesh"
 
 	var mesh: Mesh
@@ -94,8 +232,7 @@ func _create_visual():
 	mesh_instance.mesh = mesh
 	mesh_instance.set_surface_override_material(0, material)
 	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-
-	add_child(mesh_instance)
+	return mesh_instance
 
 func _create_collision():
 	var collision = CollisionShape3D.new()
@@ -110,14 +247,23 @@ func _create_collision():
 	collision_mask = 2   # Detect players (layer 2)
 
 func _on_body_entered(body: Node3D):
-	if not is_active:
+	if not is_active or not _landed:
 		return
 
-	if body is Player:
-		_pickup(body as Player)
+	if not body is Player:
+		return
+
+	# On a client only our own player may pick things up by walking over them.
+	# Pickups by anyone else are decided by the server and replicated via NetworkLootManager.
+	var mp = get_tree().get_multiplayer()
+	if mp.has_multiplayer_peer() and not mp.is_server() and not body.is_local_player:
+		return
+
+	_pickup(body as Player)
 
 func _pickup(player: Player):
 	is_active = false
+	_picked_by_local_player = player != null and player.is_local_player
 	item_picked_up.emit(self, player)
 
 	# Apply item effect
@@ -149,14 +295,19 @@ func _apply_effect(player: Player):
 				else:
 					print("[LootItem] Inventory full, cannot add ammo")
 		ItemType.WEAPON:
+			print("[LootItem] Picking up WEAPON type item")
 			var inventory = player.get_component("InventoryComponent")
 			if inventory:
+				print("[LootItem] InventoryComponent found")
 				# If item_data is set, use it. Otherwise create a default weapon
-				var weapon_item = item_data if item_data is Weapon else _create_default_weapon()
-				if inventory.add_item(weapon_item):
-					print("[LootItem] Added %s to inventory" % weapon_item.item_name)
+				var weapon_item = item_data if item_data is RangedWeapon else _create_default_weapon()
+				print("[LootItem] Weapon item: %s (is RangedWeapon: %s)" % [weapon_item.item_name, weapon_item is RangedWeapon])
+				# Add to weapon slot (not regular inventory)
+				var slot = inventory.add_weapon_to_slot(weapon_item)
+				if slot >= 0:
+					print("[LootItem] ✓ Added %s to weapon slot %d" % [weapon_item.item_name, slot + 1])
 				else:
-					print("[LootItem] Inventory full, cannot add weapon")
+					print("[LootItem] Weapon slots full, cannot add weapon")
 		ItemType.ABILITY_BOOST:
 			# Temporary ability cooldown reduction
 			var ability = player.get_component("AbilityComponent")
@@ -170,9 +321,10 @@ func _apply_effect(player: Player):
 			print("[LootItem] Shield pickup (value: %f)" % item_value)
 
 func _play_pickup_effect():
-	# Hide mesh
-	if mesh_instance:
-		mesh_instance.visible = false
+	# Hide the model and its glow
+	for n in [visual, halo, beam]:
+		if n:
+			n.visible = false
 
 	var item_color: Color
 	match item_type:
@@ -289,6 +441,8 @@ func _play_pickup_effect():
 	_trigger_screen_effect()
 
 func _trigger_screen_effect():
+	if not _picked_by_local_player:
+		return
 	var screen_effects = get_node_or_null("/root/ScreenEffects")
 	if not screen_effects:
 		return
@@ -309,8 +463,9 @@ func _start_respawn_timer():
 
 func _respawn():
 	is_active = true
-	if mesh_instance:
-		mesh_instance.visible = true
+	for n in [visual, halo, beam]:
+		if n:
+			n.visible = true
 	position = original_position
 	print("[LootItem] %s respawned" % item_name)
 

@@ -5,10 +5,11 @@ class_name NetworkLobby
 signal lobby_state_updated(state: Dictionary)
 signal spawn_selection_result(success: bool, coords: Vector2i)
 signal countdown_update(seconds: int)
-signal match_starting
+signal match_starting(late_join: bool)
 
 var is_server: bool = false
 var lobby_manager: LobbyManager = null
+var last_map_data: Dictionary = {}  # Client: last map received for the spawn menu
 
 func _ready():
 	pass
@@ -68,6 +69,13 @@ func request_lobby_state():
 	var state = lobby_manager.get_lobby_state()
 	_receive_lobby_state.rpc_id(player_id, state)
 
+	# Joined while a match is running: send them straight into the game - if they were let in
+	# (spawn_late_joiner ran when their character arrived; otherwise they got refused)
+	if lobby_manager.state == LobbyManager.LobbyState.STARTED:
+		var game_server = get_node_or_null("/root/NetworkManager/GameServer")
+		if game_server and game_server.server_world.players.has(player_id):
+			_receive_match_start.rpc_id(player_id, true)
+
 @rpc("any_peer", "call_remote", "reliable")
 func request_map_data():
 	if not is_server:
@@ -88,15 +96,29 @@ func set_player_name(player_name: String):
 	_broadcast_lobby_state()
 
 @rpc("any_peer", "call_remote", "reliable")
-func set_player_character(character_name: String):
+func set_player_character(character_name: String, client_token: String):
 	if not is_server or not lobby_manager:
 		return
 
 	var player_id = multiplayer.get_remote_sender_id()
 	lobby_manager.set_player_character(player_id, character_name)
+	lobby_manager.set_player_token(player_id, client_token)
 	print("[NetworkLobby] Player %d selected character: %s" % [player_id, character_name])
 
+	# Late joiner: now that we know the character we can spawn them
+	var game_server = get_node_or_null("/root/NetworkManager/GameServer")
+	if game_server and game_server.game_started:
+		game_server.spawn_late_joiner(player_id)
+
 # === Server -> Client RPCs ===
+
+## The server won't let us into the running match (shown on the main menu after it drops us)
+@rpc("authority", "call_remote", "reliable")
+func _receive_join_refused(reason: String):
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.refusal_reason = reason
+	print("[NetworkLobby] Join refused: %s" % reason)
 
 @rpc("authority", "call_remote", "reliable")
 func _send_spawn_result(success: bool, hex_q: int, hex_r: int):
@@ -111,12 +133,22 @@ func _receive_countdown(seconds: int):
 	countdown_update.emit(seconds)
 
 @rpc("authority", "call_remote", "reliable")
-func _receive_match_start():
-	match_starting.emit()
+func _receive_match_start(late_join: bool):
+	match_starting.emit(late_join)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_cutscene_data(spawn_positions: Dictionary, player_characters: Dictionary):
+	print("[NetworkLobby] Received cutscene data for %d players" % spawn_positions.size())
+	var game_manager = get_node_or_null("/root/GameManager")
+	if game_manager:
+		game_manager.cutscene_spawn_positions = spawn_positions
+		game_manager.cutscene_player_characters = player_characters
+		print("[NetworkLobby] Cutscene data stored in GameManager")
 
 @rpc("authority", "call_remote", "reliable")
 func _receive_map_data(map_data: Dictionary):
-	# Store map data for spawn selection UI
+	# Keep it: the spawn menu may not exist yet when this arrives
+	last_map_data = map_data
 	var spawn_menu = get_tree().get_first_node_in_group("spawn_menu")
 	if spawn_menu and spawn_menu is SpawnSelectMenu:
 		var reserved = map_data.get("reserved_spawns", [])
@@ -138,9 +170,35 @@ func _on_countdown_tick(seconds: int):
 	countdown_update.emit(seconds)
 
 func _on_match_started():
-	_receive_match_start.rpc()
+	# Send cutscene data to clients before match start
+	_send_cutscene_data_to_clients()
+
+	_receive_match_start.rpc(false)
 	# Also emit locally for host
-	match_starting.emit()
+	match_starting.emit(false)
+
+func _send_cutscene_data_to_clients():
+	if not is_server or not lobby_manager:
+		return
+
+	var game_server = get_node_or_null("/root/NetworkManager/GameServer")
+	if not game_server or not game_server.server_world:
+		return
+
+	var hex_grid = game_server.server_world.hex_grid
+	if not hex_grid:
+		return
+
+	# Collect spawn positions and characters
+	var spawn_positions: Dictionary = {}
+	var player_characters: Dictionary = {}
+
+	for player_id in lobby_manager.players_spawn.keys():
+		spawn_positions[player_id] = lobby_manager.get_spawn_position(player_id, hex_grid)
+		player_characters[player_id] = lobby_manager.get_player_character(player_id)
+
+	# Send to all clients
+	_receive_cutscene_data.rpc(spawn_positions, player_characters)
 
 func _broadcast_lobby_state():
 	if not lobby_manager:
@@ -157,6 +215,9 @@ func _broadcast_lobby_state():
 func send_map_data_to_player(player_id: int, hex_grid: HexGrid):
 	if not is_server:
 		return
+
+	if not hex_grid:
+		return  # Map still generating: GameServer sends it once it is ready
 
 	var map_data = {
 		"hex_grid": _serialize_hex_grid(hex_grid),
@@ -184,7 +245,8 @@ func _serialize_hex_grid(hex_grid: HexGrid) -> Dictionary:
 		if tile and not tile.is_destroyed:
 			result[coords] = {
 				"biome": tile.biome_type,
-				"height": tile.height
+				"height": tile.height,
+				"spawnable": tile.can_spawn
 			}
 
 	return result
@@ -234,9 +296,12 @@ func client_set_name(player_name: String):
 		set_player_name.rpc_id(1, player_name)
 
 func client_set_character(character_name: String):
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	var token: String = network_manager.client_token if network_manager else ""
 	if is_server:
 		# Local server player
 		if lobby_manager:
 			lobby_manager.set_player_character(1, character_name)
+			lobby_manager.set_player_token(1, token)
 	else:
-		set_player_character.rpc_id(1, character_name)
+		set_player_character.rpc_id(1, character_name, token)

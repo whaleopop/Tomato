@@ -9,6 +9,20 @@ var input_timer: float = 0.0
 var input_rate: float = 1.0 / 30.0  # Send input 30 times per second
 var input_sequence: int = 0  # Sequence number for lag compensation
 
+# Aim tracking
+var current_aim_position: Vector3 = Vector3.ZERO
+
+# Опциональный smooth aiming (0 = instant, >0 = smooth для геймпадов)
+@export var aim_smoothing: float = 0.0  # Для мыши = 0 (мгновенно), для геймпада можно 0.2
+
+# One-shot actions are latched every frame and sent with the next input tick: checking
+# is_action_just_pressed only on the 30 Hz tick used to drop most key presses and clicks.
+const LATCHED_ACTIONS = ["jump", "attack", "reload", "interact",
+	"ability_1", "ability_2", "ability_3", "ability_4",
+	"weapon_slot_1", "weapon_slot_2", "weapon_slot_3", "weapon_slot_4", "weapon_slot_5"]
+var _latched: Dictionary = {}
+var _was_blocked: bool = false
+
 func _ready():
 	pass
 
@@ -19,17 +33,121 @@ func setup(p_player: Player):
 func _process(delta: float):
 	if not player or not player.is_local_player:
 		return
-	
+
+	var blocked = _input_blocked()
+	if blocked:
+		_latched.clear()
+		if not _was_blocked:
+			_send_stop()  # let go of everything when a menu opens or we die
+		_was_blocked = true
+		return
+	_was_blocked = false
+
+	# Always rotate player to face mouse
+	_update_aim_direction()
+
+	for action in LATCHED_ACTIONS:
+		if Input.is_action_just_pressed(action):
+			_latched[action] = true
+
 	input_timer += delta
-	
+
 	if input_timer >= input_rate:
 		input_timer = 0.0
 		_capture_and_send_input()
+		_latched.clear()
+
+func _pressed(action: String) -> bool:
+	return _latched.get(action, false)
+
+## Pause menu / inventory open (nodes in "blocks_game_input"), or we are eliminated
+func _input_blocked() -> bool:
+	var health = player.get_component("HealthComponent")
+	if health and health.is_dead:
+		return true
+	for node in get_tree().get_nodes_in_group("blocks_game_input"):
+		if node is CanvasItem and node.is_visible_in_tree():
+			return true
+	return false
+
+## One-off actions from menus (inventory use / drop), sent right away: gameplay input is
+## blocked while the menu is open
+func send_ui_action(action: Dictionary):
+	var input_data = {"timestamp": Time.get_ticks_msec(), "sequence": input_sequence, "rotation_y": player.rotation.y}
+	input_sequence += 1
+	input_data.merge(action)
+	_send_input_to_server(input_data)
+
+func _send_stop():
+	var input_data = {"timestamp": Time.get_ticks_msec(), "sequence": input_sequence, "rotation_y": player.rotation.y, "sprint": false}
+	input_sequence += 1
+	_send_input_to_server(input_data)
+	_apply_input_locally(input_data)
+
+## Update player rotation to face mouse cursor
+func _update_aim_direction():
+	var camera = get_viewport().get_camera_3d()
+	if not camera:
+		return
+
+	var mouse_pos = get_viewport().get_mouse_position()
+	var ray_origin = camera.project_ray_origin(mouse_pos)
+	var ray_dir = camera.project_ray_normal(mouse_pos)
+
+	# Calculate intersection with ground plane (y=player height)
+	var player_y = player.global_position.y
+	if abs(ray_dir.y) > 0.001:
+		var t = (player_y - ray_origin.y) / ray_dir.y
+		if t > 0:
+			current_aim_position = ray_origin + ray_dir * t
+
+			# Rotate player to face aim position
+			var look_dir = current_aim_position - player.global_position
+			look_dir.y = 0  # Keep rotation horizontal
+
+			if look_dir.length_squared() > 0.01:
+				var target_angle = atan2(look_dir.x, look_dir.z)
+				# Применить smoothing если включен (для геймпадов), иначе мгновенная ротация
+				if aim_smoothing > 0.0:
+					player.rotation.y = lerp_angle(player.rotation.y, target_angle, aim_smoothing)
+				else:
+					player.rotation.y = target_angle  # Мгновенная ротация (по умолчанию для мыши)
+
+## Get current aim position for crosshair
+func get_aim_position() -> Vector3:
+	return current_aim_position
+
+## What the mouse points at: {position} plus {entity_id} when it is another player we can
+## actually shoot (not ourselves, not behind a wall). Falls back to the aim point on the ground.
+func _mouse_target() -> Dictionary:
+	var target = {"position": current_aim_position if current_aim_position != Vector3.ZERO else player.global_position + Vector3(0, 0.5, -5)}
+	var camera = get_viewport().get_camera_3d()
+	var world_3d = get_viewport().world_3d
+	if not camera or not world_3d:
+		return target
+	var mouse_pos = get_viewport().get_mouse_position()
+	var ray_origin = camera.project_ray_origin(mouse_pos)
+	var query = PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + camera.project_ray_normal(mouse_pos) * 1000.0)
+	query.exclude = [player.get_rid()]  # clicking on your own character must not hit you
+	var result = world_3d.direct_space_state.intersect_ray(query)
+	if result.is_empty():
+		return target
+	target.position = result.position
+	var collider = result.get("collider")
+	if collider and collider != player and "entity_id" in collider:
+		var eye = player.global_position + Vector3(0, 1.0, 0)
+		var body = collider.global_position + Vector3(0, 0.9, 0)
+		if not CoverSpawner.line_blocked(world_3d, eye, body):
+			target["entity_id"] = collider.entity_id
+		else:
+			target.position = body  # the shot goes into the wall
+	return target
 
 func _capture_and_send_input():
 	var input_data = {
 		"timestamp": Time.get_ticks_msec(),
 		"sequence": input_sequence,
+		"rotation_y": player.rotation.y,  # So other players see where we aim
 	}
 	input_sequence += 1
 
@@ -52,56 +170,32 @@ func _capture_and_send_input():
 			move_direction = camera.transform_direction(move_direction)
 		input_data["move_direction"] = move_direction
 
-	# Capture jump input (Space)
-	if Input.is_action_just_pressed("jump"):
+	# Jump (Space)
+	if _pressed("jump"):
 		input_data["jump"] = true
 
 	# Capture sprint input (Shift)
 	input_data["sprint"] = Input.is_action_pressed("sprint")
-	
-	# Capture attack input (Left Mouse Button)
-	if Input.is_action_just_pressed("attack"):
+
+	# Attack: a click, or holding the button (the weapon's fire rate limits the rate)
+	var combat = player.get_component("CombatComponent")
+	var holding = Input.is_action_pressed("attack") and combat != null and combat.can_attack()
+	if _pressed("attack") or holding:
 		input_data["attack"] = true
-		
-		# Get target position from mouse
-		var camera = get_viewport().get_camera_3d()
-		if camera:
-			var mouse_pos = get_viewport().get_mouse_position()
-			var ray_origin = camera.project_ray_origin(mouse_pos)
-			var ray_end = ray_origin + camera.project_ray_normal(mouse_pos) * 1000.0
-			
-			var world_3d = get_viewport().world_3d
-			if world_3d:
-				var space_state = world_3d.direct_space_state
-				var query = PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-				var result = space_state.intersect_ray(query)
-				
-				if result:
-					input_data["target_position"] = result.position
-	
-	# Capture ability input (1-4 keys)
+		var aim = _mouse_target()
+		input_data["target_position"] = aim.position
+		# The client picks who it hit (server-authoritative damage checks it again)
+		if aim.has("entity_id"):
+			input_data["hit_entity_id"] = aim.entity_id
+
+	# Capture ability input (F/G/H/J)
 	for i in range(4):
-		if Input.is_action_just_pressed("ability_%d" % (i + 1)):
+		if _pressed("ability_%d" % (i + 1)):
 			input_data["ability_index"] = i
-
-			# Get target position from mouse
-			var camera = get_viewport().get_camera_3d()
-			if camera:
-				var mouse_pos = get_viewport().get_mouse_position()
-				var ray_origin = camera.project_ray_origin(mouse_pos)
-				var ray_end = ray_origin + camera.project_ray_normal(mouse_pos) * 1000.0
-
-				var world_3d = get_viewport().world_3d
-				if world_3d:
-					var space_state = world_3d.direct_space_state
-					var query = PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-					var result = space_state.intersect_ray(query)
-
-					if result:
-						input_data["target_position"] = result.position
+			input_data["target_position"] = _mouse_target().position
 
 	# Capture interact input (E key)
-	if Input.is_action_just_pressed("interact"):
+	if _pressed("interact"):
 		var interact_target = _find_interact_target()
 		if interact_target:
 			input_data["interact"] = true
@@ -109,10 +203,16 @@ func _capture_and_send_input():
 			_handle_interact(interact_target)
 
 	# Capture reload input (R key)
-	if Input.is_action_just_pressed("reload"):
+	if _pressed("reload"):
 		input_data["reload"] = true
 		# Handle locally for immediate feedback
 		_handle_reload()
+
+	# Capture weapon slot switching (1-5 keys)
+	for i in range(5):
+		if _pressed("weapon_slot_%d" % (i + 1)):
+			input_data["weapon_slot"] = i
+			_handle_weapon_switch(i)
 
 	# Send input to server if there's any
 	if input_data.size() > 0:
@@ -145,53 +245,65 @@ func _apply_input_locally(input_data: Dictionary):
 			# No movement input - stop moving
 			movement.set_move_direction(Vector3.ZERO)
 
-		# Apply jump
-		if input_data.has("jump") and input_data.jump:
-			movement.jump()
-
 		# Apply sprint
 		if input_data.has("sprint"):
 			movement.set_sprint(input_data.sprint)
 
-	# Note: Attacks and abilities are handled server-side for server-authoritative gameplay
+		if input_data.get("jump", false):
+			movement.jump()
 
-## Find nearest interactable object (container) within range
+	# Handle attack locally for immediate feedback (offline mode or client prediction)
+	if input_data.has("attack") and input_data.attack:
+		var combat = player.get_component("CombatComponent")
+		if combat:
+			if input_data.has("target_position"):
+				combat.attack(input_data.target_position)
+
+	# Handle abilities locally
+	if input_data.has("ability_index") and input_data.has("target_position"):
+		var ability_comp = player.get_component("AbilityComponent")
+		if ability_comp:
+			ability_comp.activate_ability(input_data.ability_index, input_data.target_position)
+
+## Find nearest interactable object (container or loot item) within range
 func _find_interact_target() -> Node3D:
 	if not player:
 		return null
 
-	var world_3d = get_viewport().world_3d
-	if not world_3d:
-		return null
-
-	var space_state = world_3d.direct_space_state
 	var player_pos = player.global_position + Vector3(0, 0.5, 0)
+	var interact_range = 2.5
 
-	# Use sphere query to find nearby containers
-	var query = PhysicsShapeQueryParameters3D.new()
-	var sphere = SphereShape3D.new()
-	sphere.radius = 2.5  # Interact range
-	query.shape = sphere
-	query.transform = Transform3D(Basis.IDENTITY, player_pos)
-	query.collision_mask = 8  # Layer 4 for interactive objects (containers)
-
-	var results = space_state.intersect_shape(query)
-
-	var closest_container: Node3D = null
+	var closest_target: Node3D = null
 	var closest_dist: float = INF
 
-	for result in results:
-		var collider = result.collider
-		if collider is LootContainer and not collider.is_opened and not collider.is_opening:
-			var dist = player_pos.distance_to(collider.global_position)
-			if dist < closest_dist:
+	# Check containers
+	var containers = get_tree().get_nodes_in_group("loot_containers")
+	for container in containers:
+		if container is LootContainer and not container.is_opened and not container.is_opening:
+			var dist = player_pos.distance_to(container.global_position)
+			if dist < interact_range and dist < closest_dist:
 				closest_dist = dist
-				closest_container = collider
+				closest_target = container
 
-	return closest_container
+	# Check loot items (weapons, ammo, etc.)
+	var loot_items = get_tree().get_nodes_in_group("loot_items")
+	for item in loot_items:
+		if item is LootItem and item.is_active:
+			var dist = player_pos.distance_to(item.global_position)
+			if dist < interact_range and dist < closest_dist:
+				closest_dist = dist
+				closest_target = item
+
+	return closest_target
 
 ## Handle interact with target (called locally for immediate feedback)
 func _handle_interact(target: Node3D):
+	# Handle loot items (weapons, ammo, health, etc.)
+	if target is LootItem:
+		target.interact(player)
+		return
+
+	# Handle loot containers
 	if target is LootContainer:
 		# Try to use network loot manager if available
 		var loot_manager = _get_loot_manager()
@@ -202,23 +314,11 @@ func _handle_interact(target: Node3D):
 			# Fallback to local interaction (offline mode)
 			target.interact(player)
 
-## Get the network loot manager
+## Get the network loot manager (single instance under NetworkManager on every peer)
 func _get_loot_manager() -> NetworkLootManager:
-	# Try to find ClientWorld via GameClient
 	var network_manager = get_node_or_null("/root/NetworkManager")
-	if network_manager:
-		if network_manager.game_client and network_manager.game_client.client_world:
-			return network_manager.game_client.client_world.loot_manager
-		if network_manager.game_server and network_manager.game_server.server_world:
-			return network_manager.game_server.server_world.loot_manager
-
-	# Fallback: search in game scene
-	var game_scene = get_tree().get_first_node_in_group("game_scene")
-	if game_scene:
-		var loot_mgr = game_scene.get_node_or_null("NetworkLootManager")
-		if loot_mgr:
-			return loot_mgr
-
+	if network_manager and network_manager.loot_manager:
+		return network_manager.loot_manager
 	return null
 
 ## Handle reload (called locally for immediate feedback)
@@ -230,3 +330,11 @@ func _handle_reload():
 	if combat:
 		combat.start_reload()
 
+## Handle weapon slot switching
+func _handle_weapon_switch(slot: int):
+	if not player:
+		return
+
+	var inventory = player.get_component("InventoryComponent")
+	if inventory:
+		inventory.switch_weapon_slot(slot)

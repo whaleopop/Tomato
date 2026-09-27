@@ -1,0 +1,19 @@
+# Python deps for tools/ai_models (installed by setup.ps1 into D:\royaltim-ai\venv).
+# torch is NOT listed here: setup.ps1 installs the CUDA wheel from download.pytorch.org.
+# Everything below ships prebuilt Windows wheels (no C++/CUDA compiler needed).
+diffusers==0.35.2
+transformers==4.56.2
+tokenizers==0.22.1
+accelerate==1.10.1
+huggingface-hub==0.35.3
+safetensors==0.6.2
+omegaconf==2.3.0
+einops==0.8.1
+trimesh==4.8.3
+PyMCubes==0.1.6
+fast-simplification==0.1.11
+rembg==2.0.67
+onnxruntime==1.22.1
+imageio==2.37.0
+scipy
+Pillow

@@ -28,6 +28,5 @@ func destroy():
 	
 	# Animate destruction
 	var tween = create_tween()
-	tween.tween_property(self, "scale", Vector3.ZERO, 0.5)
+	tween.tween_property(self, "scale", Vector3.ONE * 0.01, 0.5)  # not 0: physics can't invert a zero basis
 	tween.tween_callback(queue_free)
-

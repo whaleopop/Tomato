@@ -16,6 +16,10 @@ func _ready():
 	
 	# Initialize components
 	_initialize_components()
+
+	var health = get_component("HealthComponent")
+	if health:
+		health.died.connect(_on_died)
 	
 	player_ready.emit()
 
@@ -43,6 +47,39 @@ func _initialize_components():
 	# Networking component
 	var networking = NetworkingComponent.new(self)
 	add_component(networking)
+
+## Falling off the map (destroyed or edge tiles) eliminates you
+const KILL_HEIGHT: float = -15.0
+
+func _physics_process(delta: float):
+	super._physics_process(delta)
+	if global_position.y < KILL_HEIGHT:
+		var health = get_component("HealthComponent")
+		# Only the authority decides deaths; clients learn it through the synced health
+		if health and not health.is_dead and _is_authority():
+			health.die()
+
+func _is_authority() -> bool:
+	var mp = get_tree().get_multiplayer()
+	return not mp.has_multiplayer_peer() or mp.is_server()
+
+func _on_died():
+	var movement = get_component("MovementComponent")
+	if movement:
+		movement.stop()
+		movement.enabled = false
+	# No shooting or abilities from beyond the grave (they're invisible and unhittable)
+	for component_name in ["CombatComponent", "AbilityComponent"]:
+		var component = get_component(component_name)
+		if component:
+			component.enabled = false
+	# Stop colliding with bullets and players
+	collision_layer = 0
+	var model = get_node_or_null("Model")
+	var target = model if model else self
+	var tween = create_tween()
+	tween.tween_property(target, "scale", Vector3(1.3, 0.05, 1.3), 0.25).set_trans(Tween.TRANS_BACK)
+	tween.tween_callback(func(): visible = false)
 
 func setup_character(data: CharacterData):
 	character_data = data
@@ -92,6 +129,7 @@ func _load_character_model(data: CharacterData):
 	model_container.name = "Model"
 
 	var model_instance = model_scene.instantiate()
+	ModelUtils.apply_lowpoly_look(model_instance)
 	model_instance.name = "ModelMesh"
 
 	# Apply scale normalization (target height ~1.2m)
@@ -114,8 +152,8 @@ func _load_character_model(data: CharacterData):
 	# Apply offset
 	model_instance.position = data.model_offset
 
-	# Position model container at player feet
-	model_container.position = Vector3(0, 0.6, 0)
+	# Older models have their origin at the body center, generated ones at the feet
+	model_container.position = Vector3(0, 0.0 if data.model_origin_at_feet else 0.6, 0)
 
 	add_child(model_container)
 	print("[Player] ✓ Model loaded: %s (scale: %f)" % [data.model_path, scale_factor])
@@ -165,8 +203,42 @@ func spawn(position: Vector3):
 	# Create visual representation
 	_ensure_visual_representation()
 
+	# Create weapon visual component
+	_create_weapon_visual()
+
+	# Procedural / skeletal animation of the model
+	if not has_node("Animator"):
+		var animator = CharacterAnimator.new()
+		animator.name = "Animator"
+		add_child(animator)
+		animator.setup(self)
+		# Drop in with an impact; the delay lets the loading curtain fade first
+		animator.play_spawn(0.45)
+
 	player_spawned.emit()
 	print("[Player] ✓ Player spawned at %s" % position)
+
+## Starting pistol + ammo. Given both to the owning client's player and to the server
+## entity, so server-side hit validation uses the same weapon the client shoots with.
+func give_starting_loadout():
+	var inventory = get_component("InventoryComponent")
+	if not inventory or inventory.get_weapon_count() > 0:
+		return
+
+	var pistol = RangedWeapon.create_weapon(RangedWeapon.WeaponType.PISTOL)
+	inventory.add_weapon_to_slot(pistol)
+	inventory.add_item(AmmoItem.new(AmmoItem.AmmoType.PISTOL, 60))
+
+func _create_weapon_visual():
+	# Create weapon visual for ALL players (so others can see your weapon)
+	var existing = get_node_or_null("WeaponVisual")
+	if existing:
+		return
+
+	var weapon_visual = WeaponVisualComponent.new()
+	add_child(weapon_visual)
+	weapon_visual.setup(self)
+	print("[Player] ✓ Weapon visual component created (local: %s)" % is_local_player)
 
 func _ensure_visual_representation():
 	# Check if we already have a visual mesh

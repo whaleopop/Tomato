@@ -28,4 +28,3 @@ func _on_apply(entity):  # entity: Entity
 
 func _on_remove(entity):  # entity: Entity
 	pass
-

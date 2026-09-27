@@ -1,4 +1,8 @@
-## Loot container that can be opened to reveal items
+## Loot container (chest, crate, barrel, supply drop) that is opened to reveal items.
+## Opening is a small show that plays identically on every peer (NetworkLootManager replays
+## interact() everywhere): the container rattles, the lid bursts open, a beam in the color of
+## the best item shoots up and the items pop out in arcs onto the ground around it. The empty
+## container stays for a few seconds, then sinks away.
 extends StaticBody3D
 class_name LootContainer
 
@@ -19,11 +23,24 @@ enum ContainerType {
 
 const INTERACT_RANGE: float = 2.5
 const INTERACT_COLLISION_LAYER: int = 8  # Layer 4 for interactive objects
+const ANTICIPATION_TIME: float = 0.3     # rattle before the lid bursts open
+const EMPTY_LINGER_TIME: float = 9.0     # opened container stays this long before sinking away
+const GROUND_MASK: int = 1               # hex tiles
 
 var is_opened: bool = false
-var mesh_instance: MeshInstance3D = null
+## Seed for the loot roll, assigned by LootSpawner. Every peer uses the same seed for the
+## same container, so opening it produces identical items everywhere.
+var loot_seed: int = 0
+var loot_rng := RandomNumberGenerator.new()
+var visual: Node3D = null        # rattles / squashes; holds the model
+var lid: Node3D = null           # "Lid" node of the prop (hinge / lid center as pivot)
+var parachute: Node3D = null     # supply drops only
 var interact_prompt: Label3D = null
 var is_opening: bool = false  # Prevents double-opening during animation
+var is_falling: bool = false  # supply drop still in the air
+var _lid_rest: Transform3D
+var _glint: GPUParticles3D = null
+var _sway: Tween = null
 
 # Possible loot weights
 var loot_weights: Dictionary = {
@@ -39,73 +56,108 @@ func _ready():
 	_create_visual()
 	_create_collision()
 
+# ---------------------------------------------------------------- look
+
 func _create_visual():
-	mesh_instance = MeshInstance3D.new()
-	mesh_instance.name = "ContainerMesh"
+	visual = Node3D.new()
+	visual.name = "ContainerVisual"
+	add_child(visual)
+	# A little deterministic turn so rows of containers don't look stamped, front still to the camera
+	visual.rotation.y = float((loot_seed % 7) - 3) * 0.12
 
-	var mesh: Mesh
+	var model = LootVisuals.container_model(container_type)
+	if model:
+		visual.add_child(model)
+		lid = model.find_child("Lid", true, false) as Node3D
+		parachute = model.find_child("Parachute", true, false) as Node3D
+		if parachute:
+			parachute.visible = false
+		if lid:
+			_lid_rest = lid.transform
+		for mi in model.find_children("*", "MeshInstance3D", true, false):
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	else:
+		visual.add_child(_fallback_mesh())
+
+	# Chests and supply drops glint now and then so they are spotted from afar
+	if container_type == ContainerType.CHEST or container_type == ContainerType.SUPPLY_DROP:
+		_glint = GPUParticles3D.new()
+		_glint.amount = 3
+		_glint.lifetime = 1.4
+		var pm = ParticleProcessMaterial.new()
+		pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+		pm.emission_box_extents = Vector3(0.4, 0.05, 0.25)
+		pm.direction = Vector3(0, 1, 0)
+		pm.spread = 10.0
+		pm.initial_velocity_min = 0.2
+		pm.initial_velocity_max = 0.4
+		pm.gravity = Vector3.ZERO
+		var curve = Curve.new()
+		curve.add_point(Vector2(0, 0))
+		curve.add_point(Vector2(0.3, 1))
+		curve.add_point(Vector2(1, 0))
+		var curve_tex = CurveTexture.new()
+		curve_tex.curve = curve
+		pm.scale_curve = curve_tex
+		pm.color = Color(1.0, 0.9, 0.55)
+		_glint.process_material = pm
+		var quad = QuadMesh.new()
+		quad.size = Vector2(0.14, 0.14)
+		quad.material = LandingImpact.soft_particle_material(true)
+		_glint.draw_pass_1 = quad
+		_glint.position.y = 0.55 if container_type == ContainerType.CHEST else 0.72
+		visual.add_child(_glint)
+
+func _fallback_mesh() -> MeshInstance3D:
+	var mesh_instance = MeshInstance3D.new()
+	var box = BoxMesh.new()
+	box.size = _body_size()
+	mesh_instance.mesh = box
 	var material = StandardMaterial3D.new()
+	material.albedo_color = Color(0.2, 0.5, 0.2) if container_type == ContainerType.SUPPLY_DROP else Color(0.6, 0.45, 0.25)
+	mesh_instance.material_override = material
+	mesh_instance.position.y = box.size.y / 2.0
+	return mesh_instance
 
+## Size of the container body (Godot axes: x width, y height, z depth)
+func _body_size() -> Vector3:
 	match container_type:
-		ContainerType.CRATE:
-			mesh = BoxMesh.new()
-			mesh.size = Vector3(0.8, 0.8, 0.8)
-			material.albedo_color = Color(0.6, 0.45, 0.25)  # Wood brown
 		ContainerType.CHEST:
-			mesh = BoxMesh.new()
-			mesh.size = Vector3(1.0, 0.6, 0.6)
-			material.albedo_color = Color(0.5, 0.35, 0.2)
-			material.metallic = 0.3
+			return Vector3(0.92, 0.66, 0.58)
 		ContainerType.BARREL:
-			mesh = CylinderMesh.new()
-			mesh.top_radius = 0.35
-			mesh.bottom_radius = 0.4
-			mesh.height = 0.9
-			material.albedo_color = Color(0.4, 0.3, 0.2)
+			return Vector3(0.78, 0.86, 0.78)
 		ContainerType.SUPPLY_DROP:
-			mesh = BoxMesh.new()
-			mesh.size = Vector3(1.2, 0.8, 0.8)
-			material.albedo_color = Color(0.2, 0.5, 0.2)  # Military green
-			material.metallic = 0.5
-			# Add glow for supply drops
-			material.emission_enabled = true
-			material.emission = Color(0.1, 0.3, 0.1)
-			material.emission_energy_multiplier = 0.3
-
-	mesh_instance.mesh = mesh
-	mesh_instance.set_surface_override_material(0, material)
-	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	mesh_instance.position = Vector3(0, 0.4, 0)
-
-	add_child(mesh_instance)
+			return Vector3(1.12, 0.7, 0.78)
+	return Vector3(0.8, 0.74, 0.8)
 
 func _create_collision():
 	var collision = CollisionShape3D.new()
 	collision.name = "ContainerCollision"
-
+	var size = _body_size()
 	var shape: Shape3D
-	match container_type:
-		ContainerType.CRATE, ContainerType.CHEST, ContainerType.SUPPLY_DROP:
-			shape = BoxShape3D.new()
-			shape.size = Vector3(0.8, 0.8, 0.8)
-		ContainerType.BARREL:
-			shape = CylinderShape3D.new()
-			shape.radius = 0.4
-			shape.height = 0.9
-
+	if container_type == ContainerType.BARREL:
+		shape = CylinderShape3D.new()
+		shape.radius = size.x / 2.0
+		shape.height = size.y
+	else:
+		shape = BoxShape3D.new()
+		shape.size = size
 	collision.shape = shape
-	collision.position = Vector3(0, 0.4, 0)
+	collision.position = Vector3(0, size.y / 2.0, 0)
+	collision.rotation.y = visual.rotation.y if visual else 0.0
 	add_child(collision)
 
 	# Set collision layer for interact detection
 	collision_layer = INTERACT_COLLISION_LAYER
 	collision_mask = 2  # Can interact with player layer
 
+# ---------------------------------------------------------------- prompt
+
 func _process(_delta: float):
 	_update_interact_prompt()
 
 func _update_interact_prompt():
-	if is_opened or is_opening:
+	if is_opened or is_opening or is_falling:
 		if interact_prompt:
 			interact_prompt.queue_free()
 			interact_prompt = null
@@ -136,13 +188,15 @@ func _update_interact_prompt():
 func _create_interact_prompt():
 	interact_prompt = Label3D.new()
 	interact_prompt.text = "[E] Open"
-	interact_prompt.position = Vector3(0, 1.2, 0)
+	interact_prompt.position = Vector3(0, _body_size().y + 0.55, 0)
 	interact_prompt.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	interact_prompt.font_size = 48
 	interact_prompt.outline_size = 8
 	interact_prompt.modulate = Color(1, 1, 0.8)
 	interact_prompt.no_depth_test = true
 	add_child(interact_prompt)
+
+# ---------------------------------------------------------------- opening
 
 func take_damage(amount: float, source = null):
 	if is_opened or is_opening:
@@ -152,7 +206,9 @@ func take_damage(amount: float, source = null):
 	_play_hit_effect()
 
 	if health <= 0:
-		open(source as Player if source is Player else null)
+		# Shot open: same show, but the lid gets blasted off harder
+		is_opening = true
+		_play_open_animation(source as Player if source is Player else null)
 
 ## Called when player presses interact key (E) near container
 func interact(player: Player = null):
@@ -166,60 +222,141 @@ func interact(player: Player = null):
 			print("[LootContainer] Player too far to interact (%.1f > %.1f)" % [dist, INTERACT_RANGE])
 			return
 
-	print("[LootContainer] Player interacting with container")
 	is_opening = true
-
-	# Hide prompt immediately
 	if interact_prompt:
 		interact_prompt.visible = false
+	_play_open_animation(player)
 
-	_play_open_animation()
+func _play_open_animation(player: Player = null):
+	# 1) anticipation: rattle and crouch, the lid jitters
+	var rattle = create_tween()
+	rattle.tween_method(_rattle, 0.0, 1.0, ANTICIPATION_TIME)
+	rattle.tween_callback(open.bind(player))
 
-func _play_open_animation():
-	var tween = create_tween()
-
-	# Jump animation
-	var original_pos = mesh_instance.position
-	tween.tween_property(mesh_instance, "position:y", original_pos.y + 0.4, 0.15)
-	tween.set_ease(Tween.EASE_OUT)
-
-	# Add glow effect
-	var material = mesh_instance.get_surface_override_material(0) as StandardMaterial3D
-	if material:
-		material = material.duplicate()
-		mesh_instance.set_surface_override_material(0, material)
-		material.emission_enabled = true
-		material.emission = Color(1, 0.9, 0.5)
-		tween.parallel().tween_property(material, "emission_energy_multiplier", 2.0, 0.2)
-
-	# Scale up slightly
-	tween.parallel().tween_property(mesh_instance, "scale", Vector3(1.1, 1.1, 1.1), 0.15)
-
-	# Fall back down
-	tween.tween_property(mesh_instance, "position:y", original_pos.y, 0.1)
-	tween.tween_property(mesh_instance, "scale", Vector3.ONE, 0.1)
-
-	# Open after animation
-	tween.tween_callback(func(): open(null))
+func _rattle(t: float):
+	if not visual:
+		return
+	var k = t * t
+	visual.rotation.z = sin(t * 55.0) * 0.07 * k
+	visual.scale = Vector3(1.0 + 0.06 * k, 1.0 - 0.1 * k, 1.0 + 0.06 * k)
+	if lid:
+		lid.transform = _lid_rest
+		lid.position.y += abs(sin(t * 40.0)) * 0.04 * k
 
 func open(player: Player = null):
 	if is_opened:
 		return
 
 	is_opened = true
+	is_opening = false
 	container_opened.emit(self, player)
 
-	# Spawn loot
+	var items = _spawn_loot()
+	_burst_open(items)
+
+	# The empty container lingers, then sinks away
+	var fade = create_tween()
+	fade.tween_interval(EMPTY_LINGER_TIME)
+	fade.tween_property(visual, "scale", Vector3(1.1, 0.01, 1.1), 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	fade.tween_callback(func():
+		container_destroyed.emit(self)
+		queue_free()
+	)
+
+## Late joiner: this container was opened before we arrived. No show - its loot simply lies
+## around (NetworkLootManager removes what was already picked up) and the container is gone.
+func open_instantly():
+	if is_opened:
+		return
+	is_opened = true
+	is_opening = false
+	container_opened.emit(self, null)
 	_spawn_loot()
-
-	# Play destruction effect
-	_play_destroy_effect()
-
-	# Remove container
 	container_destroyed.emit(self)
 	queue_free()
 
-func _spawn_loot():
+## 2) the pop: body springs back, lid bursts open, beam + flash + sparkles
+func _burst_open(items: Array):
+	if _glint:
+		_glint.emitting = false
+	visual.rotation.z = 0.0
+	var body = create_tween()
+	body.tween_property(visual, "scale", Vector3(0.94, 1.12, 0.94), 0.08).set_ease(Tween.EASE_OUT)
+	body.tween_property(visual, "scale", Vector3.ONE, 0.35).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+	if lid:
+		lid.transform = _lid_rest
+	_open_lid()
+
+	var color = _best_color(items)
+	var top_y = _body_size().y * 0.85
+	var beam = LootVisuals.beam(color, 3.2, 0.28)
+	beam.scale = Vector3(0.3, 0.05, 0.3)
+	visual.add_child(beam)
+	var beam_mat: StandardMaterial3D = beam.material_override
+	var bt = create_tween().set_parallel()
+	bt.tween_property(beam, "scale", Vector3.ONE, 0.25).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	bt.tween_property(beam, "position:y", top_y + 1.6, 0.25)
+	bt.chain().tween_property(beam_mat, "albedo_color:a", 0.0, 0.9).set_ease(Tween.EASE_IN)
+	bt.chain().tween_callback(beam.queue_free)
+
+	var light = OmniLight3D.new()
+	light.light_color = color.lerp(Color.WHITE, 0.3)
+	light.light_energy = 6.0
+	light.omni_range = 5.0
+	light.position.y = top_y + 0.3
+	visual.add_child(light)
+	var lt = create_tween()
+	lt.tween_property(light, "light_energy", 0.8, 0.5)
+	lt.tween_property(light, "light_energy", 0.0, 1.5)
+	lt.tween_callback(light.queue_free)
+
+	var sparks = LootVisuals.sparkles(color.lerp(Color(1, 0.95, 0.7), 0.5), 26, 6.0)
+	sparks.position.y = top_y
+	visual.add_child(sparks)
+	sparks.emitting = true
+	get_tree().create_timer(1.5).timeout.connect(sparks.queue_free)
+
+	# 3) the items fly out one after another
+	var from = global_position + Vector3(0, top_y, 0)
+	for i in items.size():
+		items[i].launch(from, 0.05 + i * 0.12)
+
+func _open_lid():
+	if not lid:
+		return
+	var t = create_tween()
+	if container_type == ContainerType.CHEST:
+		# Hinged: swing back past vertical, bounce, settle
+		t.tween_property(lid, "rotation:x", -deg_to_rad(118.0), 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		t.tween_property(lid, "rotation:x", -deg_to_rad(104.0), 0.25).set_trans(Tween.TRANS_SINE)
+		return
+	# Loose lid: pops off, tumbles through the air and lands next to the container
+	var side = Vector3(0.75, 0, 0.66)  # model space: off to the side, towards the camera
+	var land = lid.position + side * (_body_size().x * 0.9) - Vector3(0, _lid_rest.origin.y - 0.03, 0)
+	var peak = lid.position.lerp(land, 0.4) + Vector3(0, 1.1, 0)
+	t.set_parallel()
+	t.tween_property(lid, "position", peak, 0.22).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	t.tween_property(lid, "rotation", Vector3(1.9, 0.6, 0.4), 0.5)
+	t.chain().tween_property(lid, "position", land, 0.26).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+	t.chain().tween_property(lid, "rotation", Vector3(PI, 0.7, 0.0), 0.12)
+
+func _best_color(items: Array) -> Color:
+	var best = Color(1.0, 0.9, 0.6)
+	var rank = -1
+	# Rarer loot wins the beam color
+	var order = [LootItem.ItemType.AMMO, LootItem.ItemType.HEALTH, LootItem.ItemType.ABILITY_BOOST,
+		LootItem.ItemType.SHIELD, LootItem.ItemType.WEAPON]
+	for item in items:
+		var r = order.find(item.item_type)
+		if r > rank:
+			rank = r
+			best = LootVisuals.type_color(item.item_type)
+	return best
+
+# ---------------------------------------------------------------- loot
+
+func _spawn_loot() -> Array:
+	loot_rng.seed = loot_seed
 	var items_to_spawn: Array[LootItem.ItemType] = []
 
 	# Guarantee health item if enabled
@@ -232,20 +369,35 @@ func _spawn_loot():
 		var item_type = _roll_loot_type()
 		items_to_spawn.append(item_type)
 
-	# Spawn items around container
+	# Items land around the container, on whatever tile is there
+	var spawned: Array = []
 	for i in range(items_to_spawn.size()):
-		var angle = (TAU / items_to_spawn.size()) * i + randf() * 0.5
-		var distance = 0.8 + randf() * 0.5
-		var spawn_offset = Vector3(cos(angle) * distance, 0.5, sin(angle) * distance)
+		var angle = (TAU / items_to_spawn.size()) * i + loot_rng.randf() * 0.5
+		var distance = 1.0 + loot_rng.randf() * 0.5
+		var spot = global_position + Vector3(cos(angle) * distance, 0, sin(angle) * distance)
+		spot.y = _ground_height(spot) + 0.45
 
-		_spawn_loot_item(items_to_spawn[i], global_position + spawn_offset)
+		var item = _spawn_loot_item(items_to_spawn[i], spot)
+		_register_network_item(item, i)
+		if not item.is_queued_for_deletion():  # already picked up (late joiner)
+			spawned.append(item)
+	return spawned
+
+func _ground_height(spot: Vector3) -> float:
+	var space = get_world_3d().direct_space_state if is_inside_tree() else null
+	if space:
+		var query = PhysicsRayQueryParameters3D.create(spot + Vector3(0, 2.5, 0), spot - Vector3(0, 4.0, 0), GROUND_MASK)
+		var hit = space.intersect_ray(query)
+		if hit:
+			return hit.position.y
+	return global_position.y
 
 func _roll_loot_type() -> LootItem.ItemType:
 	var total_weight = 0
 	for weight in loot_weights.values():
 		total_weight += weight
 
-	var roll = randi() % total_weight
+	var roll = loot_rng.randi() % total_weight
 	var current = 0
 
 	for item_type in loot_weights:
@@ -255,10 +407,10 @@ func _roll_loot_type() -> LootItem.ItemType:
 
 	return LootItem.ItemType.HEALTH
 
-func _spawn_loot_item(item_type: LootItem.ItemType, spawn_pos: Vector3):
+func _spawn_loot_item(item_type: LootItem.ItemType, spawn_pos: Vector3) -> LootItem:
 	var item = LootItem.new()
 	item.item_type = item_type
-	item.position = spawn_pos
+	item.respawn_time = 0.0  # Loot from containers is one-shot
 
 	# Set item properties based on type
 	match item_type:
@@ -266,11 +418,33 @@ func _spawn_loot_item(item_type: LootItem.ItemType, spawn_pos: Vector3):
 			item.item_name = "Health Pack"
 			item.item_value = 25.0
 		LootItem.ItemType.AMMO:
-			item.item_name = "Ammo Box"
-			item.item_value = 30.0
+			# Random ammo type
+			var ammo_types = [
+				AmmoItem.AmmoType.PISTOL,
+				AmmoItem.AmmoType.SHOTGUN,
+				AmmoItem.AmmoType.SNIPER,
+				AmmoItem.AmmoType.RIFLE,
+				AmmoItem.AmmoType.FUEL
+			]
+			var ammo_type = ammo_types[loot_rng.randi() % ammo_types.size()]
+			item.item_name = AmmoItem.get_ammo_type_name(ammo_type)
+			item.item_value = float(ammo_type)  # Store type as value
+			item.item_data = AmmoItem.new(ammo_type, 30)
 		LootItem.ItemType.WEAPON:
-			item.item_name = "Weapon"
-			item.item_value = 1.0
+			# Random weapon type
+			var weapon_types = [
+				RangedWeapon.WeaponType.PISTOL,
+				RangedWeapon.WeaponType.SHOTGUN,
+				RangedWeapon.WeaponType.SNIPER,
+				RangedWeapon.WeaponType.RIFLE,
+				RangedWeapon.WeaponType.FLAMETHROWER
+			]
+			# Weight towards more common weapons
+			var weights = [30, 25, 10, 20, 15]  # Pistol most common, Sniper rare
+			var weapon_type = _weighted_random(weapon_types, weights)
+			var weapon = RangedWeapon.create_weapon(weapon_type)
+			item.item_name = weapon.item_name
+			item.item_data = weapon
 		LootItem.ItemType.ABILITY_BOOST:
 			item.item_name = "Ability Boost"
 			item.item_value = 0.5
@@ -278,59 +452,76 @@ func _spawn_loot_item(item_type: LootItem.ItemType, spawn_pos: Vector3):
 			item.item_name = "Shield"
 			item.item_value = 30.0
 
-	# Add to scene
-	var parent = get_parent()
-	if parent:
-		parent.add_child(item)
-	else:
-		get_tree().current_scene.add_child(item)
+	# Add to scene (next to the container, so the item outlives it)
+	var parent = get_parent() if get_parent() else get_tree().current_scene
+	parent.add_child(item)
+	item.global_position = spawn_pos
+	item.original_position = item.position
 
 	print("[LootContainer] Spawned %s at %s" % [item.item_name, spawn_pos])
+	return item
+
+## Give the item a network id derived from this container's id so it matches on every peer
+func _register_network_item(item: LootItem, index: int) -> void:
+	if not has_meta("network_id"):
+		return
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager and network_manager.loot_manager:
+		var item_id = int(get_meta("network_id")) * 100 + index
+		network_manager.loot_manager.register_item(item, item_id)
+
+func _weighted_random(items: Array, weights: Array):
+	var total = 0
+	for w in weights:
+		total += w
+
+	var roll = loot_rng.randi() % total
+	var current = 0
+
+	for i in range(items.size()):
+		current += weights[i]
+		if roll < current:
+			return items[i]
+
+	return items[0]
+
+# ---------------------------------------------------------------- supply drop
+
+## Supply drop under its parachute: sways while LootSpawner lowers it
+func start_falling():
+	is_falling = true
+	if parachute:
+		parachute.visible = true
+		parachute.scale = Vector3(0.2, 0.2, 0.2)
+		create_tween().tween_property(parachute, "scale", Vector3.ONE, 0.6).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_sway = create_tween().set_loops()
+	_sway.tween_property(visual, "rotation:z", 0.08, 0.9).set_trans(Tween.TRANS_SINE)
+	_sway.tween_property(visual, "rotation:z", -0.08, 0.9).set_trans(Tween.TRANS_SINE)
+
+## Touchdown: thud on the tiles, dust, the parachute collapses and drifts off
+func land():
+	is_falling = false
+	if _sway:
+		_sway.kill()
+	visual.rotation.z = 0.0
+	visual.scale = Vector3(1.15, 0.8, 1.15)
+	create_tween().tween_property(visual, "scale", Vector3.ONE, 0.4).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+	LandingImpact.create_at(get_parent(), global_position, Color(1.0, 0.9, 0.7), 0.9)
+	HexTile.shake_around(self, global_position, 1.0)
+	if parachute:
+		var t = create_tween().set_parallel()
+		t.tween_property(parachute, "scale", Vector3(1.3, 0.05, 1.3), 0.7).set_ease(Tween.EASE_IN)
+		t.tween_property(parachute, "position", parachute.position + Vector3(0.9, -0.5, 0.4), 0.7)
+		t.chain().tween_callback(parachute.queue_free)
+
+# ---------------------------------------------------------------- feedback
 
 func _play_hit_effect():
-	# Simple shake effect
-	var original_pos = mesh_instance.position
+	if not visual:
+		return
 	var tween = create_tween()
-	tween.tween_property(mesh_instance, "position", original_pos + Vector3(0.05, 0, 0), 0.05)
-	tween.tween_property(mesh_instance, "position", original_pos - Vector3(0.05, 0, 0), 0.05)
-	tween.tween_property(mesh_instance, "position", original_pos, 0.05)
-
-func _play_destroy_effect():
-	# Create destruction particles
-	var particles = GPUParticles3D.new()
-	particles.amount = 20
-	particles.lifetime = 0.8
-	particles.one_shot = true
-	particles.explosiveness = 0.9
-
-	var mat = ParticleProcessMaterial.new()
-	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	mat.emission_box_extents = Vector3(0.3, 0.3, 0.3)
-	mat.direction = Vector3(0, 1, 0)
-	mat.spread = 60.0
-	mat.initial_velocity_min = 3.0
-	mat.initial_velocity_max = 6.0
-	mat.gravity = Vector3(0, -15, 0)
-	mat.scale_min = 0.1
-	mat.scale_max = 0.25
-
-	# Color based on container type
-	match container_type:
-		ContainerType.CRATE, ContainerType.CHEST, ContainerType.BARREL:
-			mat.color = Color(0.6, 0.45, 0.25)  # Wood
-		ContainerType.SUPPLY_DROP:
-			mat.color = Color(0.3, 0.5, 0.3)  # Metal green
-
-	particles.process_material = mat
-
-	var mesh = BoxMesh.new()
-	mesh.size = Vector3(0.1, 0.1, 0.1)
-	particles.draw_pass_1 = mesh
-
-	particles.position = mesh_instance.global_position
-	get_tree().current_scene.add_child(particles)
-
-	# Auto cleanup
-	await get_tree().create_timer(1.0).timeout
-	if is_instance_valid(particles):
-		particles.queue_free()
+	tween.tween_property(visual, "rotation:z", 0.09, 0.04)
+	tween.tween_property(visual, "rotation:z", -0.07, 0.05)
+	tween.tween_property(visual, "rotation:z", 0.0, 0.06)
+	visual.scale = Vector3(1.06, 0.92, 1.06)
+	create_tween().tween_property(visual, "scale", Vector3.ONE, 0.18)

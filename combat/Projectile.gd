@@ -19,32 +19,40 @@ func _ready():
 	mesh_instance.mesh = sphere_mesh
 	add_child(mesh_instance)
 	
-	# Set up collision
+	# Set up collision: the projectile itself is on no layer (players must not bump into it),
+	# it looks for the environment (1) and players (2); without this it never met a player
 	var collision = CollisionShape3D.new()
 	var shape = SphereShape3D.new()
 	shape.radius = 0.1
 	collision.shape = shape
 	add_child(collision)
+	collision_layer = 0
+	collision_mask = HitscanSystem.LAYER_ENVIRONMENT | HitscanSystem.LAYER_PLAYERS
+	if owner_entity is PhysicsBody3D:
+		add_collision_exception_with(owner_entity)
 
 func _physics_process(delta: float):
 	# Move projectile
 	velocity = direction * speed
 	move_and_slide()
-	
+
 	# Check lifetime
 	lifetime -= delta
 	if lifetime <= 0.0:
 		projectile_expired.emit()
 		queue_free()
-	
-	# Check collisions
+		return
+
+	# Check collisions: a player takes the hit, anything else (tile, wall) just stops it
 	for i in range(get_slide_collision_count()):
-		var collision = get_slide_collision(i)
-		var collider = collision.get_collider()
-		
-		if collider and collider.has_method("get_component") and collider != owner_entity:
+		var collider = get_slide_collision(i).get_collider()
+		if collider == owner_entity:
+			continue
+		if collider and collider.has_method("get_component"):
 			_on_hit(collider)
-			break
+		else:
+			queue_free()
+		break
 
 func _on_hit(target):  # target: Entity
 	hit_target.emit(target)
@@ -61,4 +69,3 @@ func setup(p_owner, p_direction: Vector3, p_damage: float, p_speed: float):  # p
 	direction = p_direction.normalized()
 	damage = p_damage
 	speed = p_speed
-

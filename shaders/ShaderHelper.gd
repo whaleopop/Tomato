@@ -30,11 +30,33 @@ static var biome_colors: Dictionary = {
 	HexTile.BiomeType.WATER: {
 		"tile_color": Color(0.2, 0.5, 0.85),
 		"edge_color": Color(0.1, 0.3, 0.6)
+	},
+	HexTile.BiomeType.BEACH: {
+		"tile_color": Color(0.88, 0.8, 0.58),
+		"edge_color": Color(0.62, 0.54, 0.38)
+	},
+	HexTile.BiomeType.SWAMP: {
+		"tile_color": Color(0.36, 0.46, 0.27),
+		"edge_color": Color(0.2, 0.28, 0.16)
+	},
+	HexTile.BiomeType.MOUNTAIN: {
+		"tile_color": Color(0.46, 0.44, 0.42),
+		"edge_color": Color(0.3, 0.29, 0.27)
 	}
 }
 
-## Create a hex tile material with shader
-static func create_hex_material(biome: HexTile.BiomeType, height: float = 0.0) -> Material:
+# Shared materials: one per biome (the per-tile data - what's across each edge - comes in
+# as instance uniforms, see HexTile.update_edges), so tiles batch and the lake is one surface
+static var _hex_materials: Dictionary = {}
+static var _water_material: ShaderMaterial = null
+
+static func biome_color(biome: int) -> Color:
+	return biome_colors.get(biome, biome_colors[HexTile.BiomeType.GRASS])["tile_color"]
+
+## Create a hex tile material with shader (shared per biome)
+static func create_hex_material(biome: HexTile.BiomeType, _height: float = 0.0) -> Material:
+	if _hex_materials.has(biome):
+		return _hex_materials[biome]
 	var shader = load(HEX_TILE_SHADER)
 	if not shader:
 		return _create_fallback_hex_material(biome)
@@ -45,20 +67,20 @@ static func create_hex_material(biome: HexTile.BiomeType, height: float = 0.0) -
 	var colors = biome_colors.get(biome, biome_colors[HexTile.BiomeType.GRASS])
 	material.set_shader_parameter("tile_color", colors["tile_color"])
 	material.set_shader_parameter("edge_color", colors["edge_color"])
-	material.set_shader_parameter("tile_height", height)
-
+	_hex_materials[biome] = material
 	return material
 
-## Create a water material with animated shader
+## The water material (one for all water tiles; WaterRipples feeds it the ripples)
 static func create_water_material() -> Material:
+	if _water_material:
+		return _water_material
 	var shader = load(WATER_SHADER)
 	if not shader:
 		return _create_fallback_water_material()
 
-	var material = ShaderMaterial.new()
-	material.shader = shader
-
-	return material
+	_water_material = ShaderMaterial.new()
+	_water_material.shader = shader
+	return _water_material
 
 ## Create an outline material for object highlighting
 static func create_outline_material(color: Color = Color.WHITE, width: float = 0.02, pulse: bool = false) -> ShaderMaterial:

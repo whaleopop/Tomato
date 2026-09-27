@@ -63,8 +63,10 @@ func _create_environment():
 	# Sky colors
 	sky_material.sky_top_color = Color(0.4, 0.6, 0.9)      # Light blue
 	sky_material.sky_horizon_color = Color(0.7, 0.8, 0.95)  # Pale blue
-	sky_material.ground_bottom_color = Color(0.3, 0.25, 0.2)
-	sky_material.ground_horizon_color = Color(0.5, 0.45, 0.4)
+	# Below the island is the void you fall into: deep night blue, matching the UI palette
+	sky_material.ground_bottom_color = Color(0.02, 0.03, 0.07)
+	sky_material.ground_horizon_color = Color(0.09, 0.14, 0.24)
+	sky_material.ground_curve = 0.08
 
 	# Sun in sky
 	sky_material.sun_angle_max = 30.0
@@ -89,8 +91,13 @@ func _create_environment():
 	env.ssao_radius = 1.0
 	env.ssao_intensity = 2.0
 
-	# SSR for reflections (optional, can be heavy)
-	env.ssr_enabled = false
+	# Screen-space reflections: only glossy surfaces use them - the water (roughness ~0.04)
+	# mirrors heroes, walls and trees on the shore; the matte ground is unaffected
+	env.ssr_enabled = true
+	env.ssr_max_steps = 48
+	env.ssr_fade_in = 0.15
+	env.ssr_fade_out = 2.0
+	env.ssr_depth_tolerance = 0.2
 
 	# SDFGI for global illumination (can be heavy)
 	env.sdfgi_enabled = false
@@ -103,7 +110,7 @@ func _create_environment():
 
 	# Fog for atmosphere
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.7, 0.75, 0.85)
+	env.fog_light_color = Color(0.45, 0.55, 0.75)
 	env.fog_light_energy = 0.5
 	env.fog_sun_scatter = 0.3
 	env.fog_density = 0.001

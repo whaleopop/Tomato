@@ -14,6 +14,7 @@ func _on_apply(entity):  # entity: Entity
 	if health:
 		var new_max = health.max_health + health_bonus
 		health.set_max_health(new_max, false)
+		health.heal(health_bonus)  # spawn at the new max, not 20 below it
 
 func _on_remove(entity):  # entity: Entity
 	var health = entity.get_component("HealthComponent")

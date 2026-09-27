@@ -5,15 +5,13 @@ class_name MovementComponent
 signal movement_started
 signal movement_stopped
 signal direction_changed(new_direction: Vector3)
-signal jumped
-signal landed
 signal sprint_started
 signal sprint_stopped
 
-const DEFAULT_SPEED: float = 6.0
-const SPRINT_MULTIPLIER: float = 1.6
-const DEFAULT_ACCELERATION: float = 25.0
-const DEFAULT_FRICTION: float = 20.0
+const DEFAULT_SPEED: float = 7.0  # Slightly faster base speed
+const SPRINT_MULTIPLIER: float = 1.5
+const DEFAULT_ACCELERATION: float = 30.0  # Faster acceleration
+const DEFAULT_FRICTION: float = 25.0  # Faster stopping
 const DEFAULT_AIR_CONTROL: float = 0.3  # Reduced control in air
 
 # Physics constants
@@ -31,8 +29,13 @@ var velocity: Vector3 = Vector3.ZERO
 var vertical_velocity: float = 0.0
 var is_moving: bool = false
 var is_grounded: bool = true
-var wants_to_jump: bool = false
 var is_sprinting: bool = false
+var _jump_requested: bool = false
+var _dash_velocity: Vector3 = Vector3.ZERO
+var _dash_time: float = 0.0
+## Ground under the feet: water / swamp slow you down (HexTile.speed_factor). Server and client
+## read the same map, so the prediction agrees with the server.
+var terrain_multiplier: float = 1.0
 
 func _init(p_entity = null):  # p_entity: Entity
 	entity = p_entity
@@ -56,9 +59,18 @@ func set_move_direction(direction: Vector3):
 	if old_direction.distance_to(move_direction) > 0.1:
 		direction_changed.emit(move_direction)
 
+## Jump on the next physics update if standing on the ground
 func jump():
-	if is_grounded:
-		wants_to_jump = true
+	_jump_requested = true
+
+## Burst along the ground for `time` seconds (dash / leap abilities). Setting `velocity`
+## directly did almost nothing: the acceleration smoothing pulled it back within a frame or two.
+func dash(p_velocity: Vector3, time: float):
+	_dash_velocity = Vector3(p_velocity.x, 0.0, p_velocity.z)
+	_dash_time = max(time, 0.0)
+
+func is_dashing() -> bool:
+	return _dash_time > 0.0
 
 func set_sprint(sprinting: bool):
 	if is_sprinting != sprinting:
@@ -72,17 +84,11 @@ func update(delta: float):
 	if not enabled or not entity:
 		return
 
-	var was_grounded = is_grounded
-
 	# Check if entity is a CharacterBody3D
 	if entity is CharacterBody3D:
 		_update_character_body(delta)
 	else:
 		_update_simple(delta)
-
-	# Landing detection
-	if not was_grounded and is_grounded:
-		landed.emit()
 
 func _update_character_body(delta: float):
 	var body = entity as CharacterBody3D
@@ -90,23 +96,20 @@ func _update_character_body(delta: float):
 	# Check ground state
 	is_grounded = body.is_on_floor()
 
-	# Handle jumping
-	if wants_to_jump and is_grounded:
-		vertical_velocity = JUMP_VELOCITY
-		is_grounded = false
-		jumped.emit()
-		wants_to_jump = false
-
 	# Apply gravity
 	if not is_grounded:
 		vertical_velocity -= GRAVITY * delta
 		vertical_velocity = max(vertical_velocity, -MAX_FALL_SPEED)
 	else:
 		vertical_velocity = 0
-		wants_to_jump = false
+		if _jump_requested:
+			vertical_velocity = JUMP_VELOCITY
+	_jump_requested = false
 
 	# Calculate horizontal movement
-	var current_speed = speed * (SPRINT_MULTIPLIER if is_sprinting else 1.0)
+	if is_grounded:
+		_update_terrain(body)
+	var current_speed = speed * (SPRINT_MULTIPLIER if is_sprinting else 1.0) * terrain_multiplier
 	var target_velocity = move_direction * current_speed
 	var current_control = acceleration if is_grounded else acceleration * air_control
 
@@ -120,6 +123,12 @@ func _update_character_body(delta: float):
 		velocity.x = move_toward(velocity.x, 0, current_friction * delta)
 		velocity.z = move_toward(velocity.z, 0, current_friction * delta)
 
+	# A dash overrides steering until it runs out
+	if _dash_time > 0.0:
+		_dash_time -= delta
+		velocity.x = _dash_velocity.x
+		velocity.z = _dash_velocity.z
+
 	# Combine horizontal and vertical velocity
 	body.velocity = Vector3(velocity.x, vertical_velocity, velocity.z)
 
@@ -129,11 +138,7 @@ func _update_character_body(delta: float):
 	# Update grounded state after move
 	is_grounded = body.is_on_floor()
 
-	# Rotate entity to face movement direction
-	if move_direction.length_squared() > 0.01:
-		var look_direction = move_direction.normalized()
-		var target_rotation = atan2(look_direction.x, look_direction.z)
-		entity.rotation.y = lerp_angle(entity.rotation.y, target_rotation, 10.0 * delta)
+	# Don't rotate here - rotation is handled by PlayerInputHandler (looks at mouse cursor)
 
 	# Update is_moving state
 	var horizontal_speed = Vector2(velocity.x, velocity.z).length()
@@ -146,6 +151,17 @@ func _update_character_body(delta: float):
 		else:
 			movement_stopped.emit()
 
+## What we stand on (a short ray down to the environment layer). In the air the last value stays,
+## so jumping doesn't get you through a lake faster.
+func _update_terrain(body: CharacterBody3D) -> void:
+	if not body.is_inside_tree():
+		return
+	var origin = body.global_position + Vector3.UP * 0.3
+	var query = PhysicsRayQueryParameters3D.create(origin, origin + Vector3.DOWN * 0.8, 1, [body.get_rid()])
+	var hit = body.get_world_3d().direct_space_state.intersect_ray(query)
+	if hit and hit.collider is HexTile:
+		terrain_multiplier = HexTile.speed_factor(hit.collider.biome_type)
+
 func _update_simple(delta: float):
 	# Fallback for non-CharacterBody3D entities
 	if move_direction.length_squared() > 0.01:
@@ -155,9 +171,7 @@ func _update_simple(delta: float):
 
 	entity.global_position += velocity * delta
 
-	if move_direction.length_squared() > 0.01:
-		var look_direction = move_direction.normalized()
-		entity.look_at(entity.global_position + look_direction, Vector3.UP)
+	# Rotation handled by PlayerInputHandler (looks at mouse cursor)
 
 func get_velocity() -> Vector3:
 	return Vector3(velocity.x, vertical_velocity, velocity.z)
@@ -174,4 +188,5 @@ func is_on_ground() -> bool:
 func stop():
 	set_move_direction(Vector3.ZERO)
 	velocity = Vector3.ZERO
+	_dash_time = 0.0
 

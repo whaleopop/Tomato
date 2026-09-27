@@ -3,16 +3,23 @@ extends Node3D
 class_name LootSpawner
 
 signal containers_spawned(count: int)
+signal supply_drop_spawned(container: LootContainer)
 
 @export var container_density: float = 0.15  # Chance per tile to spawn container
 @export var min_containers: int = 10
 @export var max_containers: int = 50
 @export var supply_drop_interval: float = 60.0  # Seconds between supply drops
-@export var enable_supply_drops: bool = true
+## Supply drops are decided by the server only (see start_supply_drops) and replicated
+## to clients through spawn_supply_drop_at(), otherwise every peer would drop its own.
+@export var enable_supply_drops: bool = false
 
 var spawned_containers: Array[LootContainer] = []
 var hex_grid: HexGrid = null
 var supply_drop_timer: float = 0.0
+
+# Own RNG seeded from the map seed: server and clients place identical containers
+# with identical loot, independent of whatever else consumed the global RNG.
+var rng := RandomNumberGenerator.new()
 
 # Container type weights
 var container_weights: Dictionary = {
@@ -32,9 +39,17 @@ func _process(delta: float):
 			supply_drop_timer = 0.0
 			_spawn_supply_drop()
 
-func setup(grid: HexGrid):
+func setup(grid: HexGrid, seed_value: int = -1):
 	hex_grid = grid
+	if seed_value >= 0:
+		rng.seed = seed_value
+	else:
+		rng.randomize()
 	spawn_initial_containers()
+
+func start_supply_drops():
+	enable_supply_drops = true
+	supply_drop_timer = 0.0
 
 func spawn_initial_containers():
 	if not hex_grid:
@@ -52,19 +67,20 @@ func spawn_initial_containers():
 			continue
 
 		# Random chance to spawn
-		if randf() < container_density:
+		if rng.randf() < container_density:
 			var world_pos = hex_grid.hex_to_world(tile.hex_coords)
-			world_pos.y = tile.height * HexTile.HEX_HEIGHT + HexTile.HEX_HEIGHT
+			world_pos.y = tile.height * HexTile.HEX_HEIGHT + HexTile.HEX_HEIGHT * 0.5  # top of the tile
 			spawn_positions.append(world_pos)
 
 	# Clamp to min/max
-	spawn_positions.shuffle()
-	var count = clampi(spawn_positions.size(), min_containers, max_containers)
+	_shuffle(spawn_positions)
+	var count = mini(clampi(spawn_positions.size(), min_containers, max_containers), spawn_positions.size())
 	spawn_positions.resize(count)
 
 	# Spawn containers
 	for pos in spawn_positions:
 		var container = _create_container(_roll_container_type())
+		container.loot_seed = rng.randi()
 		container.position = pos
 		add_child(container)
 		spawned_containers.append(container)
@@ -104,7 +120,7 @@ func _roll_container_type() -> LootContainer.ContainerType:
 	for weight in container_weights.values():
 		total_weight += weight
 
-	var roll = randi() % total_weight
+	var roll = rng.randi() % total_weight
 	var current = 0
 
 	for container_type in container_weights:
@@ -133,57 +149,37 @@ func _spawn_supply_drop():
 	if valid_tiles.is_empty():
 		return
 
-	var tile = valid_tiles[randi() % valid_tiles.size()]
+	var tile = valid_tiles[rng.randi() % valid_tiles.size()]
 	var world_pos = hex_grid.hex_to_world(tile.hex_coords)
-	world_pos.y = tile.height * HexTile.HEX_HEIGHT + HexTile.HEX_HEIGHT + 20.0  # Start high
+	world_pos.y = tile.height * HexTile.HEX_HEIGHT + HexTile.HEX_HEIGHT * 0.5  # top of the tile
 
-	# Create supply drop
+	var container = spawn_supply_drop_at(world_pos, rng.randi())
+	supply_drop_spawned.emit(container)
+
+## Spawn a supply drop landing at ground_pos (also used by clients to mirror the server).
+## landed: it came down before we joined - place it on the ground right away.
+func spawn_supply_drop_at(ground_pos: Vector3, loot_seed: int, landed: bool = false) -> LootContainer:
 	var container = _create_container(LootContainer.ContainerType.SUPPLY_DROP)
-	container.position = world_pos
+	container.loot_seed = loot_seed
+	container.position = ground_pos if landed else ground_pos + Vector3(0, 20.0, 0)  # Start high
 	add_child(container)
 	spawned_containers.append(container)
 	container.container_destroyed.connect(_on_container_destroyed)
 
-	# Animate drop
-	_animate_supply_drop(container, world_pos.y - 20.0)
+	if not landed:
+		_animate_supply_drop(container, ground_pos.y)
 
-	print("[LootSpawner] Supply drop incoming at %s!" % world_pos)
+	print("[LootSpawner] Supply drop incoming at %s!" % ground_pos)
+	return container
 
 func _animate_supply_drop(container: LootContainer, target_y: float):
-	# Create parachute effect (particles)
-	var particles = GPUParticles3D.new()
-	particles.name = "ParachuteEffect"
-	particles.amount = 30
-	particles.lifetime = 2.0
-	particles.explosiveness = 0.0
-
-	var mat = ParticleProcessMaterial.new()
-	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	mat.emission_sphere_radius = 0.5
-	mat.direction = Vector3(0, -1, 0)
-	mat.spread = 30.0
-	mat.initial_velocity_min = 1.0
-	mat.initial_velocity_max = 2.0
-	mat.gravity = Vector3(0, 1, 0)  # Float up relative to container
-	mat.scale_min = 0.1
-	mat.scale_max = 0.2
-	mat.color = Color(1.0, 1.0, 1.0, 0.5)
-
-	particles.process_material = mat
-
-	var mesh = QuadMesh.new()
-	mesh.size = Vector2(0.2, 0.2)
-	particles.draw_pass_1 = mesh
-
-	particles.position = Vector3(0, 1, 0)
-	container.add_child(particles)
-
-	# Animate fall
+	# Floats down under its parachute, then lands with a thud (see LootContainer.land)
+	container.start_falling()
 	var tween = create_tween()
-	tween.tween_property(container, "position:y", target_y, 3.0).set_ease(Tween.EASE_OUT)
+	tween.tween_property(container, "position:y", target_y, 4.0)  # steady descent
 	tween.tween_callback(func():
-		if is_instance_valid(particles):
-			particles.queue_free()
+		if is_instance_valid(container):
+			container.land()
 	)
 
 func _on_container_destroyed(container: LootContainer):
@@ -191,3 +187,11 @@ func _on_container_destroyed(container: LootContainer):
 
 func get_container_count() -> int:
 	return spawned_containers.size()
+
+## Fisher-Yates shuffle driven by our own RNG (Array.shuffle() uses the global one)
+func _shuffle(arr: Array) -> void:
+	for i in range(arr.size() - 1, 0, -1):
+		var j = rng.randi_range(0, i)
+		var tmp = arr[i]
+		arr[i] = arr[j]
+		arr[j] = tmp

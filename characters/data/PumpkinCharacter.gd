@@ -24,7 +24,7 @@ func _init():
 	# Passive ability: Thick Shell - damage resistance
 	var passive_ability_data = AbilityData.new()
 	passive_ability_data.ability_name = "Thick Shell"
-	passive_ability_data.description = "15% damage resistance"
+	passive_ability_data.description = "10% damage resistance"
 	passive_ability_data.ability_type = "passive"
 	passive_ability_data.script_path = "res://abilities/passive/DamageResistance.gd"
 	passive_ability = passive_ability_data

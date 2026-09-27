@@ -24,4 +24,3 @@ func sync_all():
 func _sync_object(obj: Node):
 	# Override in subclasses
 	pass
-

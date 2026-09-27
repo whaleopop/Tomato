@@ -30,21 +30,26 @@ func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity
 	
 	return true
 
-func _find_targets_in_range(entity, _target_position: Vector3) -> Array:  # entity: Entity
+func _find_targets_in_range(entity, target_position: Vector3) -> Array:  # entity: Entity
 	var targets: Array = []
-	
-	# Get all entities in scene
-	var all_entities = entity.get_tree().get_nodes_in_group("entities")
-	
-	for other_entity in all_entities:
+
+	# The swing goes where you aim (falls back to the facing direction)
+	var forward: Vector3 = entity.global_transform.basis.z
+	if target_position != Vector3.ZERO:
+		var aim = target_position - entity.global_position
+		aim.y = 0.0
+		if aim.length_squared() > 0.01:
+			forward = aim.normalized()
+	forward.y = 0.0
+	forward = forward.normalized()
+
+	for other_entity in entity.get_tree().get_nodes_in_group("entities"):
 		if other_entity == entity:
 			continue
-		
-		var distance = entity.global_position.distance_to(other_entity.global_position)
-		if distance <= range:
-			# Check angle
-			var direction_to_target = (other_entity.global_position - entity.global_position).normalized()
-			var forward = entity.global_transform.basis.z
+		var to_other: Vector3 = other_entity.global_position - entity.global_position
+		to_other.y = 0.0  # height differences (tile steps) don't count
+		if to_other.length() <= range:
+			var direction_to_target = to_other.normalized()
 			var angle_to_target = rad_to_deg(forward.angle_to(direction_to_target))
 			
 			if angle_to_target <= angle / 2.0:

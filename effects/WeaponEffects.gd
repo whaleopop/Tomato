@@ -14,7 +14,7 @@ static func create_muzzle_flash(parent: Node3D, position: Vector3, direction: Ve
 
 	# Animate and remove
 	var tween = flash.create_tween()
-	tween.tween_property(flash, "scale", Vector3.ZERO, 0.08)
+	tween.tween_property(flash, "scale", Vector3.ONE * 0.01, 0.08)  # never exactly 0: a zero basis spams "det == 0"
 	tween.tween_callback(flash.queue_free)
 
 static func _create_flash_mesh() -> MeshInstance3D:
@@ -64,11 +64,13 @@ static func _create_tracer_mesh(start: Vector3, end: Vector3, color: Color) -> M
 	mesh_instance.mesh = mesh
 
 	# Position at midpoint
-	mesh_instance.position = start + direction * 0.5
+	var midpoint = start + direction * 0.5
+	mesh_instance.position = midpoint
 
-	# Rotate to align with direction
-	if direction.normalized() != Vector3.UP and direction.normalized() != Vector3.DOWN:
-		mesh_instance.look_at(end, Vector3.UP)
+	# Rotate to align with direction using look_at_from_position (works without being in tree)
+	var dir_normalized = direction.normalized()
+	if dir_normalized != Vector3.UP and dir_normalized != Vector3.DOWN:
+		mesh_instance.look_at_from_position(midpoint, end, Vector3.UP)
 		mesh_instance.rotate_object_local(Vector3.RIGHT, PI / 2)
 	else:
 		mesh_instance.rotation.x = 0 if direction.y > 0 else PI
@@ -207,11 +209,13 @@ static func create_impact_decal(parent: Node3D, position: Vector3, normal: Vecto
 	var decal = Decal.new()
 	decal.position = position + normal * 0.01  # Slight offset to prevent z-fighting
 
-	# Orient decal to face away from surface
-	if normal != Vector3.UP and normal != Vector3.DOWN:
-		decal.look_at(position + normal, Vector3.UP)
-	else:
-		decal.rotation.x = 0 if normal.y > 0 else PI
+	# A decal projects along its -Y: turn its Y axis onto the surface normal
+	# (works before the node is in the tree, unlike look_at)
+	var n = normal.normalized()
+	if n.is_equal_approx(Vector3.DOWN):
+		decal.rotation.x = PI
+	elif not n.is_equal_approx(Vector3.UP) and n != Vector3.ZERO:
+		decal.quaternion = Quaternion(Vector3.UP, n)
 
 	decal.size = Vector3(0.15, 0.05, 0.15)
 

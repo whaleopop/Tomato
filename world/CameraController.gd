@@ -8,6 +8,15 @@ var follow_height: float = 10.0    # Height above player
 var follow_speed: float = 8.0      # Camera smoothing speed
 var look_offset: float = 1.0       # Look slightly ahead of player
 
+# Follow player rotation (for shooter games)
+var follow_player_rotation: bool = false  # Camera doesn't rotate with player
+
+# Look-ahead: camera shifts toward aim/crosshair position
+var look_ahead_enabled: bool = true       # Shift camera toward mouse cursor
+var look_ahead_distance: float = 4.0      # Max distance camera shifts toward cursor
+var look_ahead_speed: float = 3.0         # How fast camera shifts
+var current_look_ahead: Vector3 = Vector3.ZERO
+
 # Zoom settings
 var zoom_level: float = 1.0
 var target_zoom: float = 1.0
@@ -101,6 +110,23 @@ func _update_smooth_values(delta: float):
 func _update_camera_position(delta: float):
 	var target_pos = target.global_position + camera_offset
 
+	# Look-ahead: shift camera toward mouse/aim position
+	if look_ahead_enabled:
+		var aim_offset = _calculate_look_ahead_offset()
+		current_look_ahead = current_look_ahead.lerp(aim_offset, look_ahead_speed * delta)
+		target_pos += current_look_ahead
+
+	# Follow player rotation if enabled (for shooter games)
+	if follow_player_rotation and target:
+		# Get player's facing direction and convert to angle
+		var player_forward = -target.global_transform.basis.z
+		var player_angle = atan2(player_forward.x, player_forward.z)
+		# Camera should be BEHIND player, so add PI
+		var desired_camera_angle = rad_to_deg(player_angle) + 180.0
+		# Smoothly interpolate camera angle
+		target_angle = lerp_angle(deg_to_rad(target_angle), deg_to_rad(desired_camera_angle), 3.0 * delta)
+		target_angle = rad_to_deg(target_angle)
+
 	# Calculate camera position based on zoom and rotation
 	var current_distance = follow_distance * zoom_level
 	var current_height = follow_height * zoom_level
@@ -124,9 +150,37 @@ func _update_camera_position(delta: float):
 	# Smooth camera movement
 	global_position = global_position.lerp(desired_pos, follow_speed * delta)
 
-	# Look at target with slight offset upward
-	var look_target = target_pos + Vector3(0, look_offset, 0)
+	# Look at target (player + look ahead offset)
+	var look_target = target.global_position + current_look_ahead + Vector3(0, look_offset, 0)
 	look_at(look_target, Vector3.UP)
+
+## Calculate offset toward mouse cursor for look-ahead
+func _calculate_look_ahead_offset() -> Vector3:
+	if not target:
+		return Vector3.ZERO
+
+	# Get mouse position on screen
+	var viewport = get_viewport()
+	if not viewport:
+		return Vector3.ZERO
+
+	var mouse_pos = viewport.get_mouse_position()
+	var screen_size = viewport.get_visible_rect().size
+
+	# Calculate normalized offset from screen center (-1 to 1)
+	var screen_center = screen_size / 2.0
+	var normalized_offset = (mouse_pos - screen_center) / screen_center
+
+	# Convert to world offset (X and Z)
+	# Account for camera rotation
+	var angle_rad = deg_to_rad(camera_angle)
+	var world_offset = Vector3(
+		(normalized_offset.x * cos(angle_rad) + normalized_offset.y * sin(angle_rad)) * look_ahead_distance,
+		0,
+		(-normalized_offset.x * sin(angle_rad) + normalized_offset.y * cos(angle_rad)) * look_ahead_distance
+	)
+
+	return world_offset
 
 func _input(event: InputEvent):
 	# Mouse wheel zoom
@@ -151,6 +205,11 @@ func _input(event: InputEvent):
 				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 			else:
 				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+	# The release can be missed (released while paused / in a menu): don't stay stuck rotating
+	if is_rotating and not (Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE)):
+		is_rotating = false
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 	# Mouse motion for rotation
 	if event is InputEventMouseMotion and is_rotating:

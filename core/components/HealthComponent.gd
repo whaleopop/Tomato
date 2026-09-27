@@ -24,6 +24,10 @@ func _init(p_entity = null, p_max_health: float = 100.0):  # p_entity: Entity
 func take_damage(amount: float, source = null) -> float:  # source: Entity
 	if not enabled or is_dead or invulnerable:
 		return 0.0
+	# Only the server decides damage; clients get health from the sync (_apply_damage).
+	# A client killing its copy of someone the server didn't kill left an unhittable "ghost".
+	if not _is_authority():
+		return 0.0
 
 	# Check for dodge (DodgeChance passive ability)
 	if dodge_chance > 0.0 and randf() < dodge_chance:
@@ -99,4 +103,9 @@ func set_damage_resistance(value: float):
 
 func set_dodge_chance(value: float):
 	dodge_chance = clamp(value, 0.0, 1.0)
+
+func _is_authority() -> bool:
+	if not entity or not is_instance_valid(entity) or not entity.is_inside_tree():
+		return true
+	return entity.get_tree().get_multiplayer().is_server()
 
