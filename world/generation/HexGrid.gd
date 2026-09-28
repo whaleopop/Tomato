@@ -4,6 +4,7 @@ class_name HexGrid
 
 var tiles: Dictionary = {}  # Vector2i -> HexTile
 var grid_radius: int = 20
+var terrain_version: int = 0  # bumped when tiles change their ground (flood): the minimap redraws
 
 func _init(p_radius: int = 20):
 	grid_radius = p_radius

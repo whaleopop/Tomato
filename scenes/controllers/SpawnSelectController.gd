@@ -39,7 +39,7 @@ func _send_player_name():
 	if game_manager and game_manager.selected_character and network_lobby:
 		var char_name = game_manager.selected_character.character_name
 		# Nickname: CharacterName_RandomNumber
-		network_lobby.client_set_name("%s_%d" % [char_name, randi() % 1000])
+		network_lobby.client_set_name("%s_%d" % [tr(char_name), randi() % 1000])  # shown to everyone
 		network_lobby.client_set_character(char_name)
 
 func _setup_network():

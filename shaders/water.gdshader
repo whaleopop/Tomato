@@ -23,7 +23,8 @@ uniform float ripple_strength : hint_range(0.0, 3.0) = 1.0;
 uniform float normal_strength : hint_range(0.0, 3.0) = 1.0;
 uniform float foam_amount : hint_range(0.0, 1.0) = 0.6;
 uniform float water_clarity : hint_range(0.0, 1.0) = 0.7;
-uniform float surface_drop : hint_range(0.0, 0.1) = 0.04;  // a little below the shore: a bank, wading feet
+uniform float surface_drop : hint_range(0.0, 0.1) = 0.04;
+uniform float hex_radius = 1.0;  // HexTile.HEX_RADIUS  // a little below the shore: a bank, wading feet
 
 // Kept for compatibility with older materials
 uniform sampler2D wave_noise : hint_default_white;
@@ -45,6 +46,7 @@ instance uniform vec4 edge_4 = vec4(0.0, 0.0, 0.0, 1.0);
 instance uniform vec4 edge_5 = vec4(0.0, 0.0, 0.0, 1.0);
 instance uniform vec3 corner_a = vec3(0.0);  // shared corner heights, as in hex_tile.gdshader
 instance uniform vec3 corner_b = vec3(0.0);
+instance uniform float danger = 0.0;  // zone: marked / burning (the water starts to boil)
 
 varying vec3 world_pos;
 varying vec3 local_pos;
@@ -68,8 +70,13 @@ float noise(vec2 p) {
 
 float corner_offset(vec3 v) {
 	int i = int(mod(round((atan(v.z, v.x) - 0.5235988) / 1.0471976) + 6.0, 6.0));
-	if (i < 3) return corner_a[i];
-	return corner_b[i - 3];
+	// No dynamic vector indexing (OpVectorExtractDynamic isn't supported by every backend)
+	if (i == 0) return corner_a.x;
+	if (i == 1) return corner_a.y;
+	if (i == 2) return corner_a.z;
+	if (i == 3) return corner_b.x;
+	if (i == 4) return corner_b.y;
+	return corner_b.z;
 }
 
 vec4 edge_info(int k) {
@@ -145,7 +152,7 @@ void fragment() {
 	for (int k = 0; k < 6; k++) {
 		vec4 info = edge_info(k);
 		float angle = 1.04719755 * float(k);
-		float d = 0.8660254 - dot(local_pos.xz, vec2(cos(angle), sin(angle)));
+		float d = 0.8660254 - dot(local_pos.xz / hex_radius, vec2(cos(angle), sin(angle)));
 		if (info.a > 0.5) {
 			shore = max(shore, 1.0 - smoothstep(0.0, 0.32, d));
 		} else {
@@ -168,6 +175,13 @@ void fragment() {
 	color = mix(color, foam_color, foam);
 	// Old "clarity" look: a touch of the dark abyss below
 	color = mix(vec3(0.03, 0.06, 0.12), color, clamp(water_clarity + 0.25, 0.0, 1.0));
+
+	if (danger > 0.0) {
+		float pulse = 0.5 + 0.5 * sin(TIME * mix(3.5, 9.0, step(0.75, danger)));
+		vec3 hot = vec3(1.0, 0.4, 0.1);
+		color = mix(color, color * 0.6 + hot * 0.25, danger * 0.6);
+		EMISSION = hot * danger * (0.15 + 0.35 * pulse);
+	}
 
 	ALBEDO = color;
 	ROUGHNESS = mix(0.04, 0.5, foam);

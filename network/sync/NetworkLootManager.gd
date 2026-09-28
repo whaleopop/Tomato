@@ -22,7 +22,7 @@ var items: Dictionary = {}  # item_id -> LootItem
 # events that arrived before our copy of that container / item existed)
 var opened_ids: Dictionary = {}  # container_id -> true
 var picked_ids: Dictionary = {}  # item_id -> true
-var supply_drops: Array = []     # server: [ground_pos, loot_seed, container_id, spawn_time_s]
+var supply_drops: Array = []     # server: [ground_pos, loot_seed, container_id, spawn_time_s, rich]
 const SUPPLY_DROP_FALL_TIME: float = 4.0
 
 # Set by NetworkManager when the server/client starts
@@ -41,7 +41,7 @@ func get_late_join_state() -> Dictionary:
 	var now = Time.get_ticks_msec() / 1000.0
 	var drops: Array = []
 	for d in supply_drops:
-		drops.append([d[0], d[1], d[2], now - d[3] > SUPPLY_DROP_FALL_TIME])
+		drops.append([d[0], d[1], d[2], now - d[3] > SUPPLY_DROP_FALL_TIME, d[4]])
 	return {"opened": opened_ids.keys(), "picked": picked_ids.keys(), "drops": drops}
 
 ## Client: apply it (containers / items not generated yet are handled when they register)
@@ -53,8 +53,8 @@ func apply_late_join_state(state: Dictionary, game_client: GameClient):
 	if game_client:
 		game_client.pending_supply_drops.append_array(state.get("drops", []))
 
-func record_supply_drop(ground_pos: Vector3, loot_seed: int, container_id: int):
-	supply_drops.append([ground_pos, loot_seed, container_id, Time.get_ticks_msec() / 1000.0])
+func record_supply_drop(ground_pos: Vector3, loot_seed: int, container_id: int, rich: bool = false):
+	supply_drops.append([ground_pos, loot_seed, container_id, Time.get_ticks_msec() / 1000.0, rich])
 
 ## Register a container for network tracking. forced_id is used by clients to mirror
 ## containers the server created at runtime (supply drops).
@@ -230,12 +230,13 @@ func _client_item_picked(item_id: int, player_id: int):
 	item.is_active = false
 	item._play_pickup_effect()
 	item.queue_free()
+	item_picked_up_network.emit(item_id, player_id)  # MapEvents: the harvest bonus glow on the picker
 
 ## Mirror a supply drop that the server spawned
-func spawn_mirrored_supply_drop(spawner: LootSpawner, ground_pos: Vector3, loot_seed: int, container_id: int, landed: bool = false):
+func spawn_mirrored_supply_drop(spawner: LootSpawner, ground_pos: Vector3, loot_seed: int, container_id: int, landed: bool = false, rich: bool = false):
 	if not spawner:
 		return
-	var container = spawner.spawn_supply_drop_at(ground_pos, loot_seed, landed)
+	var container = spawner.spawn_supply_drop_at(ground_pos, loot_seed, landed, rich)
 	register_container(container, container_id)
 
 # ============ Utility Methods ============

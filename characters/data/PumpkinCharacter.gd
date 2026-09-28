@@ -1,4 +1,4 @@
-## Pumpkin character data
+## Pumpkin character data (model generated from art/concepts/pumpkin.png)
 extends CharacterData
 class_name PumpkinCharacter
 
@@ -7,15 +7,15 @@ func _init():
 	description = "A massive tank with thick protective shell"
 	base_health = 150.0
 	base_speed = 4.0
-	model_path = "res://models/Pumpkin.glb"
-	color = Color(1.0, 0.5, 0.0)  # Pumpkin orange
-	model_scale = 0.5  # Pumpkin is big, scale down
-	model_offset = Vector3(0, -0.1, 0)
+	model_path = "res://models/characters/Pumpkin.glb"
+	color = Color(0.95, 0.42, 0.08)
+	model_scale = 1.0  # Auto-normalized to the standard height
+	model_origin_at_feet = true
 	
 	# Active ability: Pumpkin Smash - area damage around self
 	var active_ability_data = AbilityData.new()
 	active_ability_data.ability_name = "Pumpkin Smash"
-	active_ability_data.description = "Smashes the ground dealing damage to nearby enemies"
+	active_ability_data.description = "Smashes the ground: damages and knocks back everyone around"
 	active_ability_data.cooldown = 10.0
 	active_ability_data.ability_type = "active"
 	active_ability_data.script_path = "res://abilities/active/PumpkinSmash.gd"

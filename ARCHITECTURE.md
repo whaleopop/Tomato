@@ -106,10 +106,10 @@ extends CharacterData
 class_name NewCharacter
 
 func _init():
-    character_name = "New Character"
-    base_health = 100.0
-    base_speed = 5.0
-    # ... настройка способностей
+	character_name = "New Character"
+	base_health = 100.0
+	base_speed = 5.0
+	# ... настройка способностей
 ```
 
 ### Добавление новой способности
@@ -120,12 +120,12 @@ extends ActiveAbility
 class_name NewAbility
 
 func _init():
-    super._init("New Ability", 5.0)
-    duration = 1.0
+	super._init("New Ability", 5.0)
+	duration = 1.0
 
 func _on_activate(entity: Entity, target_position: Vector3) -> bool:
-    # Логика способности
-    return true
+	# Логика способности
+	return true
 ```
 
 ### Добавление нового предмета
@@ -136,9 +136,9 @@ extends ItemData
 class_name NewItem
 
 func _init():
-    super._init()
-    item_name = "New Item"
-    consumable = true
+	super._init()
+	item_name = "New Item"
+	consumable = true
 ```
 
 ## Оптимизация
@@ -157,4 +157,3 @@ func _init():
 - `test_hex_grid.gd` - тесты гексагональной сетки
 
 Запуск через GUT (Godot Unit Testing).
-

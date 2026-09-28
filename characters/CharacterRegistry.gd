@@ -11,12 +11,13 @@ static func get_all() -> Array[CharacterData]:
 		CornCharacter.new(),
 		BroccoliCharacter.new(),
 		BeetCharacter.new(),
-		GreenPepperCharacter.new(),
-		TurnipCharacter.new(),
+		PepperCharacter.new(),
 		AppleCharacter.new(),
 		LemonCharacter.new(),
 		GrapeCharacter.new(),
 		WatermelonCharacter.new(),
+		PineappleCharacter.new(),
+		BananaCharacter.new(),
 	]
 
 static func get_by_name(character_name: String) -> CharacterData:
@@ -33,10 +34,8 @@ static func get_by_name(character_name: String) -> CharacterData:
 			return BroccoliCharacter.new()
 		"Beet":
 			return BeetCharacter.new()
-		"Green Pepper":
-			return GreenPepperCharacter.new()
-		"Turnip":
-			return TurnipCharacter.new()
+		"Pepper":
+			return PepperCharacter.new()
 		"Apple":
 			return AppleCharacter.new()
 		"Lemon":
@@ -45,4 +44,8 @@ static func get_by_name(character_name: String) -> CharacterData:
 			return GrapeCharacter.new()
 		"Watermelon":
 			return WatermelonCharacter.new()
+		"Pineapple":
+			return PineappleCharacter.new()
+		"Banana":
+			return BananaCharacter.new()
 	return null

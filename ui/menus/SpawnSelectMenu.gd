@@ -191,7 +191,7 @@ func show_status(text: String):
 
 func _describe(coords: Vector2i) -> String:
 	var biome = hex_grid_data.get(coords, {}).get("biome", 0)
-	var biome_name = BIOME_NAMES[biome] if biome < BIOME_NAMES.size() else "Unknown"
+	var biome_name = tr(BIOME_NAMES[biome] if biome < BIOME_NAMES.size() else "Unknown")
 	return "%s  ·  (%d, %d)" % [biome_name, coords.x, coords.y]
 
 func _on_hex_pressed(coords: Vector2i):
@@ -212,7 +212,7 @@ func _on_hex_hovered(coords: Vector2i):
 	if selected_spawn != INVALID:
 		return
 	if map_view.reserved.has(coords):
-		info_label.text = "Taken  ·  (%d, %d)" % [coords.x, coords.y]
+		info_label.text = tr("Taken  ·  (%d, %d)") % [coords.x, coords.y]
 	elif not map_view.is_selectable(coords):
 		info_label.text = "Can't land here"
 	else:
@@ -298,7 +298,7 @@ func update_players_list(players_data: Dictionary):
 		dot.add_theme_stylebox_override("panel", dot_box)
 		hbox.add_child(dot)
 
-		var name_lbl = UITheme.create_label(data.get("name", "Player %d" % player_id), hbox, UITheme.FONT_SMALL)
+		var name_lbl = UITheme.create_label(data.get("name", tr("Player %d") % player_id), hbox, UITheme.FONT_SMALL)
 		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		name_lbl.clip_text = true
 		name_lbl.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
@@ -308,7 +308,7 @@ func update_players_list(players_data: Dictionary):
 		elif player_id == 1:
 			UITheme.create_pill("Host", UITheme.ACCENT_SECONDARY, hbox)
 
-	players_count.text = "%d / %d ready" % [ready_count, players_data.size()]
+	players_count.text = tr("%d / %d ready") % [ready_count, players_data.size()]
 
 func show_countdown(seconds: int):
 	countdown_label.visible = true
@@ -318,7 +318,7 @@ func show_countdown(seconds: int):
 	var tween = create_tween()
 	tween.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tween.tween_property(countdown_label, "scale", Vector2.ONE, 0.35)
-	show_status("Match starting in %d..." % seconds)
+	show_status(tr("Match starting in %d...") % seconds)
 
 func hide_countdown():
 	if countdown_label.visible:

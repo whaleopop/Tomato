@@ -87,7 +87,7 @@ func _create_ui():
 		var character = available_characters[i]
 		var button = UITheme.create_button("", roster, Vector2(0, 58))
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		button.text = "      %s" % character.character_name
+		button.text = "      %s" % tr(character.character_name)
 		button.pressed.connect(_select_character.bind(i))
 
 		# Colored orb in front of the name

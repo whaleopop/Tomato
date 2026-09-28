@@ -1,4 +1,4 @@
-## Corn character data
+## Corn character data (model generated from art/concepts/corn.png)
 extends CharacterData
 class_name CornCharacter
 
@@ -7,10 +7,10 @@ func _init():
 	description = "A ranged specialist with kernel projectiles"
 	base_health = 85.0
 	base_speed = 5.5
-	model_path = "res://models/Corn.glb"
-	color = Color(1.0, 0.9, 0.3)  # Yellow
-	model_scale = 0.6
-	model_offset = Vector3(0, 0, 0)
+	model_path = "res://models/characters/Corn.glb"
+	color = Color(1.0, 0.8, 0.2)
+	model_scale = 1.0  # Auto-normalized to the standard height
+	model_origin_at_feet = true
 	
 	# Active ability: Kernel Barrage - shoots multiple projectiles
 	var active_ability_data = AbilityData.new()

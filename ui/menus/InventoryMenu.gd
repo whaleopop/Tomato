@@ -112,7 +112,7 @@ func _create_slot_button(slot, index: int) -> Button:
 	button.add_theme_font_size_override("font_size", 12)
 
 	if slot.item:
-		var item_name: String = slot.item.item_name
+		var item_name: String = tr(slot.item.item_name)
 		if item_name.length() > 9:
 			item_name = item_name.substr(0, 8) + "…"
 		button.text = item_name

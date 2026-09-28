@@ -45,8 +45,14 @@ Located in `abilities/`:
 
 To add a new ability:
 1. Create class extending `ActiveAbility` or `PassiveAbility`
-2. Override `_on_activate()` for active or `_apply_passive()` for passive
-3. Reference in character data
+2. Override `_on_activate()` for active or `_on_apply()` / `update()` for passive
+3. Reference in character data (every hero has its own active and passive: keep them unique)
+
+An active runs on the caster's client (prediction), on the server (the real one) and as a visual replay on the clients that see the caster (`replay = true`): visuals everywhere, gameplay only where it counts - damage via `take_damage`, states via `StatusComponent` (both only count on the server anyway). Passives mostly set an entity meta that the rules read (`hot_temper`, `cc_immune`, `cooldown_factor`, `small_target`, `heal_bonus`, `thorns`).
+
+`StatusComponent` (on every Player): `apply(kind, seconds, value)` for stun / slow / blind / stealth and `push(velocity, seconds)` for knockback, server-authoritative; the states reach clients in the player state (`ServerPlayer.get_sync_data` "fx" -> `NetworkingComponent` -> `from_sync`), so the victim's own client stops / slides / sees less like its server copy. Stealth and blindness feed `ServerVisibility` (and the host's `VisibilitySystem`).
+
+Heroes face +Z (`PlayerInputHandler`: `rotation.y = atan2(x, z)`), so "forward" is `basis.z` and the right hand is at -X - not Godot's usual -Z.
 
 ### Network Architecture
 
@@ -74,7 +80,7 @@ Server-authoritative multiplayer using ENet:
 - Server and clients must use `MapGenerator.MATCH_MAP_RADIUS` and the same seed (lake placement depends on radius). Loot uses `LootSpawner.setup(grid, map_seed)` with its own RNG so container ids/contents match everywhere.
 - Server-side entities get `setup_character()` + `give_starting_loadout()` so speed/health/weapon match the owning client. Call `setup_character()` after `add_child` (components are created in `_ready`).
 - `is_local_player` is a property, not a method (`has_method("is_local_player")` is always false).
-- Map destruction runs on the server from match start and is replicated via `NetworkManager.broadcast_tiles_destroyed`.
+- The zone runs on the server from match start (`DestructionSystem`) and every step goes out via `NetworkManager.broadcast_zone` (kinds warn / burn / rise / calm / core_warn / core_burn); the host's tiles are the server's own, remote clients apply it in `ClientWorld.apply_zone` and shove their own predicted player with the same `DestructionSystem.shove` / `unstick` the server uses. Raised tiles go to late joiners in the map info (`destroyed_tiles`), the step in progress via `send_zone_state_to`.
 - `SceneTransition.fade_to_scene` queues requests made during a running fade; don't bypass it with bare `change_scene_to_file` in menus.
 - Returning to `MainMenu` calls `NetworkManager.stop_all()`.
 - Only the server applies gameplay damage: `HealthComponent.take_damage` returns 0 on clients (they get health from the sync via `_apply_damage`). Clients killing their copy of a player left unhittable "ghosts".
@@ -86,7 +92,7 @@ Server-authoritative multiplayer using ENet:
 
 ### World Generation
 
-Located in `world/generation/`:
+Located in `world/generation/`. Tiles are big: `HexTile.HEX_RADIUS` = 2 (edge 2, centers 3.46 apart), `MapGenerator.MATCH_MAP_RADIUS` = 11 (397 tiles). The generator's noise and lake sizes are per tile (tuned for that); cover walls span a whole edge (`CoverWall.LENGTH`). Sight distances (weapon `visibility_range`, `VisibilitySystem` constants) are world units, converted with `VisibilitySystem.to_hexes()` - don't compare them with hex distances directly.
 - `HexGenerator.gd` - Generates hexagonal grid structure
 - `HexGrid.gd` - Grid management
 - `HexTile.gd` - Individual tile representation
@@ -97,16 +103,20 @@ Water (`shaders/water.gdshader`): height-field normals, shore foam, SSR reflecti
 
 ### Map Destruction System
 
-Located in `world/destruction/`:
-- `DestructionSystem.gd` - Controls map destruction timing
-- `TileDestroyer.gd` - Handles individual tile destruction
+`world/destruction/DestructionSystem.gd` (server): the island closes in on a random tile near the middle, ring by ring. Each phase: the tiles outside the new radius are marked (`HexTile.set_zone_state` WARNED: glowing cracks, minimap, HUD countdown) -> BURNING (zone fire, `BURN_DAMAGE` per tick) -> `HexTile.raise_mountain` (a rock wall rises, players on it are shoved to the center, anyone still inside is thrown out and hurt). The outer ring is mountains from generation (`HexGenerator._raise_rim`), so nobody can fall off. When only the 7-tile core is left it catches fire every `CORE_WAIT` seconds. Mountains (`BiomeType.MOUNTAIN`) have a tall collision on `COVER_LAYER` (block walking, bullets and sight); `HexTile.is_playable()` = walkable tile. `time_scale` fast-forwards it in tests.
 
-Replaces traditional battle royale zone by progressively destroying tiles: every phase eats more of the outer edge, sooner, until a 19-tile core is left.
+### Map events
+
+`world/events/`: `MapEventDirector` (server, in `ServerWorld`) fires one every `GAP_MIN..GAP_MAX` s from a shuffled bag (meteors, harvest, quake, night / fog, flood, rift; flood and rift once per match), plus the zone's own: a rich supply drop into the next safe area on `ZONE_DROP_PHASES` (`DestructionSystem.phase_warned` -> `LootSpawner.drop_supplies_at(pos, true)`, `LootContainer.rich`) and the final center shift (`DestructionSystem.center_shift_announced`, applied at the next warning). It plans the data (spots, wall names, tiles) and hands it to `MapEvents.play` on the host and `NetworkManager.broadcast_map_event` -> `ClientWorld.apply_map_event` on clients; the HUD listens to `NetworkManager.map_event`. `MapEvents` (one per world) does the visuals and the world changes that must match (fallen walls by name, `HexTile.flood`, rift tiles -> `raise_mountain`, the harvest `LootItem` with the server's id); with `authority` it deals the damage and moves every player, a client only its own (like the zone). Global modifiers are static on `MapEvents` (`sight_factor`, `bush_factor`, `spread_factor`, read by `VisibilitySystem`, `ServerVisibility`, `CombatComponent`). Late joiners get `MapEventDirector.history_for_late_join()` (replayed with `elapsed`). New map-visible markers: put the node in group `map_markers` with meta `marker_color` (the minimap draws it). Update the guide's Events tab (`Encyclopedia._event_entries`) when events change.
 
 ### Cover and fog of war
 
 - `world/cover/CoverSpawner.gd`: wall pieces (`CoverWall`, 1-3 hex edges, stone / wood / sandbags by biome) and `Bush`es, seeded from the map seed with its own RNG (server, clients and the client cutscene build identical cover). Walls stand on edges so tile centers stay free for spawns and containers; they are on the environment layer (movement, bullets) and `COVER_LAYER` (16: sight and line of fire). A client-reported hit through a wall is turned into a real shot at the wall (`ServerPlayer._process_client_hit`).
 - `world/visibility/VisibilitySystem.gd`: per-tile sight (weapon range, rays against `COVER_LAYER`) + explored memory for the local player; enemies in a bush are hidden unless close or shooting. `FogOverlay` (`shaders/fog_overlay.gdshader`) is a full-screen pass that rebuilds world positions from the depth buffer, so everything it should fog must be opaque (tiles and water are; don't write ALPHA in `hex_tile.gdshader`). The minimap only shows explored tiles.
+
+### Weapons
+
+12 guns (`RangedWeapon.WeaponType`, new ones appended: the number goes over the network): the original five keep their models (`models/pistol_1.glb`...), the other seven (SMG, Hand Cannon, Marksman, Minigun, Double Barrel, Jam Blaster, Grenade Launcher) use the Kenney Blaster Kit (`models/blaster-*.glb`, texture `models/Textures/colormap.png`, CC0). `fire_mode` decides how `CombatComponent` fires (single / spread / pierce / flame / lob) - add a gun by giving it stats and a mode, not a new branch; `effect_style`, `move_factor`, `slow_on_hit`, `blast_radius` are the extras. Only "single" shots are resolved by the client (`ServerPlayer._process_client_hit`), the rest by the server. Loot weights: `LootContainer.WEAPON_WEIGHTS` (the guide's rarity comes from them). All models have barrels along -Z: `WeaponVisualComponent` fits them to `RangedWeapon.hold_length` (metres for a 1.2 m hero) whatever the file's size, turns them to face the hero's +Z and holds them in the right hand at the front of the body. Reload: `CombatComponent.start_reload` takes the rounds from the reserve, `_complete_reload` puts them into the magazine; switching weapons calls `cancel_reload` (refund). The last round starts the reload on its own. Ammo pickups use the kit's clips and foam darts (`LootVisuals._ammo_file`).
 
 ### Resource Types
 
@@ -118,10 +128,10 @@ Located in `core/resources/`:
 
 ### Adding New Content
 
-**New character:**
-1. Create resource file in `characters/data/` extending `CharacterData`
-2. Set `character_name`, `base_health`, `base_speed`
-3. Assign active/passive abilities
+**New character** (all 13 heroes are built from concept art, see `tools/ai_models/README.md`):
+1. Concept picture `art/concepts/<name>.png` -> `generate.bat --image ... --out art/concepts/raw/<name>.glb`, palette file, then `rig_and_animate.py --palette ... --concept ...` -> `models/characters/<Name>.glb`
+2. Data class in `characters/data/` extending `CharacterData` (`model_path`, `model_scale = 1.0`, `model_origin_at_feet = true`, stats, abilities) and an entry in both lists of `CharacterRegistry`
+3. Russian names / descriptions of the hero and both abilities in `LocaleRu.STRINGS`; the guide picks the hero up from the registry
 
 **New item:**
 1. Create class in `inventory/items/` extending `ItemData`
@@ -129,15 +139,27 @@ Located in `core/resources/`:
 
 ### UI
 
-All menus/HUD are built in code with `ui/theme/UITheme.gd` (glass palette, Nunito font, factory helpers). The global Theme is applied to the root window in `SceneTransition._ready`. Frosted panels: `GlassPanel` (blur via `shaders/ui_glass.gdshader`); menu background: `shaders/ui_background.gdshader`. 3D previews use `CharacterShowcase` (own World3D).
+All menus/HUD are built in code with `ui/theme/UITheme.gd` (glass palette, Nunito font, factory helpers). The global Theme is applied to the root window in `SceneTransition._ready`. Frosted panels: `GlassPanel` (blur via `shaders/ui_glass.gdshader`); menu background: `shaders/ui_background.gdshader`. 3D previews use `CharacterShowcase` (own World3D; `show_character` or `show_model` for any prop).
+The main menu's guide (`ui/menus/Encyclopedia.gd`) lists heroes, weapons, pickups and containers with the real numbers from the game data (`CharacterRegistry`, `RangedWeapon.create_weapon`, `LootContainer.DEFAULT_LOOT_WEIGHTS` / `WEAPON_WEIGHTS`, `LootSpawner.DEFAULT_CONTAINER_WEIGHTS`) plus controls and rules - update it when content changes.
+
+**Localization** (`ui/i18n/`): code keeps English source strings; `Locale.setup` installs the Russian catalogue `LocaleRu.STRINGS` (default language, `GameSettings.language`, switchable in Settings) and Godot auto-translates every Control / Label3D text that matches a key. So:
+- every new player-visible string needs a key in `LocaleRu.STRINGS`;
+- formatted text must translate the pattern first: `tr("%d  ALIVE") % n` (`Locale.t()` in static / RefCounted code);
+- uppercase with `Label.uppercase = true` or `tr(x).to_upper()`, never `x.to_upper()` before translating;
+- character, ability and item names are ids too (registry lookups, network, model paths): keep them English in code and translate only for display; `tr(name, "short")` gives the short forms in `LocaleRu.SHORT` (weapon slots).
 
 ### AI model generation
 
 `tools/ai_models/` (see its README): local text/image -> GLB pipeline (LCM Dreamshaper + rembg + TripoSR), heavy files in `D:\royaltim-ai`. Editor dock: `addons/ai_model_generator`.
 `--rig` / `rig.bat` runs `tools/ai_models/blender/rig_and_animate.py` in Blender (auto skeleton + idle/walk/run/jump/land/attack/hit/death clips).
 Concept characters (`art/concepts/`): `--palette <name>.palette.txt --concept raw/<name>_input.png` repaints the TripoSR mesh in flat palette colors (front projected from the picture) and decimates to low-poly; the palette files are hand-editable.
+Pickups: health pack heals on pickup; shield (`HealthComponent.add_shield`, max `MAX_SHIELD`) absorbs damage before health on the server and reaches clients in the player state (`shield`); the ability crystal calls `AbilityComponent.boost_cooldowns`. Pickup effects run on the server entity and on the picker's own client.
 Props (`models/props/`): `tools/ai_models/blender/make_props.py` builds containers (with `Lid` / `Parachute` child nodes) and pickup models. `world/loot/LootVisuals.gd` maps loot types to models and glow colors; the container opening show (`LootContainer`) runs on every peer from the seeded loot roll, and items can't be picked up until they land (`LootItem.launch`).
 Landing thuds: `HexTile.shake_around(node, pos, strength)` bounces tile meshes only (collision stays put); used by the cutscene, spawn drop-in, hard landings (`CharacterAnimator`) and supply drops.
+
+### Trailers
+
+`dev/trailers/` (see its README): `TrailerDirector.gd` stages the real game offline (heroes + abilities, weapons, loot, zone, map events) with a scripted camera and captions; `record_all.ps1` records the reels with Godot's Movie Maker and converts them to `trailers/*.mp4` (git-ignored); `highlights.py` cuts `trailers/trailer.mp4` from the `MARK` lines in the reel logs. Shared visuals used there and in the game: `effects/AbilityFX.gd` (juice blobs and splashes, slash arcs, floating damage / heal numbers over players).
 
 ### Character animation
 

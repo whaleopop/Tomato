@@ -7,9 +7,9 @@ extends Node3D
 class_name CoverSpawner
 
 const COVER_LAYER: int = 16          # physics layer 5: blocks sight and line of fire
-const WALL_CHANCE: float = 0.11      # per land tile: a wall piece starts here
+const WALL_CHANCE: float = 0.2       # per land tile: a wall piece starts here (tiles are big: 2-unit edges)
 const MAX_STEP: float = 1.01         # walls may stand on a step of one height unit
-const BUSH_CHANCE: float = 0.05      # per land tile without a container: a bush
+const BUSH_CHANCE: float = 0.16      # per land tile without a container: a bush somewhere on it
 const DIRECTIONS = [Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1),
 	Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, 1)]  # in order around the hex
 const PROPS_DIR := "res://models/props/"
@@ -95,7 +95,10 @@ func _spawn_wall(a: HexTile, b: HexTile, kind: int):
 func _place_bush(c: Vector2i, tile: HexTile):
 	var bush = Bush.new()
 	bush.name = "Bush_%d_%d" % [c.x, c.y]
-	bush.position = hex_grid.hex_to_world(c) + Vector3(0, tile_top(tile), 0)
+	# Off-center on the big tile, but clear of its edges (walls stand there)
+	var a = rng.randf() * TAU
+	var off = Vector3(cos(a), 0, sin(a)) * rng.randf_range(0.0, 0.45) * HexTile.HEX_INNER_RADIUS
+	bush.position = hex_grid.hex_to_world(c) + off + Vector3(0, tile_top(tile), 0)
 	bush.rotation.y = rng.randf() * TAU
 	add_child(bush)
 	bush.attach_to(tile)

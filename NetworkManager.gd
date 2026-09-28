@@ -256,19 +256,55 @@ func _receive_match_start_notify():
 
 # === Map destruction ===
 
-func broadcast_tiles_destroyed(coords_list: Array):
-	if not _has_remote_peers() or coords_list.is_empty():
+## The zone (DestructionSystem): kind = warn / burn / rise / calm / core_warn / core_burn,
+## coords = the tiles of this step, seconds = how long the step lasts, center + radius = the safe area
+signal zone_changed(kind: String, coords: Array, seconds: float, center: Vector2i, radius: int)
+
+func broadcast_zone(kind: String, coords: Array, seconds: float, center: Vector2i, radius: int):
+	if _has_remote_peers():
+		_receive_zone.rpc(kind, coords, seconds, center, radius)
+	zone_changed.emit(kind, coords, seconds, center, radius)  # the host (tiles are the server's own)
+
+func send_zone_state_to(peer_id: int, state: Dictionary):
+	if state.is_empty() or not _has_remote_peers():
 		return
-	_receive_tiles_destroyed.rpc(coords_list)
+	_receive_zone.rpc_id(peer_id, state.kind, state.coords, state.seconds, state.center, state.radius)
 
 @rpc("authority", "call_remote", "reliable")
-func _receive_tiles_destroyed(coords_list: Array):
+func _receive_zone(kind: String, coords: Array, seconds: float, center: Vector2i, radius: int):
 	var world = _get_client_world()
 	if world and world.is_map_ready:
-		world.destroy_tiles(coords_list)
+		world.apply_zone(kind, coords, seconds, center, radius)
 	elif game_client:
-		# Game scene not loaded or map still generating: apply once the map exists
-		game_client.pending_destroyed_tiles.append_array(coords_list)
+		game_client.pending_zone.append([kind, coords, seconds, center, radius, Time.get_ticks_msec()])
+	zone_changed.emit(kind, coords, seconds, center, radius)
+
+# === Map events ===
+
+## MapEventDirector (server): meteors, quake, night, flood, rift, harvest, zone_drop, center_shift.
+## elapsed > 0: a late joiner catching up with an event that started before it came.
+signal map_event(kind: String, data: Dictionary, elapsed: float)
+
+func broadcast_map_event(kind: String, data: Dictionary):
+	if _has_remote_peers():
+		_receive_map_event.rpc(kind, data, 0.0)
+	map_event.emit(kind, data, 0.0)  # the host's HUD (the director played it on the shared world)
+
+## Late joiner: the events it still has to see ([kind, data, elapsed], MapEventDirector.history_for_late_join)
+func send_map_events_to(peer_id: int, events: Array):
+	if not _has_remote_peers():
+		return
+	for e in events:
+		_receive_map_event.rpc_id(peer_id, e[0], e[1], e[2])
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_map_event(kind: String, data: Dictionary, elapsed: float):
+	var world = _get_client_world()
+	if world and world.is_map_ready:
+		world.apply_map_event(kind, data, elapsed)
+	elif game_client:
+		game_client.pending_map_events.append([kind, data, elapsed, Time.get_ticks_msec()])
+	map_event.emit(kind, data, elapsed)
 
 # === Match end ===
 
@@ -284,18 +320,18 @@ func _receive_match_end(winner_id: int, winner_name: String):
 
 # === Loot ===
 
-func broadcast_supply_drop(ground_pos: Vector3, loot_seed: int, container_id: int):
+func broadcast_supply_drop(ground_pos: Vector3, loot_seed: int, container_id: int, rich: bool = false):
 	if not _has_remote_peers():
 		return
-	_receive_supply_drop.rpc(ground_pos, loot_seed, container_id)
+	_receive_supply_drop.rpc(ground_pos, loot_seed, container_id, rich)
 
 @rpc("authority", "call_remote", "reliable")
-func _receive_supply_drop(ground_pos: Vector3, loot_seed: int, container_id: int):
+func _receive_supply_drop(ground_pos: Vector3, loot_seed: int, container_id: int, rich: bool):
 	var world = _get_client_world()
 	if world and world.is_map_ready and world.loot_spawner and loot_manager:
-		loot_manager.spawn_mirrored_supply_drop(world.loot_spawner, ground_pos, loot_seed, container_id)
+		loot_manager.spawn_mirrored_supply_drop(world.loot_spawner, ground_pos, loot_seed, container_id, false, rich)
 	elif game_client:
-		game_client.pending_supply_drops.append([ground_pos, loot_seed, container_id])
+		game_client.pending_supply_drops.append([ground_pos, loot_seed, container_id, false, rich])
 
 # === Combat effects ===
 
@@ -364,9 +400,14 @@ func _receive_ability_cast(caster_id: int, ability_index: int, target_position: 
 
 func _create_remote_shot_effects(parent: Node3D, from_pos: Vector3, to_pos: Vector3, weapon_type: int, hit: bool):
 	var direction = (to_pos - from_pos).normalized()
+	var mode = RangedWeapon.fire_mode_of(weapon_type)
+	if mode == "lob":  # a grenade: the arc and the blast, no tracer
+		WeaponEffects.create_muzzle_flash(parent, from_pos, direction)
+		GrenadeFX.lob(parent, from_pos, to_pos, RangedWeapon.create_weapon(weapon_type).blast_radius)
+		return
 
 	# Create tracer and muzzle flash (skip for flamethrower)
-	if weapon_type != RangedWeapon.WeaponType.FLAMETHROWER:
+	if mode != "flame":
 		WeaponEffects.create_muzzle_flash(parent, from_pos, direction)
 		WeaponEffects.create_tracer(parent, from_pos, to_pos)
 

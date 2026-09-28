@@ -67,6 +67,7 @@ static func create_hex_material(biome: HexTile.BiomeType, _height: float = 0.0) 
 	var colors = biome_colors.get(biome, biome_colors[HexTile.BiomeType.GRASS])
 	material.set_shader_parameter("tile_color", colors["tile_color"])
 	material.set_shader_parameter("edge_color", colors["edge_color"])
+	material.set_shader_parameter("hex_radius", HexTile.HEX_RADIUS)
 	_hex_materials[biome] = material
 	return material
 
@@ -80,6 +81,7 @@ static func create_water_material() -> Material:
 
 	_water_material = ShaderMaterial.new()
 	_water_material.shader = shader
+	_water_material.set_shader_parameter("hex_radius", HexTile.HEX_RADIUS)
 	return _water_material
 
 ## Create an outline material for object highlighting

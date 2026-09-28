@@ -7,7 +7,8 @@ enum AmmoType {
 	SHOTGUN,
 	SNIPER,
 	RIFLE,
-	FUEL  # For flamethrower
+	FUEL,  # For flamethrower
+	GRENADE,  # For the grenade launcher
 }
 
 @export var ammo_type: AmmoType = AmmoType.PISTOL
@@ -34,6 +35,9 @@ func _init(p_ammo_type: AmmoType = AmmoType.PISTOL, p_amount: int = 30):
 		AmmoType.FUEL:
 			item_name = "Fuel Canister"
 			description = "Fuel for flamethrower"
+		AmmoType.GRENADE:
+			item_name = "Grenades"
+			description = "Grenades for the grenade launcher"
 
 	# Ammo is stackable and not consumable (used automatically by weapons)
 	consumable = false
@@ -57,5 +61,7 @@ static func get_ammo_type_name(type: AmmoType) -> String:
 			return "Rifle Ammo"
 		AmmoType.FUEL:
 			return "Fuel"
+		AmmoType.GRENADE:
+			return "Grenades"
 		_:
 			return "Unknown Ammo"

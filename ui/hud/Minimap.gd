@@ -7,6 +7,9 @@ class_name Minimap
 const MAP_PIXELS: int = 200
 const REFRESH_INTERVAL: float = 0.5
 const UNEXPLORED_COLOR := Color(0.55, 0.62, 0.8, 0.14)
+const MOUNTAIN_COLOR := Color(0.36, 0.33, 0.31, 0.95)  # the zone's walls: known to everyone
+const WARN_COLOR := Color(1.0, 0.62, 0.15)
+const BURN_COLOR := Color(1.0, 0.25, 0.1)
 
 var map_size: Vector2 = Vector2(MAP_PIXELS, MAP_PIXELS)
 var player_position: Vector2 = Vector2.ZERO  # Kept for older callers
@@ -20,6 +23,13 @@ var _world_scale: float = 1.0
 var _last_tile_count: int = -1
 var _last_explored: int = -1
 var _refresh_timer: float = 0.0
+var _zone_center: Vector2i = Vector2i.ZERO
+var _zone_radius: int = -1   # safe radius of the current / next step (-1: none yet)
+var _shift_center: Vector2i = Vector2i.ZERO  # where the final zone moves (MapEvents center_shift)
+var _shift_radius: int = -1
+var _shift_until: int = 0
+var _last_terrain: int = -1
+var _dot: int = 2
 
 func _fog() -> VisibilitySystem:
 	return get_tree().get_first_node_in_group("visibility_system") as VisibilitySystem if is_inside_tree() else null
@@ -47,17 +57,28 @@ func _process(delta: float):
 	_refresh_timer += delta
 	if _refresh_timer >= REFRESH_INTERVAL:
 		_refresh_timer = 0.0
-		if hex_grid and is_instance_valid(hex_grid) and (_count_alive_tiles() != _last_tile_count or _explored_count() != _last_explored):
+		if hex_grid and is_instance_valid(hex_grid) and (_count_alive_tiles() != _last_tile_count or _explored_count() != _last_explored or hex_grid.terrain_version != _last_terrain):
 			_rebuild_texture()
 	queue_redraw()
 
-## Destroyed tiles stay in the dictionary until someone touches them, so count explicitly
+## Walkable tiles (mountains rise from the zone): a change rebuilds the texture
 func _count_alive_tiles() -> int:
 	var n = 0
 	for tile in hex_grid.tiles.values():
-		if is_instance_valid(tile) and not tile.is_destroyed:
+		if is_instance_valid(tile) and tile.is_playable():
 			n += 1
 	return n
+
+## The zone's safe area (PlayerHUD passes NetworkManager.zone_changed on)
+func set_zone(_kind: String, center: Vector2i, radius: int):
+	_zone_center = center
+	_zone_radius = radius
+
+## The final zone moves (PlayerHUD passes the map event on): a yellow ring until it does
+func set_zone_shift(center: Vector2i, radius: int, seconds: float):
+	_shift_center = center
+	_shift_radius = radius
+	_shift_until = Time.get_ticks_msec() + int(seconds * 1000.0) + 1500
 
 func _world_to_map(world_pos: Vector3) -> Vector2:
 	return (Vector2(world_pos.x, world_pos.z) - _world_min) * _world_scale
@@ -67,6 +88,7 @@ func _rebuild_texture():
 		return
 	_last_tile_count = _count_alive_tiles()
 	_last_explored = _explored_count()
+	_last_terrain = hex_grid.terrain_version
 	var fog = _fog()
 
 	# Fit the whole (original) map into the square, based on grid radius
@@ -79,13 +101,16 @@ func _rebuild_texture():
 	var img = Image.create(MAP_PIXELS, MAP_PIXELS, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 	var dot = max(2, int(HexTile.HEX_RADIUS * _world_scale * 1.5))
+	_dot = dot
 	for coords in hex_grid.tiles.keys():
 		var tile = hex_grid.get_tile(coords)
 		if not tile or tile.is_destroyed:
 			continue
 		var p = _world_to_map(hex_grid.hex_to_world(coords))
 		var color = UNEXPLORED_COLOR
-		if not fog or fog.is_tile_explored(coords):
+		if tile.is_mountain():
+			color = MOUNTAIN_COLOR
+		elif not fog or fog.is_tile_explored(coords):
 			color = HexMapView.BIOME_COLORS.get(tile.biome_type, Color.GRAY)
 			color.a = 0.85
 		img.fill_rect(Rect2i(int(p.x) - dot / 2, int(p.y) - dot / 2, dot, dot), color)
@@ -102,6 +127,36 @@ func _draw():
 	var scale_to_rect = inset.size / Vector2(MAP_PIXELS, MAP_PIXELS)
 	if _tile_texture:
 		draw_texture_rect(_tile_texture, inset, false)
+
+	# The zone: marked tiles glow, burning ones flash, the next safe area is a white ring
+	if hex_grid and is_instance_valid(hex_grid):
+		var pulse = 0.5 + 0.5 * sin(Time.get_ticks_msec() / 160.0)
+		var cell = Vector2(_dot, _dot) * scale_to_rect
+		for tile in hex_grid.tiles.values():
+			if not is_instance_valid(tile) or tile.zone_state == HexTile.ZoneState.NONE:
+				continue
+			var c = BURN_COLOR if tile.zone_state == HexTile.ZoneState.BURNING else WARN_COLOR
+			var tp = inset.position + _world_to_map(tile.global_position) * scale_to_rect
+			draw_rect(Rect2(tp - cell / 2.0, cell), Color(c, 0.45 + 0.45 * pulse))
+		if _zone_radius >= 0:
+			var zc = inset.position + _world_to_map(hex_grid.hex_to_world(_zone_center)) * scale_to_rect
+			var zr = (_zone_radius + 0.55) * VisibilitySystem.HEX_SPACING * _world_scale * scale_to_rect.x
+			draw_arc(zc, zr, 0, TAU, 48, Color(1, 1, 1, 0.75), 1.6, true)
+		if _shift_radius >= 0 and Time.get_ticks_msec() < _shift_until:
+			var sc = inset.position + _world_to_map(hex_grid.hex_to_world(_shift_center)) * scale_to_rect
+			var sr = (_shift_radius + 0.55) * VisibilitySystem.HEX_SPACING * _world_scale * scale_to_rect.x
+			draw_arc(sc, sr, 0, TAU, 48, Color(UITheme.ACCENT_WARNING, 0.55 + 0.4 * pulse), 2.0, true)
+
+		# Map events everybody knows about: meteor circles, the harvest bonus, the zone drop
+		for marker in get_tree().get_nodes_in_group("map_markers"):
+			if not marker is Node3D or not is_instance_valid(marker):
+				continue
+			var mc = inset.position + _world_to_map(marker.global_position) * scale_to_rect
+			if not inset.has_point(mc):
+				continue
+			var color: Color = marker.get_meta("marker_color", UITheme.ACCENT_WARNING)
+			draw_circle(mc, 3.0, color)
+			draw_arc(mc, 5.0 + 2.5 * pulse, 0, TAU, 16, Color(color, 0.85 - 0.5 * pulse), 1.5, true)
 
 	# Other players currently visible to us
 	for p in get_tree().get_nodes_in_group("players"):

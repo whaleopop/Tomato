@@ -12,19 +12,19 @@ func _init():
 	model_scale = 1.0  # Auto-normalized to the standard height
 	model_origin_at_feet = true
 
-	# Active ability: Core Slam
+	# Active ability: Newton's Apple
 	var active_ability_data = AbilityData.new()
-	active_ability_data.ability_name = "Core Slam"
-	active_ability_data.description = "Pounds the ground, damaging every enemy around"
+	active_ability_data.ability_name = "Newton's Apple"
+	active_ability_data.description = "An apple drops on the aimed spot: 35 damage and a 1.2 s stun"
 	active_ability_data.cooldown = 9.0
 	active_ability_data.ability_type = "active"
-	active_ability_data.script_path = "res://abilities/active/PumpkinSmash.gd"
+	active_ability_data.script_path = "res://abilities/active/NewtonsApple.gd"
 	active_ability = active_ability_data
 
-	# Passive ability: Crisp Skin
+	# Passive ability: Unshakable
 	var passive_ability_data = AbilityData.new()
-	passive_ability_data.ability_name = "Crisp Skin"
-	passive_ability_data.description = "Extra maximum health"
+	passive_ability_data.ability_name = "Unshakable"
+	passive_ability_data.description = "Can't be stunned, slowed, blinded or knocked back"
 	passive_ability_data.ability_type = "passive"
-	passive_ability_data.script_path = "res://abilities/passive/ToughSkin.gd"
+	passive_ability_data.script_path = "res://abilities/passive/Unshakable.gd"
 	passive_ability = passive_ability_data

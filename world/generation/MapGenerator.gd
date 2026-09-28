@@ -6,7 +6,7 @@ signal map_generated(grid: HexGrid)
 
 ## Radius used for real matches. Server, clients and the spawn cutscene must all use the
 ## same value: lake placement depends on the radius, so different radii give different maps.
-const MATCH_MAP_RADIUS: int = 20  # 1261 tiles
+const MATCH_MAP_RADIUS: int = 11  # 397 tiles of radius 2 (the outer ring is the mountain wall)
 
 var hex_generator: HexGenerator = null
 var grid: HexGrid = null

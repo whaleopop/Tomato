@@ -98,7 +98,7 @@ func _on_connect_pressed():
 
 	_connecting = true
 	connect_button.disabled = true
-	_set_status("Connecting to %s:%d..." % [ip, port], UITheme.ACCENT_INFO, true)
+	_set_status(tr("Connecting to %s:%d...") % [ip, port], UITheme.ACCENT_INFO, true)
 
 	if not network_manager.start_client(ip, port):
 		_connecting = false
@@ -136,7 +136,7 @@ func _on_connected():
 func _on_connection_failed():
 	_connecting = false
 	connect_button.disabled = false
-	_set_status("No answer from the server. Is it running? Firewall allows port %s?" % port_input.text, UITheme.ACCENT_DANGER)
+	_set_status(tr("No answer from the server. Is it running? Firewall allows port %s?") % port_input.text, UITheme.ACCENT_DANGER)
 	# Drop the dead client so the next attempt starts clean
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager:

@@ -25,7 +25,7 @@ var countdown_duration: int = 5
 var _last_countdown_second: int = -1
 var min_players_to_start: int = 1  # For testing, normally 2+
 
-const SPAWN_EXCLUSION_RADIUS: int = 4  # Minimum hex distance between spawn points
+const SPAWN_EXCLUSION_RADIUS: int = 2  # Minimum hex distance between spawn points (big tiles)
 
 func _ready():
 	set_process(false)

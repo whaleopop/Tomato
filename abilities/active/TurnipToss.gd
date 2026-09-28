@@ -1,4 +1,4 @@
-## Turnip Toss - leaps to target location
+## Leap to the target location, damage on impact (Pineapple: Crown Drop)
 extends ActiveAbility
 class_name TurnipToss
 

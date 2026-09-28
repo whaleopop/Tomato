@@ -102,6 +102,7 @@ func show_character(data: CharacterData):
 
 	if data:
 		stage_material.emission = data.color.lightened(0.2)
+	sway_angle = 0.75
 	_time = 0.0  # every new character starts facing the camera
 
 	if data and data.model_path != "" and ResourceLoader.exists(data.model_path):
@@ -125,6 +126,34 @@ func show_character(data: CharacterData):
 		_model.add_child(mesh)
 
 	# Pop-in
+	_model.scale = Vector3.ONE * 0.6
+	var tween = create_tween()
+	tween.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(_model, "scale", Vector3.ONE, 0.35)
+
+## Show any prop (weapon, pickup, container): fitted to `fit_size`, standing on the stage.
+## `spin` turns it all the way round instead of the character's sway.
+func show_model(instance: Node3D, color: Color, fit_size: float = 1.2, spin: bool = true, lift: float = 0.35):
+	if _model and is_instance_valid(_model):
+		_model.queue_free()
+	_model = Node3D.new()
+	turntable.add_child(_model)
+	stage_material.emission = color.lightened(0.2)
+	sway_angle = 0.0 if spin else 0.75
+	_time = 0.0
+	if instance:
+		_model.add_child(instance)
+		instance.scale = Vector3.ONE  # measured unscaled (LootVisuals.fit may have scaled it)
+		instance.position = Vector3.ZERO
+		var aabb = _collect_aabb(instance, Transform3D.IDENTITY)
+		var longest = max(aabb.size.x, aabb.size.y, aabb.size.z)
+		if longest > 0.0001:
+			var s = fit_size / longest
+			instance.scale = Vector3.ONE * s
+			var center = aabb.get_center()
+			# lift > 0: float with the center at that height (pickups), 0: stand on the stage
+			var y = -aabb.position.y * s if lift <= 0.0 else lift - center.y * s
+			instance.position = Vector3(-center.x * s, y, -center.z * s)
 	_model.scale = Vector3.ONE * 0.6
 	var tween = create_tween()
 	tween.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)

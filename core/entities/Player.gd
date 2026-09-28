@@ -13,40 +13,51 @@ func _ready():
 	super._ready()
 	add_to_group("players")
 	add_to_group("entities")
-	
+
 	# Initialize components
 	_initialize_components()
 
 	var health = get_component("HealthComponent")
 	if health:
 		health.died.connect(_on_died)
-	
+		# Floating numbers: hits and real heals (regeneration ticks are too small to show)
+		health.damage_taken.connect(func(amount, _source): AbilityFX.number(self, -amount, Color(1.0, 0.42, 0.35)))
+		var born = Time.get_ticks_msec()
+		health.healed.connect(func(amount):
+			# not the max-health bonus of a passive while the hero is being set up
+			if amount >= 4.0 and Time.get_ticks_msec() - born > 1500:
+				AbilityFX.number(self, amount, Color(0.45, 1.0, 0.5)))
+
 	player_ready.emit()
 
 func _initialize_components():
 	# Health component
 	var health = HealthComponent.new(self, 100.0)
 	add_component(health)
-	
+
 	# Movement component
 	var movement = MovementComponent.new(self)
 	add_component(movement)
-	
+
 	# Combat component
 	var combat = CombatComponent.new(self)
 	add_component(combat)
-	
+
 	# Ability component
 	var ability = AbilityComponent.new(self)
 	add_component(ability)
-	
+
 	# Inventory component
 	var inventory = InventoryComponent.new(self, 10)
 	add_component(inventory)
-	
+
 	# Networking component
 	var networking = NetworkingComponent.new(self)
 	add_component(networking)
+
+	# Stun, slow, blind, stealth, knockback from abilities
+	var status = StatusComponent.new(self)
+	add_component(status)
 
 ## Falling off the map (destroyed or edge tiles) eliminates you
 const KILL_HEIGHT: float = -15.0
@@ -185,15 +196,15 @@ func _get_model_aabb(node: Node) -> AABB:
 func _create_ability_from_data(data: AbilityData) -> Ability:
 	if data.script_path == "":
 		return null
-	
+
 	var script = load(data.script_path)
 	if script == null:
 		return null
-	
+
 	var ability = script.new()
 	ability.ability_name = data.ability_name
 	ability.cooldown = data.cooldown
-	
+
 	return ability
 
 func spawn(position: Vector3):

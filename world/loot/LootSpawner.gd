@@ -22,12 +22,13 @@ var supply_drop_timer: float = 0.0
 var rng := RandomNumberGenerator.new()
 
 # Container type weights
-var container_weights: Dictionary = {
+const DEFAULT_CONTAINER_WEIGHTS = {
 	LootContainer.ContainerType.CRATE: 50,
 	LootContainer.ContainerType.CHEST: 25,
 	LootContainer.ContainerType.BARREL: 20,
 	LootContainer.ContainerType.SUPPLY_DROP: 5
 }
+var container_weights: Dictionary = DEFAULT_CONTAINER_WEIGHTS.duplicate()
 
 func _ready():
 	pass
@@ -61,7 +62,7 @@ func spawn_initial_containers():
 
 	# Collect valid spawn positions
 	for tile in tiles:
-		if tile.is_destroyed:
+		if not tile.is_playable():
 			continue
 		if tile.biome_type == HexTile.BiomeType.WATER:
 			continue
@@ -142,7 +143,7 @@ func _spawn_supply_drop():
 		# Check if tile is still valid (not freed)
 		if not is_instance_valid(tile):
 			continue
-		if tile.is_destroyed or tile.biome_type == HexTile.BiomeType.WATER:
+		if not tile.is_playable() or tile.biome_type == HexTile.BiomeType.WATER:
 			continue
 		valid_tiles.append(tile)
 
@@ -156,11 +157,22 @@ func _spawn_supply_drop():
 	var container = spawn_supply_drop_at(world_pos, rng.randi())
 	supply_drop_spawned.emit(container)
 
+## Server: a supply drop at a chosen spot (the zone drop, MapEventDirector), announced like the
+## periodic ones (ServerWorld broadcasts supply_drop_spawned)
+func drop_supplies_at(ground_pos: Vector3, rich: bool = false) -> LootContainer:
+	var container = spawn_supply_drop_at(ground_pos, rng.randi(), false, rich)
+	supply_drop_spawned.emit(container)
+	return container
+
 ## Spawn a supply drop landing at ground_pos (also used by clients to mirror the server).
 ## landed: it came down before we joined - place it on the ground right away.
-func spawn_supply_drop_at(ground_pos: Vector3, loot_seed: int, landed: bool = false) -> LootContainer:
+## rich: the zone drop's better loot (LootContainer.rich)
+func spawn_supply_drop_at(ground_pos: Vector3, loot_seed: int, landed: bool = false, rich: bool = false) -> LootContainer:
 	var container = _create_container(LootContainer.ContainerType.SUPPLY_DROP)
 	container.loot_seed = loot_seed
+	if rich:
+		container.rich = true
+		container.loot_count = 5
 	container.position = ground_pos if landed else ground_pos + Vector3(0, 20.0, 0)  # Start high
 	add_child(container)
 	spawned_containers.append(container)

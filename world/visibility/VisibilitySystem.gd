@@ -15,11 +15,13 @@ signal visibility_updated
 signal explored_changed
 
 const UPDATE_INTERVAL: float = 0.1
-const FOG_FADE_DISTANCE: float = 2.0     # hexes at the edge of sight fade out
-const BASE_VISIBILITY_RANGE: float = 5.0
-const BULLET_TRAIL_WIDTH: float = 1.5
+# Distances in world units (tile-size independent); to_hexes() converts for the per-tile sight
+const HEX_SPACING: float = 1.7320508 * HexTile.HEX_RADIUS  # center to center
+const FOG_FADE_DISTANCE: float = 3.5     # at the edge of sight the fog fades in over this
+const BASE_VISIBILITY_RANGE: float = 8.7 # without a gun
+const BULLET_TRAIL_WIDTH: float = 2.6
 const EYE_HEIGHT: float = 1.0
-const ALWAYS_SEEN: float = 1.5           # hexes around you, visible even through a wall
+const ALWAYS_SEEN: float = 3.5           # around you, visible even through a wall (your tile + neighbours)
 const BUSH_REVEAL_DISTANCE: float = 2.4  # world units: this close you spot someone in a bush
 const SHOT_REVEAL_DISTANCE: float = 1.2  # a shot from inside a bush gives the shooter away
 const FADE_SPEED: float = 4.0            # fog values per second on screen
@@ -95,7 +97,13 @@ func _calculate_visibility():
 func _add_sight(source: VisibilitySource, sight: Dictionary):
 	var pos: Vector3 = source.entity.global_position
 	var center = hex_grid.world_to_hex(pos)
-	var radius = source.get_visibility_range()
+	var fade = to_hexes(FOG_FADE_DISTANCE)
+	var always = to_hexes(ALWAYS_SEEN)
+	# Night / fog (MapEvents) halves everybody's sight, a blinding ability even more; your
+	# neighbours stay half visible
+	var status = source.entity.get_component("StatusComponent") if source.entity.has_method("get_component") else null
+	var factor = MapEvents.sight_factor * (status.sight_factor() if status else 1.0)
+	var radius = max(to_hexes(source.get_visibility_range() * factor), always + fade * 0.5)
 	var space = source.entity.get_world_3d().direct_space_state
 	var query = PhysicsRayQueryParameters3D.new()
 	query.collision_mask = CoverSpawner.COVER_LAYER
@@ -111,11 +119,11 @@ func _add_sight(source: VisibilitySource, sight: Dictionary):
 			if d > radius:
 				continue
 			var vis = 1.0
-			if d > radius - FOG_FADE_DISTANCE:
-				vis = clamp((radius - d) / FOG_FADE_DISTANCE, 0.0, 1.0)
+			if d > radius - fade:
+				vis = clamp((radius - d) / fade, 0.0, 1.0)
 			if vis <= sight.get(coords, 0.0):
 				continue
-			if d > ALWAYS_SEEN:
+			if d > always and not tile.is_mountain():  # a ray into a mountain hits the mountain itself
 				query.to = tile.global_position + Vector3(0, HexTile.HEX_HEIGHT * 0.5 + EYE_HEIGHT, 0)
 				if not space.intersect_ray(query).is_empty():
 					continue  # behind a wall
@@ -124,13 +132,14 @@ func _add_sight(source: VisibilitySource, sight: Dictionary):
 func _add_trail_visibility(trail: BulletTrail, sight: Dictionary):
 	var path_length = trail.start_pos.distance_to(trail.end_pos)
 	var steps = int(ceil(path_length))
-	var r = int(ceil(BULLET_TRAIL_WIDTH))
+	var width = to_hexes(BULLET_TRAIL_WIDTH)
+	var r = int(ceil(width))
 	for i in range(steps + 1):
 		var t = float(i) / float(steps) if steps > 0 else 0.0
 		var center = hex_grid.world_to_hex(trail.start_pos.lerp(trail.end_pos, t))
 		for dq in range(-r, r + 1):
 			for dr in range(max(-r, -dq - r), min(r, -dq + r) + 1):
-				if float(max(abs(dq), abs(dr), abs(dq + dr))) <= BULLET_TRAIL_WIDTH:
+				if float(max(abs(dq), abs(dr), abs(dq + dr))) <= width:
 					var coords = center + Vector2i(dq, dr)
 					if hex_grid.tiles.has(coords):
 						sight[coords] = max(sight.get(coords, 0.0), 0.8)
@@ -173,10 +182,24 @@ func _can_see_player(player: Node3D, me: Node3D) -> bool:
 		return false  # the server doesn't even tell us where they are
 	if get_visibility_at(player.global_position) <= 0.3:
 		return false
+	# Stealth and the Small Target passive (the host sees every entity: the server-side fog doesn't
+	# hide them here, so the same rules as ServerVisibility)
+	if me:
+		var dist = player.global_position.distance_to(me.global_position)
+		var status = player.get_component("StatusComponent") if player.has_method("get_component") else null
+		if status and status.is_stealthed() and dist > StatusComponent.STEALTH_REVEAL:
+			return false
+		if player.has_meta("small_target"):
+			var my_range = BASE_VISIBILITY_RANGE
+			var combat = me.get_component("CombatComponent") if me.has_method("get_component") else null
+			if combat and combat.equipped_ranged_weapon:
+				my_range = combat.equipped_ranged_weapon.visibility_range
+			if dist > my_range * MapEvents.sight_factor * float(player.get_meta("small_target")):
+				return false
 	if not Bush.any_contains(get_tree(), player.global_position):
 		return true
 	# Hidden in a bush: only when right next to them, sharing the bush, or they just fired
-	if me and player.global_position.distance_to(me.global_position) < BUSH_REVEAL_DISTANCE:
+	if me and player.global_position.distance_to(me.global_position) < BUSH_REVEAL_DISTANCE * MapEvents.bush_factor:
 		return true
 	for trail in bullet_trails:
 		if trail.start_pos.distance_to(player.global_position + Vector3(0, EYE_HEIGHT, 0)) < SHOT_REVEAL_DISTANCE + EYE_HEIGHT:
@@ -288,6 +311,10 @@ func get_visibility_at(world_pos: Vector3) -> float:
 ## Has the local player ever seen this spot?
 func is_explored(world_pos: Vector3) -> bool:
 	return reveal_all or hex_grid == null or explored.has(hex_grid.world_to_hex(world_pos))
+
+## World distance -> hex distance on this map's tiles
+static func to_hexes(distance: float) -> float:
+	return distance / HEX_SPACING
 
 func is_tile_explored(coords: Vector2i) -> bool:
 	return reveal_all or explored.has(coords)

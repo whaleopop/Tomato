@@ -95,6 +95,10 @@ func _update_character_body(delta: float):
 
 	# Check ground state
 	is_grounded = body.is_on_floor()
+	var status = entity.get_component("StatusComponent") if entity.has_method("get_component") else null
+	var stunned = status != null and status.is_stunned()
+	if stunned:
+		_jump_requested = false
 
 	# Apply gravity
 	if not is_grounded:
@@ -110,7 +114,13 @@ func _update_character_body(delta: float):
 	if is_grounded:
 		_update_terrain(body)
 	var current_speed = speed * (SPRINT_MULTIPLIER if is_sprinting else 1.0) * terrain_multiplier
-	var target_velocity = move_direction * current_speed
+	if status:
+		current_speed *= status.movement_factor()
+	# Heavy guns slow you down while in hand (RangedWeapon.move_factor: the minigun)
+	var combat = entity.get_component("CombatComponent") if entity.has_method("get_component") else null
+	if combat and combat.equipped_ranged_weapon:
+		current_speed *= combat.equipped_ranged_weapon.move_factor
+	var target_velocity = Vector3.ZERO if stunned else move_direction * current_speed
 	var current_control = acceleration if is_grounded else acceleration * air_control
 
 	# Smooth horizontal acceleration

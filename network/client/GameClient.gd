@@ -21,6 +21,8 @@ var pending_map_seed: int = 0
 var pending_map_radius: int = MapGenerator.MATCH_MAP_RADIUS
 var pending_destroyed_tiles: Array = []
 var pending_supply_drops: Array = []  # [ground_pos, loot_seed, container_id] received before the map
+var pending_zone: Array = []  # zone events received before the map: [kind, coords, seconds, center, radius, msec]
+var pending_map_events: Array = []  # map events received before the map: [kind, data, elapsed, msec]
 var has_map_info: bool = false
 
 var _connect_timer: float = 0.0

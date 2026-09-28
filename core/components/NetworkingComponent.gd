@@ -196,6 +196,13 @@ func _apply_component_sync_data(data: Dictionary):
 					health.heal(diff)
 				elif diff < 0:
 					health._apply_damage(-diff)  # Direct apply without resistance
+			if data.has("shield"):
+				health.set_shield(float(data["shield"]))
+
+	# Stun, blind, stealth, knockback: the server's word, also for our own predicted player
+	var status = entity.get_component("StatusComponent")
+	if status and (data.has("fx") or data.has("health")):
+		status.from_sync(data.get("fx", {}), _is_local())
 
 	# Movement (the local player's movement is predicted locally)
 	if _is_local():

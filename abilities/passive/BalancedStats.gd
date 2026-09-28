@@ -1,4 +1,4 @@
-## Balanced Stats - small bonuses to all stats (Turnip passive)
+## Balanced Stats - small bonuses to all stats (unused since Turnip left the roster)
 extends PassiveAbility
 class_name BalancedStats
 

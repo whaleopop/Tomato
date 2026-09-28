@@ -483,7 +483,7 @@ func _show_banner():
 	var col = VBoxContainer.new()
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	card.add_child(col)
-	var name_label = UITheme.create_hero_title(char_name.to_upper(), col)
+	var name_label = UITheme.create_hero_title(tr(char_name).to_upper(), col)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_label.add_theme_font_size_override("font_size", 40)
 	name_label.add_theme_color_override("font_color", color.lightened(0.35))

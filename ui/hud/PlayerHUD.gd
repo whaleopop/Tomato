@@ -11,6 +11,7 @@ var crosshair: Control = null
 var weapon_slots_ui: HBoxContainer = null
 var alive_label: Label = null
 var alert_holder: CenterContainer = null
+var alert_list: VBoxContainer = null  # a few alerts stack (a zone step and its supply drop come together)
 var death_screen: Control = null
 
 var player: Player = null
@@ -71,11 +72,19 @@ func _ready():
 	alert_holder = CenterContainer.new()
 	alert_holder.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	alert_holder.grow_horizontal = Control.GROW_DIRECTION_BOTH  # stay centered as it grows
-	alert_holder.offset_top = 96
+	alert_holder.offset_top = 104
 	alert_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(alert_holder)
+	alert_list = VBoxContainer.new()
+	alert_list.alignment = BoxContainer.ALIGNMENT_BEGIN
+	alert_list.add_theme_constant_override("separation", 6)
+	alert_list.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	alert_holder.add_child(alert_list)
 
 	_create_hidden_hint()
+	_create_zone_timer()
+	_create_event_timer()
+	_create_buff_pill()
 
 	for c in [health_bar, ammo_display]:
 		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -83,6 +92,10 @@ func _ready():
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager and network_manager.has_signal("match_ended"):
 		network_manager.match_ended.connect(_on_match_ended)
+	if network_manager and network_manager.has_signal("zone_changed"):
+		network_manager.zone_changed.connect(_on_zone_changed)
+	if network_manager and network_manager.has_signal("map_event"):
+		network_manager.map_event.connect(_on_map_event)
 
 func _place(control: Control, preset: int, offset: Vector2):
 	control.set_anchors_preset(preset)
@@ -116,11 +129,253 @@ func setup(p_player: Player, hex_grid: HexGrid = null):
 	if hex_grid:
 		minimap.setup_grid(hex_grid)
 
-func _process(_delta: float):
+func _process(delta: float):
 	if player and is_instance_valid(player):
 		minimap.update_player_position(player.global_position)
 	_update_alive_count()
 	_update_hidden_hint()
+	_update_zone_timer(delta)
+	_update_event_timer(delta)
+	_update_buff_pill()
+
+# ---------------------------------------------------------------- zone countdown
+
+var zone_pill: PanelContainer = null
+var zone_label: Label = null
+var _zone_kind: String = ""
+var _zone_left: float = 0.0
+
+func _create_zone_timer():
+	var holder = CenterContainer.new()
+	holder.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	holder.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	holder.offset_top = 22
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(holder)
+	zone_pill = PanelContainer.new()
+	zone_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	zone_pill.visible = false
+	holder.add_child(zone_pill)
+	zone_label = UITheme.create_heading("", zone_pill)
+	zone_label.add_theme_font_size_override("font_size", 17)
+
+## A step of the zone (NetworkManager.zone_changed, on the host and on clients)
+func _on_zone_changed(kind: String, _coords: Array, seconds: float, center: Vector2i, radius: int):
+	_zone_kind = kind
+	_zone_left = seconds
+	minimap.set_zone(kind, center, radius)
+	match kind:
+		"warn":
+			show_alert(tr("The zone is closing in - leave the glowing edge!"), UITheme.ACCENT_WARNING)
+		"burn", "core_burn":
+			show_alert(tr("The edge is on fire!") if kind == "burn" else tr("The last patch is on fire!"), UITheme.ACCENT_DANGER)
+		"rise":
+			show_alert(tr("Mountains are rising!"), Color(0.85, 0.78, 0.7))
+		"core_warn":
+			show_alert(tr("Nowhere left to go: the core will catch fire!"), UITheme.ACCENT_DANGER)
+	_update_zone_timer(0.0)
+
+func _update_zone_timer(delta: float):
+	if not zone_pill or _zone_kind == "":
+		return
+	_zone_left = max(0.0, _zone_left - delta)
+	var secs = int(ceil(_zone_left))
+	var text = ""
+	var color = UITheme.ACCENT_INFO
+	match _zone_kind:
+		"warn":
+			text = tr("Zone moves in %d s") % secs
+			color = UITheme.ACCENT_WARNING
+		"burn":
+			text = tr("The edge burns: %d s") % secs
+			color = UITheme.ACCENT_DANGER
+		"rise":
+			text = tr("Next zone step in %d s") % secs
+		"core_warn", "calm":
+			text = tr("The core catches fire in %d s") % secs
+			color = UITheme.ACCENT_DANGER if _zone_kind == "core_warn" else UITheme.ACCENT_WARNING
+		"core_burn":
+			text = tr("The core burns: %d s") % secs
+			color = UITheme.ACCENT_DANGER
+	var urgent = _zone_kind in ["burn", "core_burn"] or (_zone_kind in ["warn", "core_warn"] and _zone_left < 5.0)
+	var box = UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.8), Color(color, 0.85), 99, 20, 6)
+	box.shadow_color = Color(color, 0.25 + (0.35 * (0.5 + 0.5 * sin(Time.get_ticks_msec() / 110.0)) if urgent else 0.0))
+	box.shadow_size = 12
+	zone_pill.add_theme_stylebox_override("panel", box)
+	zone_label.text = text
+	zone_label.add_theme_color_override("font_color", color.lightened(0.35))
+	zone_pill.visible = text != ""
+
+# ---------------------------------------------------------------- map events
+
+var event_pill: PanelContainer = null
+var event_label: Label = null
+var _event_kind: String = ""
+var _event_left: float = 0.0
+var _event_style: String = ""
+
+func _create_event_timer():
+	var holder = CenterContainer.new()
+	holder.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	holder.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	holder.offset_top = 62  # under the zone countdown
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(holder)
+	event_pill = PanelContainer.new()
+	event_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	event_pill.visible = false
+	holder.add_child(event_pill)
+	event_label = UITheme.create_heading("", event_pill)
+	event_label.add_theme_font_size_override("font_size", 15)
+
+## A map event (NetworkManager.map_event): alert, a countdown while it runs, minimap hints
+func _on_map_event(kind: String, data: Dictionary, elapsed: float):
+	var fresh = elapsed < 1.5  # a late joiner catching up gets no alerts for old news
+	var seconds := 0.0
+	match kind:
+		"meteors":
+			var delays: Array = data.get("delays", [])
+			seconds = (float(delays.max()) if not delays.is_empty() else 3.0) - elapsed
+			if fresh:
+				show_alert(tr("Meteor shower! Get out of the red circles"), UITheme.ACCENT_DANGER)
+		"quake":
+			seconds = float(data.get("seconds", 5.0)) - elapsed
+			if fresh:
+				show_alert(tr("Earthquake! Walls fall, aim shakes"), Color(0.92, 0.76, 0.52))
+		"night":
+			seconds = float(data.get("seconds", 25.0)) - elapsed
+			_event_style = String(data.get("style", "night"))
+			if fresh:
+				show_alert(tr("Night falls: everyone sees half as far") if _event_style == "night" else tr("Thick fog: everyone sees half as far"), Color(0.62, 0.72, 1.0))
+		"flood":
+			if fresh:
+				show_alert(tr("Flood! The shores are going under"), Color(0.4, 0.75, 1.0))
+		"rift":
+			seconds = float(data.get("warn", 10.0)) + float(data.get("burn", 3.0)) - elapsed
+			if fresh:
+				show_alert(tr("The island splits - cross the glowing crack!"), UITheme.ACCENT_WARNING)
+		"harvest":
+			var bonus = int(data.get("bonus", 0))
+			seconds = float(data.get("grow", 10.0)) - elapsed
+			if fresh:
+				show_alert(tr("A rare bonus is growing: %s") % tr(MapEvents.harvest_name(bonus)), MapEvents.harvest_color(bonus))
+		"zone_drop":
+			if fresh:
+				show_alert(tr("Supply drop into the next zone!"), LootContainer.RICH_COLOR)
+		"center_shift":
+			seconds = float(data.get("seconds", 10.0)) - elapsed
+			minimap.set_zone_shift(data.get("center", Vector2i.ZERO), int(data.get("radius", 1)), seconds)
+			if fresh:
+				show_alert(tr("The final zone is moving!"), UITheme.ACCENT_WARNING)
+	if seconds > 0.0:
+		_event_kind = kind
+		_event_left = seconds
+		_update_event_timer(0.0)
+
+func _update_event_timer(delta: float):
+	if not event_pill:
+		return
+	_event_left = max(0.0, _event_left - delta)
+	if _event_left <= 0.0:
+		event_pill.visible = false
+		return
+	var secs = int(ceil(_event_left))
+	var text = ""
+	var color = UITheme.ACCENT_WARNING
+	match _event_kind:
+		"meteors":
+			text = tr("Meteors: %d s") % secs
+			color = UITheme.ACCENT_DANGER
+		"quake":
+			text = tr("Earthquake: %d s") % secs
+			color = Color(0.92, 0.76, 0.52)
+		"night":
+			text = (tr("Night: %d s") if _event_style == "night" else tr("Fog: %d s")) % secs
+			color = Color(0.62, 0.72, 1.0)
+		"rift":
+			text = tr("The rift rises in %d s") % secs
+		"harvest":
+			text = tr("The bonus ripens in %d s") % secs
+			color = UITheme.ACCENT_SUCCESS
+		"center_shift":
+			text = tr("The zone center moves in %d s") % secs
+	var box = UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.78), Color(color, 0.8), 99, 16, 5)
+	event_pill.add_theme_stylebox_override("panel", box)
+	event_label.text = text
+	event_label.add_theme_color_override("font_color", color.lightened(0.35))
+	event_pill.visible = text != ""
+
+# ---------------------------------------------------------------- harvest bonus
+
+var buff_pill: PanelContainer = null
+var buff_label: Label = null
+
+func _create_buff_pill():
+	var holder = CenterContainer.new()
+	holder.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	holder.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	holder.offset_top = -196  # above the bush hint
+	holder.offset_bottom = -156
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(holder)
+	buff_pill = PanelContainer.new()
+	buff_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	buff_pill.visible = false
+	holder.add_child(buff_pill)
+	buff_label = UITheme.create_label("", buff_pill, UITheme.FONT_SMALL)
+	buff_label.add_theme_font_override("font", UITheme.font_black())
+
+func _update_buff_pill():
+	if not buff_pill:
+		return
+	var left = 0.0
+	if player and is_instance_valid(player):
+		left = (int(player.get_meta("harvest_until", 0)) - Time.get_ticks_msec()) / 1000.0
+	if left <= 0.0:
+		_show_status_pill()
+		return
+	var bonus = int(player.get_meta("harvest_bonus", 0))
+	var color = MapEvents.harvest_color(bonus)
+	var secs = int(ceil(left))
+	match bonus:
+		MapEvents.Harvest.SPEED:
+			buff_label.text = tr("Speed +%d%%: %d s") % [roundi((MapEvents.HARVEST_SPEED - 1.0) * 100.0), secs]
+		MapEvents.Harvest.DAMAGE:
+			buff_label.text = tr("Damage +%d%%: %d s") % [roundi((MapEvents.HARVEST_DAMAGE - 1.0) * 100.0), secs]
+		_:
+			buff_label.text = tr("Full shield!")
+	buff_label.add_theme_color_override("font_color", color.lightened(0.4))
+	var box = UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.8), Color(color, 0.85), 99, 18, 6)
+	box.shadow_color = Color(color, 0.3)
+	box.shadow_size = 10
+	buff_pill.add_theme_stylebox_override("panel", box)
+	buff_pill.visible = true
+
+## No bonus running: what an ability did to us (StatusComponent), if anything
+func _show_status_pill():
+	var status = player.get_component("StatusComponent") if player and is_instance_valid(player) else null
+	var text = ""
+	var color = UITheme.ACCENT_WARNING
+	if status:
+		if status.is_stunned():
+			text = tr("Stunned!")
+			color = Color(1.0, 0.9, 0.35)
+		elif status.has("blind"):
+			text = tr("Blinded: you can hardly see")
+			color = Color(0.75, 0.7, 0.95)
+		elif status.is_stealthed():
+			text = tr("Unseen - a shot gives you away")
+			color = Color(0.72, 0.55, 1.0)
+		elif status.has("slow"):
+			text = tr("Slowed")
+			color = UITheme.ACCENT_INFO
+	if text == "":
+		buff_pill.visible = false
+		return
+	buff_label.text = text
+	buff_label.add_theme_color_override("font_color", color.lightened(0.35))
+	buff_pill.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.8), Color(color, 0.85), 99, 18, 6))
+	buff_pill.visible = true
 
 # ---------------------------------------------------------------- hidden in a bush
 
@@ -157,7 +412,7 @@ func _on_match_ended(winner_id: int, winner_name: String):
 	if result_screen:
 		return
 	var i_won = player != null and is_instance_valid(player) and winner_id != 0 and player.entity_id == winner_id
-	var winner_text = winner_name.to_upper() if winner_name != "" else "NOBODY"
+	var winner_text = winner_name.to_upper() if winner_name != "" else tr("NOBODY")
 	if death_screen:
 		# Already eliminated: tell who took it
 		death_screen.queue_free()
@@ -183,7 +438,7 @@ func _on_match_ended(winner_id: int, winner_name: String):
 	var title = UITheme.create_title("VICTORY!" if i_won else "MATCH OVER", box)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_color_override("font_color", (UITheme.ACCENT_SUCCESS if i_won else UITheme.ACCENT_WARNING).lightened(0.25))
-	var sub_text = "Last veggie standing - the island is yours!" if i_won else ("%s is the last one standing" % winner_text if winner_id != 0 else "Nobody survived the harvest")
+	var sub_text = "Last veggie standing - the island is yours!" if i_won else (tr("%s is the last one standing") % winner_text if winner_id != 0 else "Nobody survived the harvest")
 	var sub = UITheme.create_label(sub_text, box)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var leave = UITheme.create_primary_button("BACK TO MENU", box, Vector2(300, 56))
@@ -210,19 +465,21 @@ func _update_alive_count():
 			var h = p.get_component("HealthComponent") if p.has_method("get_component") else null
 			if h and not h.is_dead:
 				alive += 1
-	alive_label.text = "%d  ALIVE" % alive
+	alive_label.text = tr("%d  ALIVE") % alive
 
-## Short banner under the top edge ("The edges are crumbling!")
+## Short banner under the top edge ("The edges are crumbling!"); up to three stack
 func show_alert(text: String, color: Color = UITheme.ACCENT_WARNING):
-	for child in alert_holder.get_children():
-		child.queue_free()
+	var shown = alert_list.get_children().filter(func(c): return not c.is_queued_for_deletion())
+	if shown.size() >= 3:
+		shown[0].queue_free()
 	var pill = PanelContainer.new()
 	var pill_box = UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.85), Color(color, 0.8), 99, 22, 8)
 	pill_box.shadow_color = Color(color, 0.35)
 	pill_box.shadow_size = 14
 	pill.add_theme_stylebox_override("panel", pill_box)
 	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	alert_holder.add_child(pill)
+	pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	alert_list.add_child(pill)
 	var label = UITheme.create_heading(text, pill)
 	label.add_theme_color_override("font_color", color.lightened(0.3))
 
@@ -310,11 +567,15 @@ class Crosshair extends Control:
 			draw_line(start + dir * d, start + dir * min(d + 7.0, dist - 22.0), Color(1, 1, 1, 0.35), 2.0, true)
 			d += 14.0
 
-		# Ring + ticks
-		draw_arc(mouse_pos, 11.0, 0, TAU, 32, Color(0, 0, 0, 0.35), 4.0, true)
-		draw_arc(mouse_pos, 11.0, 0, TAU, 32, Color(1, 1, 1, 0.9), 2.0, true)
+		# Ring + ticks; an earthquake (MapEvents) widens and shakes them
+		var wobble = MapEvents.spread_factor - 1.0
+		var r = 11.0 * (1.0 + wobble * 0.35)
+		if wobble > 0.0:
+			mouse_pos += Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * wobble
+		draw_arc(mouse_pos, r, 0, TAU, 32, Color(0, 0, 0, 0.35), 4.0, true)
+		draw_arc(mouse_pos, r, 0, TAU, 32, Color(1, 1, 1, 0.9), 2.0, true)
 		for v in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
-			draw_line(mouse_pos + v * 15.0, mouse_pos + v * 21.0, Color(1, 1, 1, 0.9), 2.0, true)
+			draw_line(mouse_pos + v * (r + 4.0), mouse_pos + v * (r + 10.0), Color(1, 1, 1, 0.9), 2.0, true)
 		draw_circle(mouse_pos, 2.5, accent)
 
 # ---------------------------------------------------------------- weapon slots
@@ -337,7 +598,7 @@ func _create_weapon_slots_ui():
 func _create_weapon_slot(index: int) -> PanelContainer:
 	var slot = PanelContainer.new()
 	slot.name = "WeaponSlot_%d" % (index + 1)
-	slot.custom_minimum_size = Vector2(64, 78)
+	slot.custom_minimum_size = Vector2(80, 78)  # room for "ПИСТОЛЕТ"
 	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	slot.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0, 0, 0, 0.3), Color(1, 1, 1, 0.1), 16, 6, 6))
 
@@ -374,7 +635,9 @@ func _update_weapon_slots_display(inventory: InventoryComponent):
 		var color = _get_weapon_color(weapon.weapon_type) if weapon else Color(1, 1, 1, 0.15)
 
 		if is_selected:
-			slot_panel.add_theme_stylebox_override("panel", UITheme.glow_box(Color(UITheme.ACCENT_SECONDARY, 0.22), 0.35, 16, 10))
+			var glow = UITheme.glow_box(Color(UITheme.ACCENT_SECONDARY, 0.22), 0.35, 16, 10)
+			glow.set_content_margin_all(6)  # same as the other slots: the name needs the width
+			slot_panel.add_theme_stylebox_override("panel", glow)
 		elif weapon:
 			slot_panel.add_theme_stylebox_override("panel", UITheme.glass_box(Color(1, 1, 1, 0.07), Color(1, 1, 1, 0.16), 16, 6, 6))
 		else:
@@ -389,7 +652,7 @@ func _update_weapon_slots_display(inventory: InventoryComponent):
 
 		var name_label = slot_panel.find_child("WeaponName", true, false) as Label
 		if name_label:
-			name_label.text = weapon.item_name.substr(0, 7).to_upper() if weapon else ""
+			name_label.text = tr(weapon.item_name, "short").substr(0, 9).to_upper() if weapon else ""
 
 func _get_weapon_color(weapon_type: RangedWeapon.WeaponType) -> Color:
 	match weapon_type:
@@ -403,5 +666,19 @@ func _get_weapon_color(weapon_type: RangedWeapon.WeaponType) -> Color:
 			return Color("7ab8ff")
 		RangedWeapon.WeaponType.FLAMETHROWER:
 			return Color("ff7a45")
+		RangedWeapon.WeaponType.SMG:
+			return Color("f2a65a")
+		RangedWeapon.WeaponType.HAND_CANNON:
+			return Color("ff8f6b")
+		RangedWeapon.WeaponType.MARKSMAN:
+			return Color("f5d76e")
+		RangedWeapon.WeaponType.MINIGUN:
+			return Color("5fd3a6")
+		RangedWeapon.WeaponType.DOUBLE_BARREL:
+			return Color("63d6b0")
+		RangedWeapon.WeaponType.JAM_BLASTER:
+			return Color("b48cff")
+		RangedWeapon.WeaponType.LAUNCHER:
+			return Color("ffd24a")
 		_:
 			return Color(0.6, 0.6, 0.6)

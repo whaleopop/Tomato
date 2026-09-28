@@ -1,4 +1,4 @@
-## Beet character data
+## Beet character data (model generated from art/concepts/beet.png)
 extends CharacterData
 class_name BeetCharacter
 
@@ -7,10 +7,10 @@ func _init():
 	description = "A powerful melee fighter with crushing attacks"
 	base_health = 110.0
 	base_speed = 5.5
-	model_path = "res://models/Beet.glb"
-	color = Color(0.6, 0.1, 0.3)  # Dark purple/red
-	model_scale = 0.75
-	model_offset = Vector3(0, 0, 0)
+	model_path = "res://models/characters/Beet.glb"
+	color = Color(0.72, 0.1, 0.3)
+	model_scale = 1.0  # Auto-normalized to the standard height
+	model_origin_at_feet = true
 	
 	# Active ability: Beet Crush - powerful melee strike
 	var active_ability_data = AbilityData.new()

@@ -119,6 +119,10 @@ func _send_map_to_peer(player_id: int):
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager:
 		network_manager.send_map_info_to_client(player_id, server_world.map_seed, server_world.map_radius, server_world.destroyed_tiles)
+		if server_world.destruction_system:
+			network_manager.send_zone_state_to(player_id, server_world.destruction_system.state_for_late_join())
+		if server_world.event_director:
+			network_manager.send_map_events_to(player_id, server_world.event_director.history_for_late_join())
 	if network_lobby:
 		network_lobby.send_map_data_to_player(player_id, server_world.hex_grid)
 

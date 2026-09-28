@@ -76,7 +76,7 @@ func _use_health_pack(pack: HealthPack) -> bool:
 	var health_component = entity.get_component("HealthComponent")
 	if health_component:
 		# At full health the pack stays in the inventory
-		return health_component.heal(pack.heal_amount) > 0.0
+		return health_component.heal(pack.heal_amount * float(entity.get_meta("heal_bonus", 1.0))) > 0.0
 	return false
 
 ## Timed buffs: effect_value is a multiplier, undone after perk.duration seconds

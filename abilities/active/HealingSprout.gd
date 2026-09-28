@@ -1,10 +1,11 @@
-## Healing Sprout - heals self and nearby allies
+## Healing Sprout - heals the caster over a few seconds
 extends ActiveAbility
 class_name HealingSprout
 
-var heal_amount: float = 30.0
+var heal_amount: float = 30.0     # in total, spread over heal_duration
 var heal_radius: float = 5.0
 var heal_duration: float = 3.0
+const HEAL_TICKS: int = 6
 
 func _init():
 	ability_name = "Healing Sprout"
@@ -16,12 +17,22 @@ func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity
 	# A replay on someone else's copy is visual only (their health comes from the server).
 	var health = entity.get_component("HealthComponent")
 	if health and not replay:
-		health.heal(heal_amount)
+		_heal_over_time(entity, health)
 
 	# Create visual effect
 	_create_healing_effect(entity)
-	
+
 	return true
+
+## heal_amount in HEAL_TICKS equal parts, the first one right away; stops if the caster dies
+func _heal_over_time(entity, health) -> void:
+	var step = heal_amount / HEAL_TICKS
+	for i in HEAL_TICKS:
+		if not is_instance_valid(entity) or not entity.is_inside_tree() or health.is_dead:
+			return
+		health.heal(step)
+		if i < HEAL_TICKS - 1:
+			await entity.get_tree().create_timer(heal_duration / HEAL_TICKS).timeout
 
 func _find_allies_in_radius(entity) -> Array:  # entity: Entity
 	# In Battle Royale mode, there are no allies - all other players are enemies

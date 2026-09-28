@@ -9,7 +9,8 @@ enum ItemType {
 	AMMO,
 	WEAPON,
 	ABILITY_BOOST,
-	SHIELD
+	SHIELD,
+	HARVEST  # map event bonus (MapEvents.Harvest in item_value): speed, damage or a full shield
 }
 
 @export var item_type: ItemType = ItemType.HEALTH
@@ -94,7 +95,7 @@ func _update_interact_prompt():
 
 func _create_interact_prompt():
 	interact_prompt = Label3D.new()
-	interact_prompt.text = "[E] %s" % item_name
+	interact_prompt.text = "[E] %s" % tr(item_name)
 	interact_prompt.position = Vector3(0, 0.8, 0)
 	interact_prompt.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	interact_prompt.font_size = 36
@@ -120,14 +121,14 @@ func _create_visual():
 	visual = Node3D.new()
 	visual.name = "ItemVisual"
 	add_child(visual)
-	var model = LootVisuals.pickup_model(item_type, item_data)
+	var model = LootVisuals.harvest_model(_color()) if item_type == ItemType.HARVEST else LootVisuals.pickup_model(item_type, item_data)
 	visual.add_child(model if model else _fallback_mesh())
 
-	var color = LootVisuals.type_color(item_type)
+	var color = _color()
 	halo = LootVisuals.halo(color, 0.55)
 	halo.position.y = -HOVER_HEIGHT + 0.03
 	add_child(halo)
-	if item_type in [ItemType.WEAPON, ItemType.SHIELD, ItemType.ABILITY_BOOST]:
+	if item_type in [ItemType.WEAPON, ItemType.SHIELD, ItemType.ABILITY_BOOST, ItemType.HARVEST]:
 		beam = LootVisuals.beam(color, 2.2, 0.1)
 		beam.position.y += -HOVER_HEIGHT
 		(beam.material_override as StandardMaterial3D).albedo_color.a = 0.55
@@ -147,6 +148,22 @@ func launch(from: Vector3, delay: float = 0.0):
 	t.tween_method(_fly.bind(from, rest), 0.0, 1.0, FLIGHT_TIME)
 	t.tween_callback(_on_landed)
 
+## Harvest bonus (HarvestPatch): grows out of the ground for `seconds`, pickable once ripe
+func grow_in(seconds: float):
+	if seconds <= 0.0:
+		return
+	_landed = false
+	_show_glow(false)
+	visual.scale = Vector3.ONE * 0.05
+	var t = create_tween()
+	t.tween_property(visual, "scale", Vector3.ONE * 0.8, seconds).set_trans(Tween.TRANS_SINE)
+	t.tween_callback(_on_landed)
+
+func _color() -> Color:
+	if item_type == ItemType.HARVEST:
+		return MapEvents.harvest_color(int(item_value))
+	return LootVisuals.type_color(item_type)
+
 func _fly(k: float, from: Vector3, rest: Vector3):
 	var p = from.lerp(rest, k)
 	p.y += sin(k * PI) * ARC_HEIGHT
@@ -160,7 +177,7 @@ func _on_landed():
 	visual.scale = Vector3(1.35, 0.65, 1.35)
 	create_tween().tween_property(visual, "scale", Vector3.ONE, 0.45).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
 	_show_glow(true)
-	var puff = LootVisuals.sparkles(LootVisuals.type_color(item_type), 8, 2.5, 0.5)
+	var puff = LootVisuals.sparkles(_color(), 8, 2.5, 0.5)
 	puff.position.y = -HOVER_HEIGHT + 0.1
 	add_child(puff)
 	puff.emitting = true
@@ -283,7 +300,7 @@ func _apply_effect(player: Player):
 		ItemType.HEALTH:
 			var health = player.get_component("HealthComponent")
 			if health:
-				health.heal(item_value)
+				health.heal(item_value * float(player.get_meta("heal_bonus", 1.0)))  # Big Heart passive
 				print("[LootItem] Healed player for %f" % item_value)
 		ItemType.AMMO:
 			var inventory = player.get_component("InventoryComponent")
@@ -312,13 +329,14 @@ func _apply_effect(player: Player):
 			# Temporary ability cooldown reduction
 			var ability = player.get_component("AbilityComponent")
 			if ability:
-				# Reduce all cooldowns
-				print("[LootItem] Ability boost pickup")
+				ability.boost_cooldowns(item_value)
 		ItemType.SHIELD:
 			var health = player.get_component("HealthComponent")
 			if health and health.has_method("add_shield"):
 				health.add_shield(item_value)
 			print("[LootItem] Shield pickup (value: %f)" % item_value)
+		ItemType.HARVEST:
+			MapEvents.apply_harvest(player, int(item_value))
 
 func _play_pickup_effect():
 	# Hide the model and its glow
@@ -338,6 +356,8 @@ func _play_pickup_effect():
 			item_color = Color(0.9, 0.3, 1.0)
 		ItemType.SHIELD:
 			item_color = Color(0.3, 0.7, 1.0)
+		ItemType.HARVEST:
+			item_color = _color()
 
 	# Main pickup burst particles
 	var particles = GPUParticles3D.new()
@@ -456,6 +476,8 @@ func _trigger_screen_effect():
 			ScreenEffects.ability_ready_pulse()
 		ItemType.WEAPON:
 			ScreenEffects.flash(Color(1, 1, 0.8), 0.1, 0.1)
+		ItemType.HARVEST:
+			ScreenEffects.flash(_color(), 0.2, 0.2)
 
 func _start_respawn_timer():
 	await get_tree().create_timer(respawn_time).timeout

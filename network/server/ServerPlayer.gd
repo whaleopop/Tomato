@@ -42,6 +42,9 @@ func _on_ability_cast(ability_index: int, target_position: Vector3):
 
 func _on_shot_fired(from_pos: Vector3, to_pos: Vector3, hit: bool):
 	_mark_revealed()
+	var status = player_entity.get_component("StatusComponent") if player_entity else null
+	if status:
+		status.clear("stealth")  # a shot gives a stealthed hero away
 	# Get weapon type
 	var weapon_type = 0  # PISTOL default
 	var combat = player_entity.get_component("CombatComponent") if player_entity else null
@@ -175,6 +178,7 @@ func get_sync_data() -> Dictionary:
 	if health:
 		data["health"] = health.current_health
 		data["max_health"] = health.max_health
+		data["shield"] = health.shield
 
 	var movement = player_entity.get_component("MovementComponent")
 	if movement:
@@ -191,6 +195,13 @@ func get_sync_data() -> Dictionary:
 			data["current_ammo"] = combat.equipped_ranged_weapon.current_ammo
 			data["magazine_size"] = combat.equipped_ranged_weapon.magazine_size
 
+	# Stun, blind, stealth, knockback (StatusComponent): the victim's client acts on them
+	var status = player_entity.get_component("StatusComponent")
+	if status:
+		var fx = status.to_sync()
+		if not fx.is_empty():
+			data["fx"] = fx
+
 	return data
 
 ## Process client-reported hit with server-side validation
@@ -206,6 +217,10 @@ func _process_client_hit(attacker: Entity, target_entity_id: int, combat: Combat
 	if not combat.can_shoot():
 		return
 	var target_point = target.global_position + Vector3(0, 0.9, 0)
+	# Only a single bullet is resolved by the client; pellets, fire and grenades by the server
+	if combat.equipped_ranged_weapon and combat.equipped_ranged_weapon.fire_mode != "single":
+		combat.attack(target_point)
+		return
 	# A wall between shooter and target stops the bullet: shoot it for real so it hits the wall
 	if CoverSpawner.line_blocked(attacker.get_world_3d(), attacker.global_position + Vector3(0, 1.0, 0), target_point):
 		combat.attack(target_point)
@@ -224,12 +239,14 @@ func _process_client_hit(attacker: Entity, target_entity_id: int, combat: Combat
 	# Apply damage (server-authoritative)
 	var damage = combat.base_damage
 	if combat.equipped_ranged_weapon:
-		damage = combat.equipped_ranged_weapon.damage * combat.ranged_damage_multiplier
+		damage = combat.equipped_ranged_weapon.damage * combat.get_damage_multiplier()
 
 	var health_comp = target.get_component("HealthComponent")
 	if health_comp:
 		var actual_damage = health_comp.take_damage(damage, attacker)
 		combat.target_hit.emit(target, actual_damage)
+		if actual_damage > 0:
+			combat.apply_on_hit(target)  # the Jam Blaster slows
 
 		# Nobody else saw this shot (the client resolved it), so replicate the tracer
 		_mark_revealed()
@@ -239,9 +256,11 @@ func _process_client_hit(attacker: Entity, target_entity_id: int, combat: Combat
 			var muzzle = attacker.global_position + Vector3(0, 1.0, 0)
 			game_server.broadcast_shot_effect(player_id, muzzle, target.global_position + Vector3(0, 0.8, 0), weapon_type, true, true)
 
-		# Consume ammo (checked by can_shoot above)
+		# Consume ammo (checked by can_shoot above); the last round starts the reload
 		if combat.equipped_ranged_weapon:
 			combat.equipped_ranged_weapon.consume_ammo()
+			if combat.equipped_ranged_weapon.current_ammo <= 0:
+				combat.start_reload()
 
 		# Trigger cooldown
 		combat.attack_cooldown = combat.equipped_ranged_weapon.fire_rate if combat.equipped_ranged_weapon else 0.5

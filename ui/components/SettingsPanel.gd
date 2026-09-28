@@ -3,6 +3,7 @@ extends GlassPanel
 class_name SettingsPanel
 
 signal closed
+signal language_changed  # formatted texts are built once: the owner may want to rebuild
 
 var _volume_value: Label
 
@@ -35,6 +36,25 @@ func _ready():
 	vsync.toggled.connect(func(on):
 		GameSettings.vsync = on
 		GameSettings.apply())
+
+	# Interface
+	UITheme.create_caption("Interface", box)
+	var language_row = UITheme.create_setting_row("Language", box)
+	var language = OptionButton.new()
+	language.focus_mode = Control.FOCUS_NONE
+	language.custom_minimum_size = Vector2(170, 40)
+	language.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # names in their own language
+	var codes = Locale.LANGUAGES.keys()
+	for i in codes.size():
+		language.add_item(Locale.LANGUAGES[codes[i]], i)
+		if codes[i] == GameSettings.language:
+			language.select(i)
+	language_row.add_child(language)
+	language.item_selected.connect(func(index):
+		GameSettings.language = codes[index]
+		Locale.setup(GameSettings.language)
+		GameSettings.save()
+		language_changed.emit())
 
 	UITheme.create_spacer(false, box).custom_minimum_size.y = 8
 

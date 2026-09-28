@@ -13,7 +13,7 @@ var noise_seed: int = -1
 var lake_centers: Array[Vector2i] = []
 var pond_centers: Array[Vector2i] = []
 var num_lakes: int = 5  # Количество крупных озер
-var num_ponds: int = 15  # Количество маленьких прудов
+var num_ponds: int = 8  # Количество маленьких прудов
 
 # Water feature data
 var water_tiles: Array[Vector2i] = []
@@ -21,25 +21,25 @@ var rivers: Array[Array] = []  # Массив путей рек
 
 func _init():
 	noise = FastNoiseLite.new()
-	noise.frequency = 0.08
+	noise.frequency = 0.16  # sampled per tile: tiles are 2 units wide, features keep their world size
 	noise.noise_type = FastNoiseLite.TYPE_PERLIN
 	noise.fractal_octaves = 4
 
 	biome_noise = FastNoiseLite.new()
-	biome_noise.frequency = 0.05
+	biome_noise.frequency = 0.1
 	biome_noise.noise_type = FastNoiseLite.TYPE_PERLIN
 
 	lake_noise = FastNoiseLite.new()
-	lake_noise.frequency = 0.03
+	lake_noise.frequency = 0.06
 	lake_noise.noise_type = FastNoiseLite.TYPE_CELLULAR
 	lake_noise.cellular_distance_function = FastNoiseLite.DISTANCE_EUCLIDEAN
 
 	river_noise = FastNoiseLite.new()
-	river_noise.frequency = 0.02
+	river_noise.frequency = 0.04
 	river_noise.noise_type = FastNoiseLite.TYPE_PERLIN
 
 	detail_noise = FastNoiseLite.new()
-	detail_noise.frequency = 0.2
+	detail_noise.frequency = 0.4
 	detail_noise.noise_type = FastNoiseLite.TYPE_PERLIN
 
 func generate_grid(radius: int, seed_value: int = -1) -> HexGrid:
@@ -82,6 +82,7 @@ func generate_grid(radius: int, seed_value: int = -1) -> HexGrid:
 
 	# Fourth pass: add islands in large lakes
 	_add_lake_islands(grid)
+	_raise_rim(grid, radius)
 
 	return grid
 
@@ -151,9 +152,20 @@ func generate_grid_async(radius: int, seed_value: int = -1) -> HexGrid:
 	# Fourth pass: add islands
 	print("[HexGenerator] Fourth pass: Adding lake islands...")
 	_add_lake_islands(grid)
+	_raise_rim(grid, radius)
 
 	print("[HexGenerator] Map generation complete!")
 	return grid
+
+## The outer ring is a mountain wall from the start: nobody falls off the island, and the zone
+## closes in from there (DestructionSystem raises more mountains)
+func _raise_rim(grid: HexGrid, radius: int):
+	for coords in grid.tiles:
+		if max(abs(coords.x), abs(coords.y), abs(coords.x + coords.y)) >= radius:
+			var tile: HexTile = grid.tiles[coords]
+			tile.set_biome(HexTile.BiomeType.MOUNTAIN)
+			tile.can_spawn = false
+			tile.can_destroy = false
 
 ## Generate random lake and pond centers
 func _generate_lake_centers(radius: int):
@@ -173,8 +185,9 @@ func _generate_lake_centers(radius: int):
 
 	# Generate pond centers
 	for i in range(num_ponds):
-		var q = rng.randi_range(-radius + 10, radius - 10)
-		var r = rng.randi_range(-radius + 10, radius - 10)
+		var span = max(1, radius / 2)
+		var q = rng.randi_range(-span, span)
+		var r = rng.randi_range(-span, span)
 		# Check if within hex bounds
 		if abs(q + r) <= radius:
 			pond_centers.append(Vector2i(q, r))
@@ -272,7 +285,7 @@ func _get_lake_influence(coords: Vector2i) -> float:
 		var lake_noise_val = lake_noise.get_noise_2d(coords.x * 0.5, coords.y * 0.5)
 
 		# Varied lake sizes
-		var lake_size = 8.0 + lake_noise_val * 3.0
+		var lake_size = 4.0 + lake_noise_val * 1.5  # in tiles
 		var influence = 1.0 - (distance / lake_size)
 
 		# Add organic shape variation
@@ -289,7 +302,7 @@ func _get_pond_influence(coords: Vector2i) -> float:
 
 	for pond_center in pond_centers:
 		var distance = _hex_distance(coords, pond_center)
-		var pond_size = 2.0 + randf() * 1.5
+		var pond_size = 2.5  # was randf(): not the same on every peer (only the center tile ever counted)
 		var influence = 1.0 - (distance / pond_size)
 		max_influence = max(max_influence, influence)
 
@@ -398,8 +411,8 @@ func _add_lake_islands(grid: HexGrid):
 
 		# Create small island near lake center
 		var island_offset = Vector2i(
-			rng.randi_range(-3, 3),
-			rng.randi_range(-3, 3)
+			rng.randi_range(-1, 1),
+			rng.randi_range(-1, 1)
 		)
 		var island_center = lake_center + island_offset
 

@@ -6,7 +6,8 @@ class_name CoverWall
 
 enum Kind { STONE, WOOD, SANDBAG }
 
-const LENGTH: float = 1.0
+const LENGTH: float = HexTile.HEX_RADIUS  # a whole hex edge (edge length = hex radius)
+const PROP_LENGTH: float = 1.0           # the wall models are one unit long: repeated along the edge
 const HEIGHT: float = 1.3
 const THICKNESS: float = 0.3
 const MODELS = {Kind.STONE: "wall_stone", Kind.WOOD: "wall_wood", Kind.SANDBAG: "wall_sandbag"}
@@ -28,10 +29,14 @@ func _ready():
 	collision.position.y = height / 2.0
 	add_child(collision)
 
+	var pieces = max(1, int(round(LENGTH / PROP_LENGTH)))
 	var model = CoverSpawner.load_prop(MODELS.get(kind, "wall_stone"))
 	if model:
-		model.scale.y = height / HEIGHT
-		add_child(model)
+		for i in pieces:
+			var piece = model if i == 0 else CoverSpawner.load_prop(MODELS.get(kind, "wall_stone"))
+			piece.scale.y = height / HEIGHT
+			piece.position.x = (i + 0.5) * PROP_LENGTH - LENGTH / 2.0
+			add_child(piece)
 	else:
 		var mesh = MeshInstance3D.new()
 		var box = BoxMesh.new()

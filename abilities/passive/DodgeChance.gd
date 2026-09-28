@@ -1,4 +1,4 @@
-## Dodge Chance - chance to avoid damage (Green Pepper passive)
+## Dodge Chance - chance to avoid damage (Pepper, Grape, Banana)
 extends PassiveAbility
 class_name DodgeChance
 

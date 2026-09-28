@@ -12,19 +12,19 @@ func _init():
 	model_scale = 1.0  # Auto-normalized to the standard height
 	model_origin_at_feet = true
 
-	# Active ability: Sour Squirt
+	# Active ability: Sour Spray
 	var active_ability_data = AbilityData.new()
-	active_ability_data.ability_name = "Sour Squirt"
-	active_ability_data.description = "Sprays acidic lemon juice that burns enemies"
-	active_ability_data.cooldown = 7.0
+	active_ability_data.ability_name = "Sour Spray"
+	active_ability_data.description = "A cone of lemon juice: it stings, and whoever it hits can hardly see for 3.5 s"
+	active_ability_data.cooldown = 9.0
 	active_ability_data.ability_type = "active"
-	active_ability_data.script_path = "res://abilities/active/TomatoSplash.gd"
+	active_ability_data.script_path = "res://abilities/active/SourSpray.gd"
 	active_ability = active_ability_data
 
 	# Passive ability: Zest
 	var passive_ability_data = AbilityData.new()
 	passive_ability_data.ability_name = "Zest"
-	passive_ability_data.description = "Moves faster than most fruit"
+	passive_ability_data.description = "The ability recharges 25% faster"
 	passive_ability_data.ability_type = "passive"
-	passive_ability_data.script_path = "res://abilities/passive/SpeedBoost.gd"
+	passive_ability_data.script_path = "res://abilities/passive/QuickRecharge.gd"
 	passive_ability = passive_ability_data

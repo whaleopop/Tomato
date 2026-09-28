@@ -228,15 +228,9 @@ func _setup_local_player(player: Player):
 	_setup_pause_menu()
 	_register_player_visibility(player)
 
-## "The edges are crumbling!" banner whenever a destruction wave hits
-func _connect_destruction_alerts(hud):
-	var network_manager = get_node_or_null("/root/NetworkManager")
-	if network_manager and network_manager.is_server():
-		var destruction = network_manager.game_server.server_world.destruction_system
-		if destruction:
-			destruction.destruction_phase_started.connect(func(_phase): hud.show_alert("The edges are crumbling!"))
-	elif client_world:
-		client_world.tiles_destroyed.connect(func(_count): hud.show_alert("The edges are crumbling!"))
+## Zone alerts and the countdown come from NetworkManager.zone_changed (PlayerHUD connects itself)
+func _connect_destruction_alerts(_hud):
+	pass
 
 func _setup_inventory_menu(player: Player):
 	var ui_layer = get_node_or_null("UI")

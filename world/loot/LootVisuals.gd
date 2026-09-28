@@ -58,23 +58,61 @@ static func pickup_model(item_type: int, item_data: ItemData) -> Node3D:
 				if weapon:
 					fit(weapon, size)
 					return weapon
-	var model = _instance(PROPS_DIR + path + ".glb") if path != "" else null
+	if path != "" and not path.begins_with("res://"):
+		path = PROPS_DIR + path + ".glb"
+	var model = _instance(path) if path != "" else null
 	if model:
 		fit(model, size)
 	return model
 
+## Harvest bonus (map event): a glowing bulb on a sprout, in the bonus color
+static func harvest_model(color: Color) -> Node3D:
+	var root = Node3D.new()
+	var bulb = MeshInstance3D.new()
+	var sphere = SphereMesh.new()
+	sphere.radius = 0.2
+	sphere.height = 0.46
+	sphere.radial_segments = 8
+	sphere.rings = 5
+	bulb.mesh = sphere
+	var glow = StandardMaterial3D.new()
+	glow.albedo_color = color
+	glow.emission_enabled = true
+	glow.emission = color
+	glow.emission_energy_multiplier = 1.4
+	glow.roughness = 0.3
+	bulb.material_override = glow
+	bulb.position.y = 0.08
+	root.add_child(bulb)
+	var leaf_mat = StandardMaterial3D.new()
+	leaf_mat.albedo_color = Color(0.32, 0.75, 0.28)
+	for i in 3:
+		var leaf = MeshInstance3D.new()
+		var prism = PrismMesh.new()
+		prism.size = Vector3(0.12, 0.28, 0.03)
+		leaf.mesh = prism
+		leaf.material_override = leaf_mat
+		var a = TAU * i / 3.0
+		leaf.position = Vector3(cos(a) * 0.07, 0.36, sin(a) * 0.07)
+		leaf.rotation = Vector3(0.0, -a, 0.5)
+		root.add_child(leaf)
+	return root
+
+## Ammo looks like the Blaster Kit's magazines and foam darts; fuel stays a canister (props)
 static func _ammo_file(item_data: ItemData) -> String:
 	if item_data is AmmoItem:
 		match item_data.ammo_type:
 			AmmoItem.AmmoType.SHOTGUN:
-				return "ammo_shotgun"
+				return "res://models/bullet-foam-thick.glb"
 			AmmoItem.AmmoType.SNIPER:
-				return "ammo_sniper"
+				return "res://models/bullet-foam-tip-thick.glb"
 			AmmoItem.AmmoType.RIFLE:
-				return "ammo_rifle"
+				return "res://models/clip-large.glb"
 			AmmoItem.AmmoType.FUEL:
 				return "fuel_can"
-	return "ammo_pistol"
+			AmmoItem.AmmoType.GRENADE:
+				return "res://models/grenade-b.glb"
+	return "res://models/clip-small.glb"
 
 static func _instance(path: String) -> Node3D:
 	if not ResourceLoader.exists(path):

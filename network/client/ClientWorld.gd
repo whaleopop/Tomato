@@ -16,6 +16,7 @@ var map_seed: int = 0
 var map_generator: MapGenerator = null
 var loot_spawner: LootSpawner = null
 var cover_spawner: CoverSpawner = null
+var map_events: MapEvents = null  # remote clients; the host plays the server's (ServerWorld.map_events)
 var hex_grid: HexGrid = null
 var visibility_system: VisibilitySystem = null
 var is_host_view: bool = false  # True when showing the host's ServerWorld
@@ -67,6 +68,11 @@ func generate_map_with_seed(seed_value: int, radius: int = MapGenerator.MATCH_MA
 	add_child(cover_spawner)
 	cover_spawner.setup(hex_grid, seed_value, CoverSpawner.container_tiles(hex_grid, loot_spawner))
 
+	map_events = MapEvents.new()
+	map_events.name = "MapEvents"
+	add_child(map_events)
+	map_events.setup(hex_grid, cover_spawner, false)
+
 	# Tiles the server destroyed before we got here (late join / slow load)
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager and network_manager.game_client:
@@ -82,8 +88,21 @@ func generate_map_with_seed(seed_value: int, radius: int = MapGenerator.MATCH_MA
 					continue  # the same drop from the map info and a live announcement
 				seen[drop[2]] = true
 				var landed: bool = drop.size() > 3 and drop[3]  # came down before we joined
-				loot_manager.spawn_mirrored_supply_drop(loot_spawner, drop[0], drop[1], drop[2], landed)
+				var rich: bool = drop.size() > 4 and drop[4]
+				loot_manager.spawn_mirrored_supply_drop(loot_spawner, drop[0], drop[1], drop[2], landed, rich)
 		network_manager.game_client.pending_supply_drops = []
+		# Zone steps announced while the map was generating (only the latest one still matters)
+		var zone_events = network_manager.game_client.pending_zone
+		if not zone_events.is_empty():
+			var e = zone_events[zone_events.size() - 1]
+			var left = e[2] - (Time.get_ticks_msec() - e[5]) / 1000.0
+			if e[0] != "rise" and left > 0.0:
+				apply_zone(e[0], e[1], left, e[3], e[4])
+			network_manager.game_client.pending_zone = []
+		# Map events announced while the map was generating
+		for ev in network_manager.game_client.pending_map_events:
+			apply_map_event(ev[0], ev[1], ev[2] + (Time.get_ticks_msec() - ev[3]) / 1000.0)
+		network_manager.game_client.pending_map_events = []
 
 	is_generating = false
 	_mark_map_ready()
@@ -122,22 +141,57 @@ func _process_pending_spawns():
 		spawn_player(spawn_data.player_id, spawn_data.position)
 	pending_spawns.clear()
 
-## Destroy tiles the server destroyed
+## Tiles the zone has already turned into mountains (map info for late joiners / slow loads)
 func destroy_tiles(coords_list: Array, animate: bool = true):
 	if not hex_grid:
 		return
 	var count = 0
 	for coords in coords_list:
 		var tile = hex_grid.get_tile(coords)
-		if tile and not tile.is_destroyed:
+		if tile and tile.is_playable():
 			count += 1
-			if animate:
-				tile.destroy()
-			else:
-				tile.is_destroyed = true
-				hex_grid.remove_tile(coords)
+			tile.raise_mountain(animate)
 	if animate and count > 0:
 		tiles_destroyed.emit(count)
+
+var zone_center: Vector2i = Vector2i.ZERO
+var zone_radius: int = -1  # safe radius around zone_center (-1: not announced yet)
+
+## A step of the zone (NetworkManager._receive_zone). The host doesn't get these: the server
+## changes the shared tiles itself.
+func apply_zone(kind: String, coords: Array, _seconds: float, center: Vector2i, radius: int):
+	if not hex_grid:
+		return
+	zone_center = center
+	zone_radius = radius
+	var state = HexTile.ZoneState.NONE
+	match kind:
+		"warn", "core_warn":
+			state = HexTile.ZoneState.WARNED
+		"burn", "core_burn":
+			state = HexTile.ZoneState.BURNING
+	if kind == "rise":
+		var raising := {}
+		for c in coords:
+			raising[c] = true
+		var center_world = hex_grid.hex_to_world(center)
+		# Our own player is predicted locally: shove it like the server shoves its copy
+		if local_player and is_instance_valid(local_player):
+			DestructionSystem.shove(local_player, hex_grid, raising, center_world)
+		destroy_tiles(coords, true)
+		get_tree().create_timer(HexTile.MOUNTAIN_RISE_TIME + 0.1).timeout.connect(func():
+			if local_player and is_instance_valid(local_player) and hex_grid:
+				DestructionSystem.unstick(local_player, hex_grid))
+		return
+	for c in coords:
+		var tile = hex_grid.get_tile(c)
+		if tile:
+			tile.set_zone_state(state)
+
+## A map event (NetworkManager._receive_map_event); the host's are played by ServerWorld.map_events
+func apply_map_event(kind: String, data: Dictionary, elapsed: float = 0.0):
+	if map_events and not is_host_view:
+		map_events.play(kind, data, elapsed)
 
 func _get_local_player_id() -> int:
 	var network_manager = get_node_or_null("/root/NetworkManager")

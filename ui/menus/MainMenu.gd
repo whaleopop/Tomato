@@ -8,12 +8,15 @@ const VERSION = "v0.4.0"
 var start_button: Button = null
 var connect_button: Button = null
 var settings_button: Button = null
+var guide_button: Button = null
 var quit_button: Button = null
 
 var showcase: CharacterShowcase = null
 var showcase_name: Label = null
 var toast: Control = null
 var settings_layer: Control = null
+var guide: Encyclopedia = null
+var _language_dirty: bool = false  # formatted texts (LAN hint...) need a rebuild
 
 var _roster: Array[CharacterData] = []
 var _showcase_index: int = 0
@@ -76,6 +79,9 @@ func _create_ui():
 	connect_button = UITheme.create_button("JOIN SERVER", buttons, Vector2(0, 52))
 	connect_button.pressed.connect(_on_connect_pressed)
 
+	guide_button = UITheme.create_button("GUIDE  ·  HEROES, WEAPONS, LOOT", buttons, Vector2(0, 52))
+	guide_button.pressed.connect(_on_guide_pressed)
+
 	var small_row = HBoxContainer.new()
 	small_row.add_theme_constant_override("separation", 12)
 	buttons.add_child(small_row)
@@ -126,7 +132,8 @@ func _show_next_character():
 	var data = _roster[_showcase_index % _roster.size()]
 	_showcase_index += 1
 	showcase.show_character(data)
-	showcase_name.text = data.character_name.to_upper()
+	showcase_name.text = data.character_name  # translated, then uppercased
+	showcase_name.uppercase = true
 	showcase_name.add_theme_color_override("font_color", data.color.lightened(0.35))
 
 ## Friends need the host's LAN address to join
@@ -136,8 +143,8 @@ func _lan_hint() -> String:
 		if address.begins_with("192.168.") or address.begins_with("10.") or (address.begins_with("172.") and not address.begins_with("172.1.")):
 			ips.append(address)
 	if ips.is_empty():
-		return "Host a game, friends join with your IP on port 7777."
-	return "Friends on your network join with  %s : 7777" % ips[0]
+		return tr("Host a game, friends join with your IP on port 7777.")
+	return tr("Friends on your network join with  %s : 7777") % ips[0]
 
 func show_toast(text: String, color: Color = UITheme.ACCENT_INFO):
 	if toast and is_instance_valid(toast):
@@ -165,7 +172,7 @@ func show_toast(text: String, color: Color = UITheme.ACCENT_INFO):
 	tween.tween_callback(holder.queue_free)
 
 func _set_buttons_enabled(enabled: bool):
-	for b in [start_button, connect_button, settings_button, quit_button]:
+	for b in [start_button, connect_button, guide_button, settings_button, quit_button]:
 		if b:
 			b.disabled = not enabled
 
@@ -203,15 +210,30 @@ func _on_settings_pressed():
 
 	var panel = SettingsPanel.new()
 	center.add_child(panel)
-	panel.closed.connect(func():
+	panel.closed.connect(_close_settings)
+	panel.language_changed.connect(func(): _language_dirty = true)
+
+func _close_settings():
+	if settings_layer:
 		settings_layer.queue_free()
-		settings_layer = null)
+		settings_layer = null
+	GameSettings.save()
+	if _language_dirty:
+		get_tree().reload_current_scene()  # rebuild the texts formatted in code
+
+func _on_guide_pressed():
+	if guide:
+		return
+	guide = Encyclopedia.new()
+	add_child(guide)
+	showcase.visible = false  # one 3D preview at a time
+	guide.closed.connect(func():
+		guide = null
+		showcase.visible = true)
 
 func _unhandled_input(event: InputEvent):
 	if settings_layer and event.is_action_pressed("pause"):
-		settings_layer.queue_free()
-		settings_layer = null
-		GameSettings.save()
+		_close_settings()
 		get_viewport().set_input_as_handled()
 
 func _on_quit_pressed():

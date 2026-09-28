@@ -20,9 +20,11 @@ var attack_range: float = 2.0
 var base_damage: float = 10.0
 var ranged_damage_multiplier: float = 1.0  # Multiplier for ranged weapon damage
 var reload_timer: float = 0.0
+var _reload_amount: int = 0                  # rounds taken from the reserve for the running reload
+var _reload_weapon: RangedWeapon = null      # the gun being reloaded
 
-# Muzzle offset from entity position
-var muzzle_offset: Vector3 = Vector3(0.5, 1.0, 0)
+# Muzzle offset from entity position: right, up, forward (where WeaponVisualComponent holds the gun)
+var muzzle_offset: Vector3 = Vector3(0.28, 0.66, 0.6)
 
 func _init(p_entity = null):  # p_entity: Entity
 	entity = p_entity
@@ -41,7 +43,21 @@ func update(delta: float):
 			_complete_reload()
 
 func can_attack() -> bool:
-	return enabled and attack_cooldown <= 0.0 and not is_attacking and not is_reloading
+	return enabled and attack_cooldown <= 0.0 and not is_attacking and not is_reloading and not _stunned()
+
+func _stunned() -> bool:
+	var status = entity.get_component("StatusComponent") if entity and entity.has_method("get_component") else null
+	return status != null and status.is_stunned()
+
+## Everything that scales weapon damage: pickups and perks (ranged_damage_multiplier) and the
+## Hot Temper passive (meta "hot_temper": the factor while below half health)
+func get_damage_multiplier() -> float:
+	var m = ranged_damage_multiplier
+	if entity and entity.has_meta("hot_temper"):
+		var health = entity.get_component("HealthComponent")
+		if health and health.max_health > 0.0 and health.current_health < health.max_health * 0.5:
+			m *= float(entity.get_meta("hot_temper"))
+	return m
 
 func can_shoot() -> bool:
 	if not can_attack():
@@ -62,7 +78,7 @@ func attack(target_position: Vector3, target_entity = null) -> bool:  # target_e
 
 	# NEW: Check for equipped ranged weapon first (new weapon system)
 	if equipped_ranged_weapon:
-		damage = equipped_ranged_weapon.damage * ranged_damage_multiplier
+		damage = equipped_ranged_weapon.damage * get_damage_multiplier()
 		var success = _perform_hitscan_attack(target_position, damage)
 		is_attacking = false
 		attack_finished.emit()
@@ -133,22 +149,26 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 	if not world_3d:
 		return false
 
-	# Determine weapon type for effects
-	var weapon_type = RangedWeapon.WeaponType.PISTOL
+	# How this gun fires (RangedWeapon.fire_mode) and how its tracer looks
+	var mode = "single"
+	var style = "pistol"
 	if equipped_ranged_weapon:
-		weapon_type = equipped_ranged_weapon.weapon_type
-		damage = equipped_ranged_weapon.damage * ranged_damage_multiplier
+		mode = equipped_ranged_weapon.fire_mode
+		style = equipped_ranged_weapon.effect_style
+		damage = equipped_ranged_weapon.damage * get_damage_multiplier()
 		attack_range = equipped_ranged_weapon.range
 		attack_cooldown = equipped_ranged_weapon.fire_rate
 	elif current_weapon:
-		if current_weapon.weapon_name.to_lower().contains("shotgun"):
-			weapon_type = RangedWeapon.WeaponType.SHOTGUN
-		elif current_weapon.weapon_name.to_lower().contains("sniper"):
-			weapon_type = RangedWeapon.WeaponType.SNIPER
-		elif current_weapon.weapon_name.to_lower().contains("rifle"):
-			weapon_type = RangedWeapon.WeaponType.RIFLE
-		elif current_weapon.weapon_name.to_lower().contains("flame"):
-			weapon_type = RangedWeapon.WeaponType.FLAMETHROWER
+		var legacy = current_weapon.weapon_name.to_lower()
+		if legacy.contains("shotgun"):
+			mode = "spread"
+		elif legacy.contains("sniper"):
+			mode = "pierce"
+			style = "sniper"
+		elif legacy.contains("flame"):
+			mode = "flame"
+		elif legacy.contains("rifle"):
+			style = "rifle"
 
 	var hit_result: Dictionary
 	var hit_results: Array[Dictionary] = []
@@ -157,9 +177,8 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 	# CRITICAL: Apply damage ONLY on server to prevent double-damage bug
 	var is_server = entity.get_tree().get_multiplayer().is_server()
 
-	# Perform appropriate shot type
-	match weapon_type:
-		RangedWeapon.WeaponType.SHOTGUN:
+	match mode:
+		"spread":
 			var pellet_count = 8
 			var spread = 25.0
 			if equipped_ranged_weapon:
@@ -168,19 +187,20 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 
 			hit_results = HitscanSystem.shoot_spread(
 				world_3d, muzzle_pos, direction,
-				pellet_count, spread, attack_range, damage, entity
+				pellet_count, min(spread * MapEvents.spread_factor, 60.0), attack_range, damage, entity
 			)
 			for result in hit_results:
 				if result.get("hit", false) and is_server:
 					var actual_dmg = HitscanSystem.apply_hit_damage(result, entity)
 					if actual_dmg > 0:
 						target_hit.emit(result.get("collider"), actual_dmg)
+						apply_on_hit(result.get("collider"))
 			_create_shot_effects_shotgun(muzzle_pos, hit_results)
 			shot_fired.emit(muzzle_pos, target_position, hit_results.size() > 0)
 
-		RangedWeapon.WeaponType.SNIPER:
+		"pierce":
 			hit_results = HitscanSystem.shoot_penetrating(
-				world_3d, muzzle_pos, direction,
+				world_3d, muzzle_pos, _apply_accuracy(direction, 1.0),  # dead straight unless the ground shakes
 				attack_range, damage, 2, 0.6, entity
 			)
 			for result in hit_results:
@@ -190,33 +210,25 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 						target_hit.emit(result.get("collider"), actual_dmg)
 			if hit_results.size() > 0:
 				end_pos = hit_results[-1].get("position", target_position)
-				_create_shot_effects(muzzle_pos, hit_results[0], "sniper")
+				_create_shot_effects(muzzle_pos, hit_results[0], style)
 			shot_fired.emit(muzzle_pos, end_pos, hit_results.size() > 0)
 
-		RangedWeapon.WeaponType.FLAMETHROWER:
+		"flame":
 			# Flamethrower - cone of fire with burn effect
 			_perform_flamethrower_attack(muzzle_pos, direction, damage)
 			shot_fired.emit(muzzle_pos, muzzle_pos + direction * attack_range, true)
 
-		RangedWeapon.WeaponType.RIFLE:
-			# Rifle - fast single shots with slight spread
-			var accuracy = 0.85
-			if equipped_ranged_weapon:
-				accuracy = equipped_ranged_weapon.accuracy
-			var spread_dir = _apply_accuracy(direction, accuracy)
-			hit_result = HitscanSystem.shoot(
-				world_3d, muzzle_pos, spread_dir,
-				attack_range, damage, entity
-			)
-			if hit_result.get("hit", false) and is_server:
-				var actual_dmg = HitscanSystem.apply_hit_damage(hit_result, entity)
-				if actual_dmg > 0:
-					target_hit.emit(hit_result.get("collider"), actual_dmg)
-			end_pos = hit_result.get("position", muzzle_pos + direction * attack_range)
-			_create_shot_effects(muzzle_pos, hit_result, "rifle")
-			shot_fired.emit(muzzle_pos, end_pos, hit_result.get("hit", false))
+		"lob":
+			# Grenade launcher: an arc onto the aimed spot, the blast there a moment later
+			var land = _lob_target(muzzle_pos, target_position)
+			var radius = equipped_ranged_weapon.blast_radius if equipped_ranged_weapon else 2.5
+			GrenadeFX.lob(_effects_parent(), muzzle_pos, land, radius)
+			if is_server:
+				_blast_later(land, radius, damage, GrenadeFX.flight_time(muzzle_pos, land))
+			end_pos = land
+			shot_fired.emit(muzzle_pos, land, false)
 
-		_:  # PISTOL and default
+		_:  # "single": one bullet, spread by the gun's accuracy (pistol, rifle, SMG, ...)
 			var accuracy = 0.95
 			if equipped_ranged_weapon:
 				accuracy = equipped_ranged_weapon.accuracy
@@ -229,19 +241,24 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 				var actual_dmg = HitscanSystem.apply_hit_damage(hit_result, entity)
 				if actual_dmg > 0:
 					target_hit.emit(hit_result.get("collider"), actual_dmg)
+					apply_on_hit(hit_result.get("collider"))
 			end_pos = hit_result.get("position", muzzle_pos + direction * attack_range)
-			_create_shot_effects(muzzle_pos, hit_result, "pistol")
+			_create_shot_effects(muzzle_pos, hit_result, style)
 			shot_fired.emit(muzzle_pos, end_pos, hit_result.get("hit", false))
 
 	# Add bullet trail to visibility system
 	_add_visibility_trail(muzzle_pos, end_pos)
 
+	# The last round is out: reload on its own if there is anything to reload with
+	if equipped_ranged_weapon and equipped_ranged_weapon.current_ammo <= 0:
+		start_reload()
+
 	# Camera shake for feedback
 	if ScreenEffects.instance:
 		var shake_intensity = 0.1
-		if weapon_type == RangedWeapon.WeaponType.SNIPER:
+		if mode == "pierce" or style == "sniper":
 			shake_intensity = 0.3
-		elif weapon_type == RangedWeapon.WeaponType.SHOTGUN:
+		elif mode == "spread" or mode == "lob":
 			shake_intensity = 0.25
 		ScreenEffects.shake(shake_intensity, 8.0)
 
@@ -256,14 +273,7 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 					hit_target_id = collider.entity_id
 
 			# Determine weapon type string
-			var weapon_type_str = "pistol"
-			match weapon_type:
-				RangedWeapon.WeaponType.SHOTGUN:
-					weapon_type_str = "shotgun"
-				RangedWeapon.WeaponType.SNIPER:
-					weapon_type_str = "sniper"
-				RangedWeapon.WeaponType.RIFLE:
-					weapon_type_str = "rifle"
+			var weapon_type_str = "shotgun" if mode == "spread" else style
 
 			# Only send RPC if we're the authority (local player or server)
 			if entity.has_method("is_local_player") and entity.is_local_player:
@@ -273,12 +283,61 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 
 	return true
 
+## After a hit (server): what the gun does besides damage - the Jam Blaster's slow
+func apply_on_hit(target) -> void:
+	if not equipped_ranged_weapon or equipped_ranged_weapon.slow_on_hit <= 0.0:
+		return
+	if target and is_instance_valid(target) and target.has_method("get_component"):
+		var status = target.get_component("StatusComponent")
+		if status:
+			status.apply("slow", equipped_ranged_weapon.slow_time, equipped_ranged_weapon.slow_on_hit)
+
+## Where a lobbed grenade comes down: the aimed spot, no further than the gun's range, on the ground
+func _lob_target(from: Vector3, target: Vector3) -> Vector3:
+	var flat = target - entity.global_position
+	flat.y = 0.0
+	if flat.length() > attack_range:
+		flat = flat.normalized() * attack_range
+	var spot = entity.global_position + flat
+	var space = entity.get_world_3d().direct_space_state
+	var hit = space.intersect_ray(PhysicsRayQueryParameters3D.create(spot + Vector3.UP * 4.0, spot + Vector3.DOWN * 6.0, 1))
+	if hit:
+		spot.y = hit.position.y
+	return spot
+
+## Server: the grenade lands after `delay` - everyone in `radius` gets hurt, less at the edge
+func _blast_later(pos: Vector3, radius: float, damage: float, delay: float) -> void:
+	var shooter = entity
+	await shooter.get_tree().create_timer(delay).timeout
+	if not is_instance_valid(shooter) or not shooter.is_inside_tree():
+		return
+	for other in shooter.get_tree().get_nodes_in_group("entities"):
+		if other == shooter or not other is Node3D or not other.has_method("get_component"):
+			continue
+		var off: Vector3 = other.global_position - pos
+		if abs(off.y) > 2.0:
+			continue
+		off.y = 0.0
+		var d = off.length()
+		if d > radius:
+			continue
+		var health = other.get_component("HealthComponent")
+		if health:
+			var dealt = health.take_damage(damage * (1.0 - 0.5 * d / radius), shooter)
+			if dealt > 0:
+				target_hit.emit(other, dealt)
+		var status = other.get_component("StatusComponent")
+		if status and d > 0.05:
+			status.push(off.normalized() * 6.0, 0.2)
+
 ## Apply accuracy spread to direction
 func _apply_accuracy(direction: Vector3, accuracy: float) -> Vector3:
-	if accuracy >= 1.0:
-		return direction
-
 	var spread = (1.0 - accuracy) * 0.15
+	# Earthquake (MapEvents): everybody's aim shakes, even a sniper's
+	if MapEvents.spread_factor > 1.0:
+		spread = max(spread, 0.012) * MapEvents.spread_factor
+	if spread <= 0.0:
+		return direction
 	var random_spread = Vector3(
 		randf_range(-spread, spread),
 		randf_range(-spread, spread),
@@ -356,7 +415,7 @@ func _create_flame_effect(muzzle_pos: Vector3, direction: Vector3):
 		return
 
 	var particles = GPUParticles3D.new()
-	particles.amount = 50
+	particles.amount = 26
 	particles.lifetime = 0.5
 	particles.one_shot = true
 	particles.explosiveness = 0.8
@@ -364,27 +423,38 @@ func _create_flame_effect(muzzle_pos: Vector3, direction: Vector3):
 	var mat = ParticleProcessMaterial.new()
 	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_POINT
 	mat.direction = direction
-	mat.spread = 20.0
-	mat.initial_velocity_min = 15.0
-	mat.initial_velocity_max = 25.0
-	mat.gravity = Vector3(0, 2, 0)
-	mat.scale_min = 0.3
-	mat.scale_max = 0.8
+	mat.spread = 14.0
+	mat.initial_velocity_min = 14.0
+	mat.initial_velocity_max = 22.0
+	mat.damping_min = 12.0
+	mat.damping_max = 18.0
+	mat.gravity = Vector3(0, 3, 0)
+	mat.scale_min = 0.5
+	mat.scale_max = 1.0
+	var grow = Curve.new()  # tongues of fire widen as they fly
+	grow.add_point(Vector2(0.0, 0.35))
+	grow.add_point(Vector2(0.5, 1.0))
+	grow.add_point(Vector2(1.0, 1.4))
+	var grow_tex = CurveTexture.new()
+	grow_tex.curve = grow
+	mat.scale_curve = grow_tex
 
 	var gradient = GradientTexture1D.new()
 	var grad = Gradient.new()
-	grad.add_point(0.0, Color(1.0, 0.9, 0.3, 1.0))
-	grad.add_point(0.3, Color(1.0, 0.5, 0.1, 0.9))
-	grad.add_point(0.7, Color(0.8, 0.2, 0.05, 0.5))
-	grad.add_point(1.0, Color(0.2, 0.1, 0.1, 0.0))
+	grad.offsets = PackedFloat32Array([0.0, 0.3, 0.7, 1.0])
+	grad.colors = PackedColorArray([Color(1.0, 0.9, 0.35, 1.0), Color(1.0, 0.5, 0.1, 0.9), Color(0.85, 0.2, 0.05, 0.55), Color(0.2, 0.1, 0.1, 0.0)])
 	gradient.gradient = grad
 	mat.color_ramp = gradient
 
 	particles.process_material = mat
-	particles.draw_pass_1 = SphereMesh.new()
+	# Soft billboards with the fire material (a bare SphereMesh drew plain white balls)
+	var quad = QuadMesh.new()
+	quad.size = Vector2(0.55, 0.55)
+	quad.material = FireTrail._get_flame_material()
+	particles.draw_pass_1 = quad
 
-	particles.global_position = muzzle_pos
 	parent.add_child(particles)
+	particles.global_position = muzzle_pos  # after add_child: outside the tree it is ignored
 
 	# Light
 	var light = OmniLight3D.new()
@@ -414,9 +484,9 @@ func _get_muzzle_position() -> Vector3:
 	if not entity:
 		return Vector3.ZERO
 
-	# Calculate muzzle position based on entity rotation
-	var forward = -entity.transform.basis.z
-	var right = entity.transform.basis.x
+	# Heroes face +Z (PlayerInputHandler: rotation.y = atan2(x, z)); the right hand is at -X
+	var forward = entity.transform.basis.z
+	var right = -entity.transform.basis.x
 	var offset = right * muzzle_offset.x + Vector3.UP * muzzle_offset.y + forward * muzzle_offset.z
 
 	return entity.global_position + offset
@@ -451,6 +521,8 @@ func _effects_parent() -> Node3D:
 
 ## Equip ranged weapon instance
 func equip_ranged_weapon(weapon: RangedWeapon) -> void:
+	if weapon != equipped_ranged_weapon:
+		cancel_reload()  # switching mid-reload used to leave the old gun "reloading" forever
 	equipped_ranged_weapon = weapon
 	# Always emit weapon_changed signal when equipping ranged weapon
 	weapon_changed.emit(weapon)
@@ -470,24 +542,44 @@ func start_reload() -> void:
 
 	var ammo_to_reload = equipped_ranged_weapon.start_reload(reserve_ammo)
 	if ammo_to_reload > 0:
+		# The rounds leave the reserve now and go into the magazine when the reload is done
+		if inventory:
+			ammo_to_reload = inventory.consume_ammo(equipped_ranged_weapon.ammo_type, ammo_to_reload)
+		if ammo_to_reload <= 0:
+			equipped_ranged_weapon.is_reloading = false
+			return
 		is_reloading = true
 		reload_timer = equipped_ranged_weapon.reload_time
+		_reload_amount = ammo_to_reload
+		_reload_weapon = equipped_ranged_weapon
 		reload_started.emit()
-
-		# Consume ammo from inventory
-		if inventory:
-			inventory.consume_ammo(equipped_ranged_weapon.ammo_type, ammo_to_reload)
-
 		print("[CombatComponent] Reloading... (%d rounds)" % ammo_to_reload)
 
-## Complete reload after timer
+## Complete reload after timer: the rounds taken from the reserve go into the magazine
+## (they used to vanish: the reserve went down, the magazine stayed empty)
 func _complete_reload() -> void:
 	is_reloading = false
-	if equipped_ranged_weapon:
-		# Ammo was already deducted, now add to magazine
-		equipped_ranged_weapon.is_reloading = false
+	if _reload_weapon:
+		_reload_weapon.complete_reload(_reload_amount)
+	_reload_amount = 0
+	_reload_weapon = null
 	reload_finished.emit()
 	print("[CombatComponent] Reload complete")
+
+## Stop a running reload (weapon switched, dropped...): the rounds go back into the reserve
+func cancel_reload() -> void:
+	if not is_reloading:
+		return
+	is_reloading = false
+	reload_timer = 0.0
+	if _reload_weapon:
+		_reload_weapon.is_reloading = false
+		var inventory = entity.get_component("InventoryComponent") if entity else null
+		if inventory and _reload_amount > 0:
+			inventory.add_item(AmmoItem.new(_reload_weapon.ammo_type, _reload_amount))
+	_reload_amount = 0
+	_reload_weapon = null
+	reload_finished.emit()
 
 func equip_weapon(weapon: WeaponData):
 	current_weapon = weapon

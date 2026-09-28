@@ -38,18 +38,50 @@ var parachute: Node3D = null     # supply drops only
 var interact_prompt: Label3D = null
 var is_opening: bool = false  # Prevents double-opening during animation
 var is_falling: bool = false  # supply drop still in the air
+## Zone drop (MapEventDirector): a supply drop with the good stuff - a strong weapon, a shield, a
+## crystal and a medkit for sure - and a golden pillar over it (also on the minimap)
+var rich: bool = false
 var _lid_rest: Transform3D
 var _glint: GPUParticles3D = null
 var _sway: Tween = null
 
-# Possible loot weights
-var loot_weights: Dictionary = {
+## Which weapon a WEAPON roll gives (the guide shows these as rarity too)
+const WEAPON_WEIGHTS = {
+	RangedWeapon.WeaponType.PISTOL: 22,
+	RangedWeapon.WeaponType.SHOTGUN: 18,
+	RangedWeapon.WeaponType.SNIPER: 7,
+	RangedWeapon.WeaponType.RIFLE: 15,
+	RangedWeapon.WeaponType.FLAMETHROWER: 10,
+	RangedWeapon.WeaponType.SMG: 18,
+	RangedWeapon.WeaponType.HAND_CANNON: 11,
+	RangedWeapon.WeaponType.MARKSMAN: 8,
+	RangedWeapon.WeaponType.MINIGUN: 5,
+	RangedWeapon.WeaponType.DOUBLE_BARREL: 11,
+	RangedWeapon.WeaponType.JAM_BLASTER: 10,
+	RangedWeapon.WeaponType.LAUNCHER: 5,
+}
+const RICH_WEAPON_WEIGHTS = {
+	RangedWeapon.WeaponType.SNIPER: 20,
+	RangedWeapon.WeaponType.RIFLE: 15,
+	RangedWeapon.WeaponType.FLAMETHROWER: 10,
+	RangedWeapon.WeaponType.MARKSMAN: 15,
+	RangedWeapon.WeaponType.MINIGUN: 15,
+	RangedWeapon.WeaponType.LAUNCHER: 15,
+	RangedWeapon.WeaponType.DOUBLE_BARREL: 10,
+}
+const RICH_COLOR := Color(1.0, 0.8, 0.3)
+## Rounds in one ammo pickup (the guide shows them too)
+const AMMO_PER_PICKUP = {AmmoItem.AmmoType.GRENADE: 6}
+
+# Possible loot weights (the order matters: the seeded roll walks it)
+const DEFAULT_LOOT_WEIGHTS = {
 	LootItem.ItemType.HEALTH: 40,
 	LootItem.ItemType.AMMO: 30,
 	LootItem.ItemType.WEAPON: 10,
 	LootItem.ItemType.ABILITY_BOOST: 15,
 	LootItem.ItemType.SHIELD: 5
 }
+var loot_weights: Dictionary = DEFAULT_LOOT_WEIGHTS.duplicate()
 
 func _ready():
 	add_to_group("loot_containers")
@@ -107,6 +139,14 @@ func _create_visual():
 		_glint.draw_pass_1 = quad
 		_glint.position.y = 0.55 if container_type == ContainerType.CHEST else 0.72
 		visual.add_child(_glint)
+
+	if rich:
+		var pillar = LootVisuals.beam(RICH_COLOR, 9.0, 0.45)
+		pillar.name = "RichBeam"
+		(pillar.material_override as StandardMaterial3D).albedo_color.a = 0.5
+		add_child(pillar)
+		add_to_group("map_markers")
+		set_meta("marker_color", RICH_COLOR)
 
 func _fallback_mesh() -> MeshInstance3D:
 	var mesh_instance = MeshInstance3D.new()
@@ -249,6 +289,10 @@ func open(player: Player = null):
 
 	is_opened = true
 	is_opening = false
+	remove_from_group("map_markers")
+	var pillar = get_node_or_null("RichBeam")
+	if pillar:
+		create_tween().tween_property(pillar, "scale", Vector3(0.01, 1.0, 0.01), 0.6)
 	container_opened.emit(self, player)
 
 	var items = _spawn_loot()
@@ -360,7 +404,9 @@ func _spawn_loot() -> Array:
 	var items_to_spawn: Array[LootItem.ItemType] = []
 
 	# Guarantee health item if enabled
-	if guaranteed_health:
+	if rich:
+		items_to_spawn.append_array([LootItem.ItemType.WEAPON, LootItem.ItemType.SHIELD, LootItem.ItemType.ABILITY_BOOST, LootItem.ItemType.HEALTH])
+	elif guaranteed_health:
 		items_to_spawn.append(LootItem.ItemType.HEALTH)
 
 	# Roll for remaining items
@@ -424,30 +470,23 @@ func _spawn_loot_item(item_type: LootItem.ItemType, spawn_pos: Vector3) -> LootI
 				AmmoItem.AmmoType.SHOTGUN,
 				AmmoItem.AmmoType.SNIPER,
 				AmmoItem.AmmoType.RIFLE,
-				AmmoItem.AmmoType.FUEL
+				AmmoItem.AmmoType.FUEL,
+				AmmoItem.AmmoType.GRENADE,
 			]
 			var ammo_type = ammo_types[loot_rng.randi() % ammo_types.size()]
 			item.item_name = AmmoItem.get_ammo_type_name(ammo_type)
 			item.item_value = float(ammo_type)  # Store type as value
-			item.item_data = AmmoItem.new(ammo_type, 30)
+			item.item_data = AmmoItem.new(ammo_type, AMMO_PER_PICKUP.get(ammo_type, 30))
 		LootItem.ItemType.WEAPON:
-			# Random weapon type
-			var weapon_types = [
-				RangedWeapon.WeaponType.PISTOL,
-				RangedWeapon.WeaponType.SHOTGUN,
-				RangedWeapon.WeaponType.SNIPER,
-				RangedWeapon.WeaponType.RIFLE,
-				RangedWeapon.WeaponType.FLAMETHROWER
-			]
-			# Weight towards more common weapons
-			var weights = [30, 25, 10, 20, 15]  # Pistol most common, Sniper rare
-			var weapon_type = _weighted_random(weapon_types, weights)
+			# Random weapon type, weighted (pistol most common, sniper rare)
+			var weights = RICH_WEAPON_WEIGHTS if rich else WEAPON_WEIGHTS
+			var weapon_type = _weighted_random(weights.keys(), weights.values())
 			var weapon = RangedWeapon.create_weapon(weapon_type)
 			item.item_name = weapon.item_name
 			item.item_data = weapon
 		LootItem.ItemType.ABILITY_BOOST:
 			item.item_name = "Ability Boost"
-			item.item_value = 0.5
+			item.item_value = 1.0  # recharges the ability at once (AbilityComponent.boost_cooldowns)
 		LootItem.ItemType.SHIELD:
 			item.item_name = "Shield"
 			item.item_value = 30.0

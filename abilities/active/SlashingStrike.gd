@@ -15,19 +15,19 @@ func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity
 	var combat = entity.get_component("CombatComponent")
 	if not combat:
 		return false
-	
+
 	# Find targets in range
 	var targets = _find_targets_in_range(entity, target_position)
-	
+
 	# Deal damage to all targets
 	for target in targets:
 		var health = target.get_component("HealthComponent")
 		if health:
 			health.take_damage(damage, entity)
-	
+
 	# Create visual effect
 	_create_slash_effect(entity, target_position)
-	
+
 	return true
 
 func _find_targets_in_range(entity, target_position: Vector3) -> Array:  # entity: Entity
@@ -51,13 +51,18 @@ func _find_targets_in_range(entity, target_position: Vector3) -> Array:  # entit
 		if to_other.length() <= range:
 			var direction_to_target = to_other.normalized()
 			var angle_to_target = rad_to_deg(forward.angle_to(direction_to_target))
-			
+
 			if angle_to_target <= angle / 2.0:
 				targets.append(other_entity)
-	
+
 	return targets
 
-func _create_slash_effect(_entity, _target_position: Vector3):  # entity: Entity
-	# Visual effect for slash
-	pass
+func _create_slash_effect(entity, target_position: Vector3):  # entity: Entity
+	var forward: Vector3 = entity.global_transform.basis.z
+	if target_position != Vector3.ZERO:
+		var aim = target_position - entity.global_position
+		aim.y = 0.0
+		if aim.length_squared() > 0.01:
+			forward = aim.normalized()
+	AbilityFX.slash(entity, forward, range, angle, AbilityFX.hero_color(entity, Color(0.8, 0.2, 0.4)))
 

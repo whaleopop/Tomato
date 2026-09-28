@@ -12,6 +12,8 @@ var map_generator: MapGenerator = null
 var destruction_system: DestructionSystem = null
 var loot_spawner: LootSpawner = null
 var cover_spawner: CoverSpawner = null
+var map_events: MapEvents = null            # plays the map events on this (the host's) world
+var event_director: MapEventDirector = null  # picks them
 var players: Dictionary = {}  # player_id -> Player entity
 var spawn_points: Array[Vector3] = []
 var hex_grid: HexGrid = null
@@ -26,7 +28,6 @@ var destroyed_tiles: Array = []  # Vector2i coords destroyed so far (sent to lat
 var host_spawn_position: Vector3 = Vector3.ZERO
 var has_host_spawn: bool = false
 
-var _pending_destroyed: Array = []
 
 func _ready():
 	map_generator = MapGenerator.new()
@@ -60,6 +61,17 @@ func _ready():
 	add_child(cover_spawner)
 	cover_spawner.setup(hex_grid, map_seed, CoverSpawner.container_tiles(hex_grid, loot_spawner))
 
+	# Map events: meteors, quake, night, flood, rift, harvest, zone drops
+	map_events = MapEvents.new()
+	map_events.name = "MapEvents"
+	add_child(map_events)
+	map_events.setup(hex_grid, cover_spawner, true)
+	map_events.tile_raised.connect(_on_tile_destroyed)  # the rift's rock, for late joiners
+	event_director = MapEventDirector.new()
+	event_director.name = "MapEventDirector"
+	add_child(event_director)
+	event_director.setup(hex_grid, destruction_system, map_events, loot_spawner, cover_spawner)
+
 	_generate_spawn_points(hex_grid)
 
 	is_map_ready = true
@@ -83,11 +95,15 @@ func start_match():
 		destruction_system.start(hex_grid)
 	if loot_spawner:
 		loot_spawner.start_supply_drops()
+	if event_director:
+		event_director.start()
 
-## The match is decided: the island stops crumbling, no more supply drops
+## The match is decided: the island stops crumbling, no more supply drops or events
 func stop_match():
 	if destruction_system:
 		destruction_system.stop()
+	if event_director:
+		event_director.stop()
 	if loot_spawner:
 		loot_spawner.enable_supply_drops = false
 
@@ -97,30 +113,21 @@ func _on_supply_drop_spawned(container: LootContainer):
 		return
 	var container_id = loot_manager.register_container(container)
 	var ground_pos = container.position - Vector3(0, 20.0, 0)
-	loot_manager.record_supply_drop(ground_pos, container.loot_seed, container_id)  # for late joiners
+	loot_manager.record_supply_drop(ground_pos, container.loot_seed, container_id, container.rich)  # for late joiners
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager:
-		network_manager.broadcast_supply_drop(ground_pos, container.loot_seed, container_id)
+		network_manager.broadcast_supply_drop(ground_pos, container.loot_seed, container_id, container.rich)
 
+## A tile became a mountain: remembered for late joiners (the live step goes out as a zone event)
 func _on_tile_destroyed(coords: Vector2i):
 	destroyed_tiles.append(coords)
-	# Batch all tiles destroyed this frame into one RPC
-	if _pending_destroyed.is_empty():
-		call_deferred("_flush_destroyed_tiles")
-	_pending_destroyed.append(coords)
-
-func _flush_destroyed_tiles():
-	var network_manager = get_node_or_null("/root/NetworkManager")
-	if network_manager:
-		network_manager.broadcast_tiles_destroyed(_pending_destroyed.duplicate())
-	_pending_destroyed.clear()
 
 func _generate_spawn_points(grid: HexGrid):
 	spawn_points.clear()
 
 	# Get center tiles for spawn points
 	var center_coords = Vector2i(0, 0)
-	var spawn_radius = 5
+	var spawn_radius = 3  # big tiles
 
 	for q in range(-spawn_radius, spawn_radius + 1):
 		for r in range(-spawn_radius, spawn_radius + 1):

@@ -5,3 +5,10 @@
 # Python caches of tools/ai_models
 __pycache__/
 *.pyc
+
+# Recorded trailer videos (dev/trailers/record_all.ps1) and the temporary Movie Maker override
+/trailers/
+/override.cfg
+
+# Exported game (dev builds and CI)
+/build/

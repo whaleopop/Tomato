@@ -66,7 +66,7 @@ func _update_display():
 		return
 	visible = true
 
-	weapon_label.text = weapon.item_name.to_upper()
+	weapon_label.text = tr(weapon.item_name).to_upper()
 	ammo_label.text = str(weapon.current_ammo)
 	magazine_label.text = "/ %d" % weapon.magazine_size
 
@@ -79,7 +79,7 @@ func _update_display():
 
 	if inventory_component:
 		var reserve = inventory_component.get_ammo_count(weapon.ammo_type)
-		reserve_label.text = "Reserve  %d" % reserve if reserve > 0 else "No reserve ammo"
+		reserve_label.text = tr("Reserve  %d") % reserve if reserve > 0 else tr("No reserve ammo")
 		reserve_label.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY if reserve > 0 else LOW_AMMO_COLOR)
 	else:
 		reserve_label.text = ""

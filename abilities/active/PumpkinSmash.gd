@@ -1,9 +1,10 @@
-## Pumpkin Smash - area damage around self
+## Pumpkin Smash - area damage around self, and the shockwave throws everyone back
 extends ActiveAbility
 class_name PumpkinSmash
 
 var damage: float = 40.0
 var radius: float = 4.0
+var push_speed: float = 10.0
 
 func _init():
 	ability_name = "Pumpkin Smash"
@@ -13,29 +14,34 @@ func _init():
 func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity
 	# Deal damage to all nearby enemies
 	var targets = _find_targets_in_radius(entity)
-	
+
 	for target in targets:
 		var health = target.get_component("HealthComponent")
 		if health:
 			health.take_damage(damage, entity)
-	
+		var status = target.get_component("StatusComponent") if target.has_method("get_component") else null
+		if status and not replay:
+			var away: Vector3 = target.global_position - entity.global_position
+			away.y = 0.0
+			status.push((away.normalized() if away.length() > 0.05 else Vector3.FORWARD) * push_speed, 0.3)
+
 	# Create visual effect
 	_create_smash_effect(entity)
-	
+
 	return true
 
 func _find_targets_in_radius(entity) -> Array:  # entity: Entity
 	var targets: Array = []
 	var all_entities = entity.get_tree().get_nodes_in_group("entities")
-	
+
 	for other_entity in all_entities:
 		if other_entity == entity:
 			continue
-		
+
 		var distance = entity.global_position.distance_to(other_entity.global_position)
 		if distance <= radius:
 			targets.append(other_entity)
-	
+
 	return targets
 
 func _create_smash_effect(entity):  # entity: Entity

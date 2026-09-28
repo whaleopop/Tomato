@@ -7,7 +7,7 @@
 extends RefCounted
 class_name ServerVisibility
 
-const MARGIN_HEXES: float = 1.5
+const MARGIN: float = 2.6  # world units beyond the sight radius
 const REVEAL_TIME: float = 0.8  # seconds after shooting / casting you can't hide in a bush
 const HEAR_DISTANCE: float = 26.0  # shots and casts reach clients this close (world units)
 
@@ -24,20 +24,32 @@ static func can_see(viewer: Node3D, target: Node3D, grid: HexGrid) -> bool:
 	var combat = viewer.get_component("CombatComponent")
 	if combat and combat.equipped_ranged_weapon:
 		radius = combat.equipped_ranged_weapon.visibility_range
+	# Night / fog (MapEvents) and blindness: the same shorter sight as the client's fog
+	var viewer_status = viewer.get_component("StatusComponent")
+	radius *= MapEvents.sight_factor * (viewer_status.sight_factor() if viewer_status else 1.0)
+	radius = max(radius, VisibilitySystem.ALWAYS_SEEN + VisibilitySystem.FOG_FADE_DISTANCE * 0.5)
+	# Small Target passive: spotted only from part of the usual distance
+	if target.has_meta("small_target"):
+		radius *= float(target.get_meta("small_target"))
+	# Stealth (Grape Decoy): only right next to them
+	var target_status = target.get_component("StatusComponent")
+	if target_status and target_status.is_stealthed() and viewer.global_position.distance_to(target.global_position) > StatusComponent.STEALTH_REVEAL:
+		return false
 
 	var d = _hex_distance(grid, viewer.global_position, target.global_position)
-	if d > radius + MARGIN_HEXES:
+	if d > VisibilitySystem.to_hexes(radius + MARGIN):
 		return false
-	if d <= VisibilitySystem.ALWAYS_SEEN:
+	if d <= VisibilitySystem.to_hexes(VisibilitySystem.ALWAYS_SEEN):
 		return true
 
 	var eye = Vector3(0, VisibilitySystem.EYE_HEIGHT, 0)
 	if CoverSpawner.line_blocked(viewer.get_world_3d(), viewer.global_position + eye, target.global_position + eye):
 		return false
 
-	var revealed = Time.get_ticks_msec() / 1000.0 - float(target.get_meta("last_reveal_time", -100.0)) < REVEAL_TIME
+	# At night bushes hide better: you must come closer, a shot gives you away for a shorter time
+	var revealed = Time.get_ticks_msec() / 1000.0 - float(target.get_meta("last_reveal_time", -100.0)) < REVEAL_TIME * MapEvents.bush_factor
 	if not revealed and Bush.any_contains(viewer.get_tree(), target.global_position) \
-			and viewer.global_position.distance_to(target.global_position) >= VisibilitySystem.BUSH_REVEAL_DISTANCE:
+			and viewer.global_position.distance_to(target.global_position) >= VisibilitySystem.BUSH_REVEAL_DISTANCE * MapEvents.bush_factor:
 		return false
 	return true
 
@@ -55,7 +67,7 @@ static func _is_dead(node: Node3D) -> bool:
 
 static func _hex_distance(grid: HexGrid, a: Vector3, b: Vector3) -> float:
 	if not grid:
-		return a.distance_to(b) / (sqrt(3.0) * HexTile.HEX_RADIUS)
+		return VisibilitySystem.to_hexes(a.distance_to(b))
 	var ha = grid.world_to_hex(a)
 	var hb = grid.world_to_hex(b)
 	var dq = ha.x - hb.x

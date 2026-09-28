@@ -29,7 +29,7 @@ var is_destroyed: bool = false
 var can_destroy: bool = true
 var can_spawn: bool = true  # Можно ли спавниться на этом тайле
 
-const HEX_RADIUS: float = 1.0
+const HEX_RADIUS: float = 2.0
 const HEX_INNER_RADIUS: float = HEX_RADIUS * 0.8660254
 const HEX_HEIGHT: float = 0.3
 const BOUNCE_DEPTH: float = 0.18   # how far a tile dips when a hero lands on it
@@ -39,6 +39,15 @@ const EDGE_DIRECTIONS = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 1),
 	Vector2i(-1, 0), Vector2i(0, -1), Vector2i(1, -1)]
 const LAND_JOIN_STEP: float = 0.075   # world units: neighbours closer than this are drawn as one surface
 const WATER_JOIN_STEP: float = 0.12
+# The shrinking zone (DestructionSystem): a tile is marked, catches fire, then a mountain rises on it.
+# Mountains are walls: nobody walks on or over them, they block sight, and they ring the island
+# from the start (HexGenerator) so nobody can fall off.
+enum ZoneState { NONE, WARNED, BURNING }
+const MOUNTAIN_HEIGHT: float = 3.8     # above the tile top; a jump reaches ~2
+const MOUNTAIN_RISE_TIME: float = 1.2
+const ZONE_DANGER = [0.0, 0.55, 1.0]  # shader glow per ZoneState
+var zone_state: int = ZoneState.NONE
+var _zone_fire: FireTrail = null
 
 var _bounce_tween: Tween = null
 var _visual_rest: Dictionary = {}  # MeshInstance3D -> rest transform
@@ -281,7 +290,7 @@ func destroy():
 func bounce(strength: float = 1.0, delay: float = 0.0, from: Vector3 = Vector3.INF) -> void:
 	if is_destroyed or strength < 0.03 or not is_inside_tree():
 		return
-	if biome_type == BiomeType.WATER or biome_type == BiomeType.SHALLOW_WATER:
+	if biome_type == BiomeType.WATER or biome_type == BiomeType.SHALLOW_WATER or is_mountain():
 		return
 	if _visual_rest.is_empty():
 		for child in get_children():
@@ -314,6 +323,7 @@ func _apply_bounce(t: float, strength: float, axis: Vector3) -> void:
 static func shake_around(context: Node3D, pos: Vector3, strength: float = 1.0, radius: float = 2.6) -> void:
 	if not context or not context.is_inside_tree():
 		return
+	radius *= HEX_RADIUS  # the callers' radii are in (old, 1-unit) tile sizes
 	var query = PhysicsShapeQueryParameters3D.new()
 	var sphere = SphereShape3D.new()
 	sphere.radius = radius
@@ -348,126 +358,234 @@ func set_height(new_height: float):
 	else:
 		position.y = new_height * HEX_HEIGHT
 
-## Create volumetric mountain geometry on top of base tile
-func _create_mountain_geometry():
-	# Create a rocky peak on top of the tile
+# ---------------------------------------------------------------- zone and mountains
+
+func is_mountain() -> bool:
+	return biome_type == BiomeType.MOUNTAIN
+
+## Still part of the island you can walk on
+func is_playable() -> bool:
+	return not is_destroyed and not is_mountain()
+
+## Marked for the next zone step (WARNED: glowing cracks) or already on fire (BURNING)
+func set_zone_state(state: int) -> void:
+	if is_mountain():
+		return
+	zone_state = state
+	for node in [get_node_or_null("MeshInstance")]:
+		if node:
+			node.set_instance_shader_parameter("danger", ZONE_DANGER[state])
+	if state == ZoneState.NONE and _zone_fire and is_instance_valid(_zone_fire):
+		_zone_fire._burn_out()  # the core stopped burning (DestructionSystem "calm")
+		_zone_fire = null
+	if state == ZoneState.BURNING and not _zone_fire and is_inside_tree():
+		_zone_fire = FireTrail.new()
+		_zone_fire.name = "ZoneFire"
+		_zone_fire.tick_damage = 0.0  # the zone itself burns people (server), this is the look
+		_zone_fire.lifetime = 6.0
+		_zone_fire.with_light = false
+		_zone_fire.flame_scale = 1.7
+		add_child(_zone_fire)
+		_zone_fire.global_position = global_position
+		var top = global_position + Vector3(0, HEX_HEIGHT * 0.5, 0)
+		var points: Array = [top]
+		for i in 6:
+			var a = TAU * i / 6.0 + 0.5
+			points.append(top + Vector3(cos(a), 0, sin(a)) * HEX_RADIUS * 0.55)
+		_zone_fire.lay_points(points, 0.5)
+
+## The flood (MapEvents): the tile goes under - it sinks to `water_y` over `seconds` (a shore) and
+## becomes `to_biome` water. Cover standing on it topples, nobody spawns here any more.
+func flood(to_biome: int, water_y: float, seconds: float = 0.0) -> void:
+	if is_mountain() or is_destroyed:
+		return
+	if not is_water():
+		tile_destroyed.emit()  # CoverWall / Bush attached to this tile topple
+	can_spawn = false
+	can_destroy = false
+	if seconds > 0.0 and is_inside_tree():
+		var t = create_tween()
+		t.tween_property(self, "position:y", water_y, seconds).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		t.tween_callback(_finish_flood.bind(to_biome))
+	else:
+		position.y = water_y
+		_finish_flood(to_biome)
+
+func _finish_flood(to_biome: int) -> void:
+	height = position.y / HEX_HEIGHT
+	set_biome(to_biome)
+	var grid = get_parent() as HexGrid
+	if grid:
+		grid.refresh_edges_around(hex_coords)
+		grid.terrain_version += 1
+
+## The zone takes this tile: a mountain rises (animated) or simply stands there (late joiners).
+## Cover on the tile falls, loot on it is gone.
+func raise_mountain(animated: bool = true) -> void:
+	if is_mountain() or is_destroyed:
+		return
+	zone_state = ZoneState.NONE
+	if _zone_fire and is_instance_valid(_zone_fire):
+		_zone_fire._burn_out()  # the flames would stick out of the rock
+		_zone_fire = null
+	tile_destroyed.emit()  # CoverWall / Bush attached to this tile topple
+	_clear_loot()
+	can_spawn = false
+	can_destroy = false
+	set_biome(BiomeType.MOUNTAIN)
+	var mesh = get_node_or_null("MeshInstance")
+	if mesh:
+		mesh.set_instance_shader_parameter("danger", 0.0)
+	_create_mountain_geometry(animated)
+	var grid = get_parent() as HexGrid
+	if grid:
+		grid.refresh_edges_around(hex_coords)
+	if animated:
+		HexTile.shake_around(self, global_position, 0.9, 2.2)
+
+func _clear_loot() -> void:
+	if not is_inside_tree():
+		return
+	var center = Vector2(global_position.x, global_position.z)
+	for group in ["loot_items", "loot_containers"]:
+		for node in get_tree().get_nodes_in_group(group):
+			if node is Node3D and Vector2(node.global_position.x, node.global_position.z).distance_to(center) < HEX_RADIUS * 0.95:
+				node.queue_free()
+
+## Craggy rock wall filling the hex, seeded by the tile coordinates (the same on every peer).
+## Opaque (the fog of war reads the depth buffer), on the cover layer (blocks sight and fire),
+## with a tall collision prism so nobody can climb it.
+func _create_mountain_geometry(animated: bool = false):
+	var rng = RandomNumberGenerator.new()
+	rng.seed = (hex_coords.x * 73856093) ^ (hex_coords.y * 19349663) ^ 0x5bd1e995
+	var base_y = HEX_HEIGHT * 0.5
+
+	var holder = Node3D.new()
+	holder.name = "Mountain"
+	add_child(holder)
+
 	var peak = MeshInstance3D.new()
 	peak.name = "MountainPeak"
-
-	# Create a cone-shaped mountain
-	var arrays = []
-	arrays.resize(Mesh.ARRAY_MAX)
-
-	var vertices = PackedVector3Array()
-	var indices = PackedInt32Array()
-	var normals = PackedVector3Array()
-
-	# Peak height above the tile
-	var peak_height = 1.5
-	var base_radius = HEX_RADIUS * 0.8
-
-	# Top vertex (peak)
-	vertices.append(Vector3(0, HEX_HEIGHT * 0.5 + peak_height, 0))
-	normals.append(Vector3.UP)
-
-	# Create jagged mountain sides (12 points around base)
 	var segments = 12
+	var tops = [Vector3(rng.randf_range(-0.2, 0.2), MOUNTAIN_HEIGHT * rng.randf_range(0.85, 1.0), rng.randf_range(-0.2, 0.2)) * Vector3(HEX_RADIUS, 1, HEX_RADIUS)]
+	# Rings from the hex outline up to the top: a craggy cone that fills the whole tile
+	var rings: Array = []
+	for level in [0.0, 0.35, 0.7]:
+		var ring: Array = []
+		for i in range(segments):
+			var angle = (TAU / segments) * i
+			# The base follows the hexagon, so neighbouring mountains join into one ridge
+			var hex_r = HEX_INNER_RADIUS / cos(fmod(angle + PI / 6.0, PI / 3.0) - PI / 6.0)
+			var r = hex_r * lerp(0.98, 0.25, level) * rng.randf_range(0.9, 1.05)
+			var y = base_y + MOUNTAIN_HEIGHT * level + rng.randf_range(0.0, 0.35) * (1.0 if level > 0.0 else 0.2)
+			ring.append(Vector3(cos(angle) * r, y, sin(angle) * r))
+		rings.append(ring)
+	var top: Vector3 = tops[0] + Vector3(0, base_y, 0)
+
+	var st = SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_smooth_group(-1)  # flat facets, like the rest of the low-poly art
+	for l in range(rings.size() - 1):
+		var lo: Array = rings[l]
+		var hi: Array = rings[l + 1]
+		for i in range(segments):
+			var n = (i + 1) % segments
+			for v in [lo[i], hi[n], hi[i], lo[i], lo[n], hi[n]]:
+				st.add_vertex(v)
+	var last: Array = rings[rings.size() - 1]
 	for i in range(segments):
-		var angle = (TAU / segments) * i
-		# Vary radius slightly for more natural look
-		var radius_var = base_radius * randf_range(0.85, 1.0)
-		var x = cos(angle) * radius_var
-		var z = sin(angle) * radius_var
-		# Vary height slightly for jagged edges
-		var y_var = HEX_HEIGHT * 0.5 + randf_range(0, 0.3)
+		var n = (i + 1) % segments
+		for v in [last[i], last[n], top]:
+			st.add_vertex(v)
+	st.generate_normals()
+	peak.mesh = st.commit()
+	peak.set_surface_override_material(0, _mountain_material(0))
+	holder.add_child(peak)
+	_add_mountain_rocks(rng, holder)
 
-		vertices.append(Vector3(x, y_var, z))
+	# Tall prism: can't be walked on, jumped over or seen through
+	var collision = CollisionShape3D.new()
+	collision.name = "MountainCollision"
+	var shape = ConvexPolygonShape3D.new()
+	var pts := PackedVector3Array()
+	for i in range(6):
+		var angle = deg_to_rad(60 * i + 30)
+		pts.append(Vector3(cos(angle) * HEX_RADIUS, base_y, sin(angle) * HEX_RADIUS))
+		pts.append(Vector3(cos(angle) * HEX_RADIUS * 0.8, base_y + MOUNTAIN_HEIGHT, sin(angle) * HEX_RADIUS * 0.8))
+	shape.points = pts
+	collision.shape = shape
+	add_child(collision)
+	collision_layer |= CoverSpawner.COVER_LAYER
 
-		# Calculate normal pointing outward and up
-		var normal = Vector3(x, peak_height * 0.5, z).normalized()
-		normals.append(normal)
+	if animated and is_inside_tree():
+		collision.disabled = true  # players are shoved off first (DestructionSystem)
+		holder.position.y = -MOUNTAIN_HEIGHT - 0.5
+		var t = create_tween()
+		t.tween_property(holder, "position:y", 0.0, MOUNTAIN_RISE_TIME).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		t.tween_callback(func(): collision.disabled = false)
+		_mountain_dust()
 
-	# Create triangles from peak to base
-	for i in range(segments):
-		var next = (i + 1) % segments
-		indices.append(0)  # Peak
-		indices.append(i + 1)
-		indices.append(next + 1)
+func _mountain_dust() -> void:
+	var dust = GPUParticles3D.new()
+	dust.name = "MountainDust"
+	dust.amount = 40
+	dust.lifetime = 1.4
+	dust.one_shot = true
+	dust.explosiveness = 0.7
+	var process = ParticleProcessMaterial.new()
+	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	process.emission_sphere_radius = HEX_RADIUS * 0.8
+	process.direction = Vector3.UP
+	process.spread = 70.0
+	process.initial_velocity_min = 1.5
+	process.initial_velocity_max = 4.0
+	process.gravity = Vector3(0, -2.5, 0)
+	process.scale_min = 0.6
+	process.scale_max = 1.4
+	process.color = Color(0.62, 0.56, 0.5, 0.75)
+	dust.process_material = process
+	var quad = QuadMesh.new()
+	quad.size = Vector2(0.7, 0.7)
+	var mat = StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	mat.vertex_color_use_as_albedo = true
+	mat.albedo_texture = FireTrail._soft_dot(Color(1, 1, 1, 1), Color(1, 1, 1, 0))  # round puffs, not squares
+	quad.material = mat
+	dust.draw_pass_1 = quad
+	dust.position.y = HEX_HEIGHT
+	add_child(dust)
+	dust.emitting = true
+	get_tree().create_timer(dust.lifetime + 0.5).timeout.connect(dust.queue_free)
 
-	# Create base cap
-	var center_idx = vertices.size()
-	vertices.append(Vector3(0, HEX_HEIGHT * 0.5, 0))
-	normals.append(Vector3.DOWN)
+static var _mountain_materials: Array = []
 
-	for i in range(segments):
-		var next = (i + 1) % segments
-		indices.append(center_idx)
-		indices.append(next + 1)
-		indices.append(i + 1)
+## Shared materials: 0 = peak, 1 = rocks
+static func _mountain_material(kind: int) -> StandardMaterial3D:
+	if _mountain_materials.is_empty():
+		for color in [Color(0.4, 0.37, 0.35), Color(0.47, 0.44, 0.41)]:
+			var material = StandardMaterial3D.new()
+			material.albedo_color = color
+			material.roughness = 1.0
+			_mountain_materials.append(material)
+	return _mountain_materials[kind]
 
-	arrays[Mesh.ARRAY_VERTEX] = vertices
-	arrays[Mesh.ARRAY_INDEX] = indices
-	arrays[Mesh.ARRAY_NORMAL] = normals
-
-	var mesh = ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-
-	peak.mesh = mesh
-
-	# Material for mountain peak - darker and rockier
-	var material = StandardMaterial3D.new()
-	material.albedo_color = Color(0.3, 0.28, 0.26)
-	material.roughness = 1.0
-	material.metallic = 0.1
-	# Add slight transparency to not completely block view
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.albedo_color.a = 0.85
-	peak.set_surface_override_material(0, material)
-
-	add_child(peak)
-
-	# Add some rock details around the base
-	_add_mountain_rocks()
-
-## Add small rocks around mountain base for detail
-func _add_mountain_rocks():
-	var num_rocks = randi_range(3, 6)
-
+## Rocks around the foot of the mountain
+func _add_mountain_rocks(rng: RandomNumberGenerator, parent: Node3D):
+	var num_rocks = rng.randi_range(3, 6)
 	for i in range(num_rocks):
 		var rock = MeshInstance3D.new()
 		rock.name = "Rock_%d" % i
-
-		# Small irregular rock shape
 		var mesh = SphereMesh.new()
-		mesh.radius = randf_range(0.1, 0.2)
-		mesh.height = randf_range(0.15, 0.3)
+		mesh.radius = rng.randf_range(0.12, 0.25) * HEX_RADIUS
+		mesh.height = rng.randf_range(0.18, 0.35) * HEX_RADIUS
+		mesh.radial_segments = 6
+		mesh.rings = 3
 		rock.mesh = mesh
-
-		# Random position around mountain base
-		var angle = randf() * TAU
-		var distance = randf_range(0.3, 0.7)
-		rock.position = Vector3(
-			cos(angle) * distance,
-			HEX_HEIGHT * 0.5 + randf_range(-0.05, 0.1),
-			sin(angle) * distance
-		)
-
-		# Random rotation
-		rock.rotation = Vector3(
-			randf_range(-0.3, 0.3),
-			randf() * TAU,
-			randf_range(-0.3, 0.3)
-		)
-
-		# Random scale variation
-		var scale_factor = randf_range(0.8, 1.3)
-		rock.scale = Vector3(scale_factor, scale_factor * randf_range(0.7, 1.2), scale_factor)
-
-		# Rock material
-		var material = StandardMaterial3D.new()
-		material.albedo_color = Color(0.35, 0.33, 0.3)
-		material.roughness = 0.95
-		material.metallic = 0.05
-		rock.set_surface_override_material(0, material)
-
-		add_child(rock)
+		var angle = rng.randf() * TAU
+		var distance = rng.randf_range(0.7, 0.9) * HEX_INNER_RADIUS
+		rock.position = Vector3(cos(angle) * distance, HEX_HEIGHT * 0.5 + rng.randf_range(0.0, 0.1), sin(angle) * distance)
+		rock.rotation = Vector3(rng.randf_range(-0.3, 0.3), rng.randf() * TAU, rng.randf_range(-0.3, 0.3))
+		rock.set_surface_override_material(0, _mountain_material(1))
+		parent.add_child(rock)

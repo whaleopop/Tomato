@@ -339,7 +339,8 @@ static func create_heading(text: String, parent: Control = null) -> Label:
 ## Small uppercase caption above a section ("PLAYERS", "STATS"...)
 static func create_caption(text: String, parent: Control = null) -> Label:
 	var label = Label.new()
-	label.text = text.to_upper()
+	label.text = text  # uppercased at draw time, after translation (the key stays "Players")
+	label.uppercase = true
 	label.add_theme_font_override("font", font_black())
 	label.add_theme_font_size_override("font_size", FONT_TINY)
 	label.add_theme_color_override("font_color", TEXT_MUTED)
@@ -362,7 +363,8 @@ static func create_pill(text: String, color: Color, parent: Control = null) -> P
 	pill.add_theme_stylebox_override("panel", glass_box(Color(color, 0.18), Color(color, 0.55), CORNER_RADIUS_PILL, 10, 3))
 	pill.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	var label = Label.new()
-	label.text = text.to_upper()
+	label.text = text
+	label.uppercase = true
 	label.add_theme_font_override("font", font_black())
 	label.add_theme_font_size_override("font_size", FONT_TINY)
 	label.add_theme_color_override("font_color", color.lightened(0.25))

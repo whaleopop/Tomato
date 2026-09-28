@@ -1,62 +1,59 @@
-## Handles visual representation of weapon in player's hands
+## The gun in a hero's hands (on every peer, so others see what you carry). The model is fitted to
+## RangedWeapon.hold_length for a standard 1.2 m hero (scaled with the hero) whatever size the file
+## has, held in the right hand pointing where the hero looks. Heroes face +Z (PlayerInputHandler:
+## rotation.y = atan2(x, z)), so their right hand is at -X; the Blaster Kit's barrels point along -Z
+## and get turned around. Recoil, muzzle flash and the reload dip always return to the rest pose.
 extends Node3D
 class_name WeaponVisualComponent
 
+const HERO_HEIGHT: float = 1.2                     # Player._load_character_model's standard height
+const HAND: Vector3 = Vector3(-0.28, 0.6, 0.12)    # right hand of a standard hero (-X right, +Z forward)
+const GRIP: float = 0.3                            # the hand sits this share of the length behind the middle
+
 var player: Player = null
 var current_weapon: RangedWeapon = null
-var weapon_model: Node3D = null
-var hand_position: Vector3 = Vector3(0.4, 0.8, -0.3)  # Right hand offset
+var weapon_model: Node3D = null                   # holder: rest pose + animations; the model inside is fitted
+var _rest: Transform3D = Transform3D.IDENTITY
+var _length: float = 0.45
+var _tween: Tween = null
 
-# Weapon model cache
-var loaded_models: Dictionary = {}
-
-func _ready():
-	pass
+static var _scenes: Dictionary = {}  # model path -> PackedScene (shared by all heroes)
 
 func setup(p_player: Player):
 	player = p_player
 	name = "WeaponVisual"
 
-	# Connect to combat component
 	var combat = player.get_component("CombatComponent")
 	if combat:
 		combat.weapon_changed.connect(_on_weapon_changed)
 		combat.shot_fired.connect(_on_shot_fired)
 		combat.reload_started.connect(_on_reload_started)
 		combat.reload_finished.connect(_on_reload_finished)
-
-		# Show current weapon if any
 		if combat.equipped_ranged_weapon:
 			_show_weapon(combat.equipped_ranged_weapon)
-			print("[WeaponVisual] Initial weapon found: %s" % combat.equipped_ranged_weapon.item_name)
 
-	# Also connect to inventory component for weapon slot changes
 	var inventory = player.get_component("InventoryComponent")
 	if inventory:
 		inventory.weapon_equipped.connect(_on_weapon_equipped)
 		inventory.weapon_slot_changed.connect(_on_weapon_slot_changed)
-		print("[WeaponVisual] Connected to inventory signals")
 
 func _on_weapon_changed(weapon_data):
-	print("[WeaponVisual] weapon_changed signal received")
-	# weapon_data might be WeaponData or RangedWeapon depending on source
 	if weapon_data is RangedWeapon:
 		_show_weapon(weapon_data)
+		return
+	var combat = player.get_component("CombatComponent") if player else null
+	if combat and combat.equipped_ranged_weapon:
+		_show_weapon(combat.equipped_ranged_weapon)
 	else:
-		# Fallback: check combat component for equipped weapon
-		var combat = player.get_component("CombatComponent") if player else null
-		if combat and combat.equipped_ranged_weapon:
-			_show_weapon(combat.equipped_ranged_weapon)
-		else:
-			_hide_weapon()
+		_hide_weapon()
 
 func _on_weapon_equipped(weapon: RangedWeapon, _slot: int):
-	print("[WeaponVisual] weapon_equipped signal: %s in slot %d" % [weapon.item_name if weapon else "none", _slot])
-	if weapon:
+	# A picked-up gun only shows if it is the one in hand (auto-equip emits weapon_changed)
+	var combat = player.get_component("CombatComponent") if player else null
+	if weapon and combat and combat.equipped_ranged_weapon == weapon:
 		_show_weapon(weapon)
 
 func _on_weapon_slot_changed(slot: int):
-	print("[WeaponVisual] weapon_slot_changed to slot %d" % slot)
 	var inventory = player.get_component("InventoryComponent") if player else null
 	if inventory:
 		var weapon = inventory.get_weapon_in_slot(slot)
@@ -66,42 +63,50 @@ func _on_weapon_slot_changed(slot: int):
 			_hide_weapon()
 
 func _show_weapon(weapon: RangedWeapon):
-	print("[WeaponVisual] _show_weapon called for: %s" % weapon.item_name)
+	if weapon == current_weapon and weapon_model and is_instance_valid(weapon_model):
+		return
 	current_weapon = weapon
-
-	# Remove old weapon model
 	if weapon_model:
 		weapon_model.queue_free()
 		weapon_model = null
+	if _tween and _tween.is_valid():
+		_tween.kill()
 
-	# Load weapon model
-	var model_path = weapon.model_path
-	print("[WeaponVisual] Model path: %s" % model_path)
-	print("[WeaponVisual] Model exists: %s" % ResourceLoader.exists(model_path))
+	var model = _instantiate(weapon.model_path)
+	if not model:
+		model = _create_default_weapon_mesh(weapon.weapon_type)
+	var hero_scale = _hero_scale()
+	_length = weapon.hold_length * hero_scale
+	_fit(model, _length)
 
-	if model_path == "" or not ResourceLoader.exists(model_path):
-		# Create default weapon mesh
-		print("[WeaponVisual] Creating default mesh for weapon type: %d" % weapon.weapon_type)
-		weapon_model = _create_default_weapon_mesh(weapon.weapon_type)
-	else:
-		# Load actual model
-		print("[WeaponVisual] Loading GLB model: %s" % model_path)
-		if loaded_models.has(model_path):
-			weapon_model = loaded_models[model_path].duplicate()
-		else:
-			var scene = load(model_path)
-			if scene:
-				weapon_model = scene.instantiate()
-				loaded_models[model_path] = scene.instantiate()
-				print("[WeaponVisual] GLB model loaded successfully")
-			else:
-				print("[WeaponVisual] Failed to load GLB, using default mesh")
-				weapon_model = _create_default_weapon_mesh(weapon.weapon_type)
+	weapon_model = Node3D.new()
+	weapon_model.name = "HeldWeapon"
+	var turn = Node3D.new()  # barrel from the file's -Z to the hero's forward +Z
+	turn.rotation.y = PI
+	turn.add_child(model)
+	weapon_model.add_child(turn)
+	add_child(weapon_model)
+	weapon_model.position = _hand() + Vector3(0, 0, _length * GRIP)
+	_rest = weapon_model.transform
 
-	if weapon_model:
-		add_child(weapon_model)
-		_position_weapon()
-		print("[WeaponVisual] Weapon model added to scene: %s" % weapon.item_name)
+## Where the right hand is: HAND for a slim hero; round ones (tomato, melon) hold the gun at the
+## front of their body, or it disappears inside them
+func _hand() -> Vector3:
+	var hand = HAND * _hero_scale()
+	var model = player.get_node_or_null("Model") if player else null
+	if not model:
+		return hand
+	var box := AABB()
+	var first := true
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		var b = ModelUtils._relative_xform(player, mi) * mi.get_aabb()
+		box = b if first else box.merge(b)
+		first = false
+	if first:
+		return hand
+	hand.x = -max(abs(hand.x), -box.position.x * 0.7)  # right side (-X)
+	hand.z = max(hand.z, box.end.z * 0.8)              # at the front of the body (+Z)
+	return hand
 
 func _hide_weapon():
 	current_weapon = null
@@ -109,233 +114,137 @@ func _hide_weapon():
 		weapon_model.queue_free()
 		weapon_model = null
 
-## Update weapon from external source (for network sync)
+func _hero_scale() -> float:
+	if player and player.character_data and player.character_data.model_scale > 0.0:
+		return player.character_data.model_scale
+	return 1.0
+
+func _instantiate(path: String) -> Node3D:
+	if path == "" or not ResourceLoader.exists(path):
+		return null
+	if not _scenes.has(path):
+		_scenes[path] = load(path)
+	var scene = _scenes[path]
+	return scene.instantiate() if scene is PackedScene else null
+
+## Longest side = `length`, centered on the holder's origin, barrel still along -Z
+func _fit(model: Node3D, length: float) -> void:
+	var box := AABB()
+	var first := true
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		var b = ModelUtils._relative_xform(model, mi) * mi.get_aabb()
+		box = b if first else box.merge(b)
+		first = false
+	if first:
+		return
+	var s = length / max(box.size.x, box.size.y, box.size.z, 0.001)
+	model.scale = Vector3.ONE * s
+	model.position = -box.get_center() * s
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+
+## Update weapon from external source (network sync of remote players)
 func update_weapon(weapon_name: String):
-	print("[WeaponVisual] update_weapon called with: %s" % weapon_name)
-	# Try to find weapon in inventory
 	var inventory = player.get_component("InventoryComponent") if player else null
 	if inventory:
-		# Check all weapon slots for matching name
-		for slot in range(3):
+		for slot in range(InventoryComponent.MAX_WEAPON_SLOTS):
 			var weapon = inventory.get_weapon_in_slot(slot)
 			if weapon and weapon.item_name == weapon_name:
 				_show_weapon(weapon)
 				return
 
-	# If not found in inventory but we need to show it, keep current
-	print("[WeaponVisual] Weapon '%s' not found in inventory" % weapon_name)
-
-func _position_weapon():
-	if not weapon_model:
-		return
-
-	# Scale and offset based on weapon type
-	# In Godot: -Z is forward, +X is right, +Y is up
-	# Weapon is positioned to the right side of player, in front
-	var scale_factor = 0.5
-	var offset = Vector3(0.4, 0.8, -0.5)  # Right side (+X), chest height (+Y), in front (-Z)
-	var weapon_rotation = Vector3.ZERO
-
-	match current_weapon.weapon_type if current_weapon else RangedWeapon.WeaponType.PISTOL:
-		RangedWeapon.WeaponType.PISTOL:
-			scale_factor = 0.4
-			offset = Vector3(0.35, 0.7, -0.4)
-		RangedWeapon.WeaponType.SHOTGUN:
-			scale_factor = 0.5
-			offset = Vector3(0.3, 0.75, -0.6)
-		RangedWeapon.WeaponType.SNIPER:
-			scale_factor = 0.55
-			offset = Vector3(0.25, 0.8, -0.7)
-		RangedWeapon.WeaponType.RIFLE:
-			scale_factor = 0.5
-			offset = Vector3(0.3, 0.75, -0.6)
-		RangedWeapon.WeaponType.FLAMETHROWER:
-			scale_factor = 0.5
-			offset = Vector3(0.35, 0.7, -0.5)
-
-	weapon_model.position = offset
-	weapon_model.scale = Vector3.ONE * scale_factor
-	# Rotate weapon 180 degrees to point forward (models usually face +Z, we need -Z)
-	weapon_model.rotation.y = PI
-
+## Simple stand-ins when a model file is missing, pointing along -Z like the Blaster Kit
 func _create_default_weapon_mesh(weapon_type: RangedWeapon.WeaponType) -> Node3D:
 	var container = Node3D.new()
 	container.name = "DefaultWeaponMesh"
-
 	var mesh_instance = MeshInstance3D.new()
 	var material = StandardMaterial3D.new()
-	material.metallic = 0.8
-	material.roughness = 0.3
-
-	# All weapons point along -Z axis (forward in Godot)
+	material.metallic = 0.6
+	material.roughness = 0.4
+	var box = BoxMesh.new()
 	match weapon_type:
-		RangedWeapon.WeaponType.PISTOL:
-			# Small box for pistol - pointing forward
-			var mesh = BoxMesh.new()
-			mesh.size = Vector3(0.1, 0.15, 0.35)  # Width, Height, Length (forward)
-			mesh_instance.mesh = mesh
-			material.albedo_color = Color(0.2, 0.2, 0.25)
-
 		RangedWeapon.WeaponType.SHOTGUN:
-			# Long cylinder for shotgun - pointing forward (-Z)
-			var mesh = CylinderMesh.new()
-			mesh.top_radius = 0.04
-			mesh.bottom_radius = 0.04
-			mesh.height = 1.0
-			mesh_instance.mesh = mesh
-			# Rotate cylinder to point along Z axis (forward)
-			mesh_instance.rotation.x = deg_to_rad(-90)
+			box.size = Vector3(0.1, 0.12, 0.7)
 			material.albedo_color = Color(0.3, 0.25, 0.2)
-
 		RangedWeapon.WeaponType.SNIPER:
-			# Long thin cylinder for sniper
-			var mesh = CylinderMesh.new()
-			mesh.top_radius = 0.03
-			mesh.bottom_radius = 0.03
-			mesh.height = 1.4
-			mesh_instance.mesh = mesh
-			mesh_instance.rotation.x = deg_to_rad(-90)
+			box.size = Vector3(0.07, 0.1, 1.0)
 			material.albedo_color = Color(0.15, 0.15, 0.2)
-
 		RangedWeapon.WeaponType.RIFLE:
-			# Medium cylinder for rifle
-			var mesh = CylinderMesh.new()
-			mesh.top_radius = 0.035
-			mesh.bottom_radius = 0.035
-			mesh.height = 0.9
-			mesh_instance.mesh = mesh
-			mesh_instance.rotation.x = deg_to_rad(-90)
+			box.size = Vector3(0.08, 0.12, 0.8)
 			material.albedo_color = Color(0.25, 0.25, 0.25)
-
 		RangedWeapon.WeaponType.FLAMETHROWER:
-			# Box with cylinder for flamethrower
-			var mesh = CylinderMesh.new()
-			mesh.top_radius = 0.08
-			mesh.bottom_radius = 0.06
-			mesh.height = 0.8
-			mesh_instance.mesh = mesh
-			mesh_instance.rotation.x = deg_to_rad(-90)
+			box.size = Vector3(0.14, 0.16, 0.75)
 			material.albedo_color = Color(0.4, 0.2, 0.1)
-			material.emission_enabled = true
-			material.emission = Color(0.5, 0.2, 0.05)
-			material.emission_energy_multiplier = 0.3
-
+		_:
+			box.size = Vector3(0.1, 0.15, 0.35)
+			material.albedo_color = Color(0.2, 0.2, 0.25)
+	mesh_instance.mesh = box
 	mesh_instance.set_surface_override_material(0, material)
 	container.add_child(mesh_instance)
-
 	return container
 
+# ---------------------------------------------------------------- animation
+
+func _animate(offset: Vector3, pitch_deg: float, out_time: float, back_time: float, hold: bool = false) -> void:
+	if not weapon_model:
+		return
+	if _tween and _tween.is_valid():
+		_tween.kill()
+	weapon_model.transform = _rest
+	var pose = Transform3D(_rest.basis.rotated(Vector3.RIGHT, deg_to_rad(pitch_deg)), _rest.origin + offset)
+	_tween = create_tween()
+	_tween.tween_property(weapon_model, "transform", pose, out_time).set_ease(Tween.EASE_OUT)
+	if not hold:
+		_tween.tween_property(weapon_model, "transform", _rest, back_time).set_ease(Tween.EASE_OUT)
+
 func _on_shot_fired(_from: Vector3, _to: Vector3, _hit: bool):
-	# Weapon recoil animation - move back (+Z is backward since weapon is rotated 180)
-	if weapon_model:
-		var original_pos = weapon_model.position
-		var original_rot = weapon_model.rotation
-		var tween = create_tween()
-
-		# Recoil: move back and rotate up slightly
-		var recoil_pos = original_pos + Vector3(0, 0.02, 0.08)  # Slight up, back
-		var recoil_rot = original_rot + Vector3(deg_to_rad(-8), 0, 0)  # Tilt up
-
-		tween.tween_property(weapon_model, "position", recoil_pos, 0.04)
-		tween.parallel().tween_property(weapon_model, "rotation", recoil_rot, 0.04)
-		tween.tween_property(weapon_model, "position", original_pos, 0.12).set_ease(Tween.EASE_OUT)
-		tween.parallel().tween_property(weapon_model, "rotation", original_rot, 0.12).set_ease(Tween.EASE_OUT)
-
-		# Muzzle flash
-		_create_muzzle_flash()
+	if not weapon_model:
+		return
+	# Kick back and up (-Z is backwards, -pitch lifts a +Z muzzle), then settle
+	_animate(Vector3(0, 0.02, -0.06) * _hero_scale(), -8.0, 0.04, 0.12)
+	_create_muzzle_flash()
 
 func _create_muzzle_flash():
 	if not weapon_model:
 		return
-
-	# Calculate muzzle position (end of weapon barrel)
-	var muzzle_offset = Vector3(0, 0, -0.6)  # Forward from weapon center
-	match current_weapon.weapon_type if current_weapon else RangedWeapon.WeaponType.PISTOL:
-		RangedWeapon.WeaponType.PISTOL:
-			muzzle_offset = Vector3(0, 0, -0.25)
-		RangedWeapon.WeaponType.SHOTGUN:
-			muzzle_offset = Vector3(0, 0, -0.55)
-		RangedWeapon.WeaponType.SNIPER:
-			muzzle_offset = Vector3(0, 0, -0.75)
-		RangedWeapon.WeaponType.RIFLE:
-			muzzle_offset = Vector3(0, 0, -0.5)
-		RangedWeapon.WeaponType.FLAMETHROWER:
-			muzzle_offset = Vector3(0, 0, -0.45)
-
-	# Light flash
+	var tip = Vector3(0, 0, _length * 0.5)  # the barrel's end, in the holder
 	var flash = OmniLight3D.new()
 	flash.light_color = Color(1, 0.8, 0.3)
-	flash.light_energy = 4.0
-	flash.omni_range = 4.0
-	flash.position = weapon_model.position + muzzle_offset
-	add_child(flash)
-
-	# Visual flash mesh
+	flash.light_energy = 3.0
+	flash.omni_range = 3.5
+	flash.position = tip
+	weapon_model.add_child(flash)
 	var flash_mesh = MeshInstance3D.new()
 	var sphere = SphereMesh.new()
-	sphere.radius = 0.08
-	sphere.height = 0.16
+	sphere.radius = 0.06
+	sphere.height = 0.12
 	flash_mesh.mesh = sphere
-
 	var mat = StandardMaterial3D.new()
 	mat.albedo_color = Color(1, 0.9, 0.5)
 	mat.emission_enabled = true
 	mat.emission = Color(1, 0.7, 0.3)
 	mat.emission_energy_multiplier = 8.0
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	flash_mesh.material_override = mat
-	flash_mesh.position = weapon_model.position + muzzle_offset
+	flash_mesh.position = tip
 	flash_mesh.scale = Vector3(1.2, 1.2, 2.0)
-	add_child(flash_mesh)
-
-	# Animate flash
-	var tween = create_tween()
+	weapon_model.add_child(flash_mesh)
+	var tween = flash.create_tween()
 	tween.tween_property(flash, "light_energy", 0.0, 0.08)
 	tween.parallel().tween_property(flash_mesh, "scale", Vector3.ONE * 0.01, 0.06)  # not 0: zero basis errors
 	tween.tween_callback(flash.queue_free)
 	tween.tween_callback(flash_mesh.queue_free)
 
 func _on_reload_started():
-	# Reload animation - lower and tilt weapon
-	if weapon_model:
-		var original_pos = weapon_model.position
-		var original_rot = weapon_model.rotation
-
-		var tween = create_tween()
-		# Lower weapon and tilt it (simulating magazine removal)
-		var reload_pos = original_pos + Vector3(0, -0.15, 0.1)
-		var reload_rot = original_rot + Vector3(deg_to_rad(-35), deg_to_rad(-15), 0)
-
-		tween.tween_property(weapon_model, "position", reload_pos, 0.25)
-		tween.parallel().tween_property(weapon_model, "rotation", reload_rot, 0.25)
+	# Muzzle down and the gun lowered while the magazine goes in
+	_animate(Vector3(0, -0.12, -0.08) * _hero_scale(), 35.0, 0.25, 0.0, true)
 
 func _on_reload_finished():
-	# Return weapon to normal position with snap
-	if weapon_model:
-		# Restore to proper position based on weapon type
-		var tween = create_tween()
-
-		# Quick snap back animation
-		var final_rot = Vector3(0, PI, 0)  # Normal rotation
-
-		# Determine final position based on weapon type
-		var final_pos = Vector3(0.35, 0.7, -0.4)  # Default pistol
-		if current_weapon:
-			match current_weapon.weapon_type:
-				RangedWeapon.WeaponType.PISTOL:
-					final_pos = Vector3(0.35, 0.7, -0.4)
-				RangedWeapon.WeaponType.SHOTGUN:
-					final_pos = Vector3(0.3, 0.75, -0.6)
-				RangedWeapon.WeaponType.SNIPER:
-					final_pos = Vector3(0.25, 0.8, -0.7)
-				RangedWeapon.WeaponType.RIFLE:
-					final_pos = Vector3(0.3, 0.75, -0.6)
-				RangedWeapon.WeaponType.FLAMETHROWER:
-					final_pos = Vector3(0.35, 0.7, -0.5)
-
-		# Slight overshoot then settle
-		var overshoot_pos = final_pos + Vector3(0, 0.05, -0.05)
-		tween.tween_property(weapon_model, "position", overshoot_pos, 0.15).set_ease(Tween.EASE_OUT)
-		tween.parallel().tween_property(weapon_model, "rotation", final_rot, 0.15).set_ease(Tween.EASE_OUT)
-		tween.tween_property(weapon_model, "position", final_pos, 0.1).set_ease(Tween.EASE_IN_OUT)
+	if not weapon_model:
+		return
+	if _tween and _tween.is_valid():
+		_tween.kill()
+	_tween = create_tween()
+	var overshoot = Transform3D(_rest.basis, _rest.origin + Vector3(0, 0.04, 0.04))
+	_tween.tween_property(weapon_model, "transform", overshoot, 0.15).set_ease(Tween.EASE_OUT)
+	_tween.tween_property(weapon_model, "transform", _rest, 0.1).set_ease(Tween.EASE_IN_OUT)

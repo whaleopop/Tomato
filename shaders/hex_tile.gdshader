@@ -17,6 +17,7 @@ uniform float edge_width : hint_range(0.0, 0.2) = 0.05;
 uniform vec3 edge_color : source_color = vec3(0.15, 0.35, 0.12);
 uniform float blend_width : hint_range(0.05, 0.8) = 0.42;  // how far two biomes fade into each other
 uniform float rim_width : hint_range(0.01, 0.3) = 0.1;     // dark rim on steps and cliffs
+uniform float hex_radius = 1.0;  // HexTile.HEX_RADIUS: edge math runs on the unit hexagon
 
 // Effects
 uniform float damage_amount : hint_range(0.0, 1.0) = 0.0;
@@ -37,6 +38,7 @@ instance uniform vec4 edge_4 : source_color = vec4(0.0, 0.0, 0.0, 1.0);
 instance uniform vec4 edge_5 : source_color = vec4(0.0, 0.0, 0.0, 1.0);
 instance uniform vec3 corner_a = vec3(0.0);  // corners 0-2 (at 30, 90, 150 degrees)
 instance uniform vec3 corner_b = vec3(0.0);  // corners 3-5
+instance uniform float danger = 0.0;  // zone: 0.55 marked for the next step, 1.0 burning
 
 varying vec3 world_position;
 varying vec3 local_position;
@@ -60,8 +62,13 @@ float value_noise(vec2 p) {
 
 float corner_offset(vec3 v) {
 	int i = int(mod(round((atan(v.z, v.x) - 0.5235988) / 1.0471976) + 6.0, 6.0));
-	if (i < 3) return corner_a[i];
-	return corner_b[i - 3];
+	// No dynamic vector indexing (OpVectorExtractDynamic isn't supported by every backend)
+	if (i == 0) return corner_a.x;
+	if (i == 1) return corner_a.y;
+	if (i == 2) return corner_a.z;
+	if (i == 3) return corner_b.x;
+	if (i == 4) return corner_b.y;
+	return corner_b.z;
 }
 
 vec4 edge_info(int k) {
@@ -91,7 +98,7 @@ void fragment() {
 	// 1) base color, blended with same-level neighbours towards the shared edge
 	vec3 base = tile_color;
 	float rim = 0.0;
-	vec2 p = local_position.xz;
+	vec2 p = local_position.xz / hex_radius;
 	for (int k = 0; k < 6; k++) {
 		vec4 e = edge_info(k);
 		float angle = 1.04719755 * float(k);
@@ -132,6 +139,18 @@ void fragment() {
 	// Opaque on purpose: writing ALPHA (it was always 1) put all 1261 tiles into the sorted
 	// transparent pass, with no depth prepass - the fog of war reads that depth buffer.
 	// Destroyed tiles shrink via the node scale (HexTile.destroy).
+	// The zone is coming: scorched ground with glowing cracks, pulsing faster once it burns
+	if (danger > 0.0) {
+		float pulse = 0.5 + 0.5 * sin(TIME * mix(3.5, 9.0, step(0.75, danger)));
+		float n = value_noise(world_position.xz * 0.9) + 0.5 * value_noise(world_position.xz * 2.3 + 3.7);
+		float crack = max(1.0 - smoothstep(0.0, 0.035, abs(n - 0.62)), 1.0 - smoothstep(0.0, 0.03, abs(n - 0.95)));
+		crack *= top_factor;
+		vec3 hot = vec3(1.0, 0.36, 0.06);
+		color = mix(color, color * vec3(0.72, 0.52, 0.42), danger * 0.65);
+		color = mix(color, hot, crack * danger * 0.85);
+		EMISSION = hot * (crack * (0.7 + 1.3 * pulse) + 0.12 * pulse * top_factor) * danger;
+	}
+
 	ALBEDO = color;
 	ROUGHNESS = 0.8;
 	METALLIC = 0.0;

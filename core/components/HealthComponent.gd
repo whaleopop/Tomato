@@ -8,6 +8,7 @@ signal damage_dodged(amount: float, source)  # source: Entity
 signal healed(amount: float)
 signal died
 signal revived
+signal shield_changed(shield: float)
 
 var max_health: float = 100.0
 var current_health: float = 100.0
@@ -15,6 +16,10 @@ var is_dead: bool = false
 var invulnerable: bool = false
 var damage_resistance: float = 0.0  # Percentage (0.0 - 1.0)
 var dodge_chance: float = 0.0  # Percentage (0.0 - 1.0) for DodgeChance passive
+## Shield pickups: absorbs damage before health. Server-side like damage; clients get it from
+## the state sync (ServerPlayer.get_state -> NetworkingComponent)
+var shield: float = 0.0
+const MAX_SHIELD: float = 60.0
 
 func _init(p_entity = null, p_max_health: float = 100.0):  # p_entity: Entity
 	entity = p_entity
@@ -36,7 +41,37 @@ func take_damage(amount: float, source = null) -> float:  # source: Entity
 
 	# Apply damage resistance
 	var actual_damage = amount * (1.0 - damage_resistance)
-	return _apply_damage(actual_damage, source)
+	var absorbed = 0.0
+	if shield > 0.0:
+		absorbed = min(shield, actual_damage)
+		set_shield(shield - absorbed)
+		actual_damage -= absorbed
+		if actual_damage <= 0.0:
+			damage_taken.emit(0.0, source)  # still a hit (flinch, hit marker)
+			return absorbed
+	var dealt = absorbed + _apply_damage(actual_damage, source)
+	_thorns(dealt, source)
+	return dealt
+
+## Spiky Skin passive (meta "thorns"): whoever hurt us gets a share of it back (not reflected again)
+func _thorns(dealt: float, source) -> void:
+	if dealt <= 0.0 or not entity or not entity.has_meta("thorns"):
+		return
+	if source == null or source == entity or not is_instance_valid(source) or not source.has_method("get_component"):
+		return
+	var their_health = source.get_component("HealthComponent")
+	if their_health and not their_health.is_dead:
+		their_health.take_damage(dealt * float(entity.get_meta("thorns")), null)
+
+func add_shield(amount: float) -> void:
+	set_shield(shield + amount)
+
+func set_shield(value: float) -> void:
+	value = clamp(value, 0.0, MAX_SHIELD)
+	if is_equal_approx(value, shield):
+		return
+	shield = value
+	shield_changed.emit(shield)
 
 ## Internal method to apply damage directly (used by network sync)
 func _apply_damage(amount: float, source = null) -> float:
@@ -70,6 +105,7 @@ func die():
 	
 	is_dead = true
 	current_health = 0.0
+	set_shield(0.0)
 	health_changed.emit(current_health, max_health)
 	died.emit()
 

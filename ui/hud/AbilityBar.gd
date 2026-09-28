@@ -86,7 +86,7 @@ class AbilitySlot extends Control:
 		var font = UITheme.font_black()
 
 		# Ability initial as the "icon"
-		var initial = ability.ability_name.substr(0, 1).to_upper() if ability else "?"
+		var initial = tr(ability.ability_name).substr(0, 1).to_upper() if ability else "?"
 		var icon_color = Color.WHITE if is_ready_now else Color(1, 1, 1, 0.35)
 		var icon_size = 30
 		var text_w = font.get_string_size(initial, HORIZONTAL_ALIGNMENT_LEFT, -1, icon_size).x
