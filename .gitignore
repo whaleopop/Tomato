@@ -12,3 +12,6 @@ __pycache__/
 
 # Exported game (dev builds and CI)
 /build/
+
+# Local Claude Code settings
+/.claude/settings.local.json
