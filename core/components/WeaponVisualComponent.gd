@@ -78,6 +78,8 @@ func _show_weapon(weapon: RangedWeapon):
 	var hero_scale = _hero_scale()
 	_length = weapon.hold_length * hero_scale
 	_fit(model, _length)
+	if player:
+		Cosmetics.apply_to_weapon(model, String(player.cosmetics.get("weapon", "default")))
 
 	weapon_model = Node3D.new()
 	weapon_model.name = "HeldWeapon"
@@ -107,6 +109,13 @@ func _hand() -> Vector3:
 	hand.x = -max(abs(hand.x), -box.position.x * 0.7)  # right side (-X)
 	hand.z = max(hand.z, box.end.z * 0.8)              # at the front of the body (+Z)
 	return hand
+
+## Show the gun again (a new weapon finish was put on)
+func refresh() -> void:
+	var weapon = current_weapon
+	if weapon:
+		current_weapon = null
+		_show_weapon(weapon)
 
 func _hide_weapon():
 	current_weapon = null

@@ -12,12 +12,14 @@ const FORCE_FIELD_SHADER = "res://shaders/force_field.gdshader"
 # Biome colors for hex tiles
 static var biome_colors: Dictionary = {
 	HexTile.BiomeType.GRASS: {
-		"tile_color": Color(0.35, 0.7, 0.3),
-		"edge_color": Color(0.2, 0.4, 0.15)
+		"tile_color": Color(0.52, 0.74, 0.25),  # warm meadow green
+		"edge_color": Color(0.3, 0.45, 0.14),
+		"grassy": 1.0
 	},
 	HexTile.BiomeType.FOREST: {
-		"tile_color": Color(0.2, 0.5, 0.2),
-		"edge_color": Color(0.1, 0.3, 0.1)
+		"tile_color": Color(0.27, 0.52, 0.21),
+		"edge_color": Color(0.14, 0.3, 0.1),
+		"grassy": 1.0
 	},
 	HexTile.BiomeType.DESERT: {
 		"tile_color": Color(0.85, 0.75, 0.5),
@@ -42,6 +44,29 @@ static var biome_colors: Dictionary = {
 	HexTile.BiomeType.MOUNTAIN: {
 		"tile_color": Color(0.46, 0.44, 0.42),
 		"edge_color": Color(0.3, 0.29, 0.27)
+	},
+	HexTile.BiomeType.MEADOW: {
+		"tile_color": Color(0.5, 0.74, 0.36),
+		"edge_color": Color(0.3, 0.45, 0.2),
+		"grassy": 1.0
+	},
+	HexTile.BiomeType.FROST: {
+		"tile_color": Color(0.7, 0.8, 0.88),
+		"edge_color": Color(0.5, 0.62, 0.74),
+		"gloss": 0.35
+	},
+	HexTile.BiomeType.TALL_GRASS: {
+		"tile_color": Color(0.58, 0.66, 0.24),
+		"edge_color": Color(0.36, 0.42, 0.14),
+		"grassy": 1.0
+	},
+	HexTile.BiomeType.MUSHROOM: {
+		"tile_color": Color(0.36, 0.32, 0.42),
+		"edge_color": Color(0.22, 0.18, 0.28)
+	},
+	HexTile.BiomeType.THORNS: {
+		"tile_color": Color(0.36, 0.3, 0.22),
+		"edge_color": Color(0.22, 0.16, 0.12)
 	}
 }
 
@@ -68,6 +93,8 @@ static func create_hex_material(biome: HexTile.BiomeType, _height: float = 0.0) 
 	material.set_shader_parameter("tile_color", colors["tile_color"])
 	material.set_shader_parameter("edge_color", colors["edge_color"])
 	material.set_shader_parameter("hex_radius", HexTile.HEX_RADIUS)
+	material.set_shader_parameter("roughness", colors.get("gloss", 0.8))  # frost shines
+	material.set_shader_parameter("grassy", colors.get("grassy", 0.0))     # sunlit grass look
 	_hex_materials[biome] = material
 	return material
 

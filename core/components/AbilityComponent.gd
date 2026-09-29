@@ -103,6 +103,16 @@ func _activate_ability_async(ability: ActiveAbility, target_position: Vector3):
 		# Remove cooldown if activation failed
 		ability_cooldowns.erase(ability)
 
+## Mushroom grove (BiomeRules): the running cooldowns lose `seconds` more
+func advance_cooldowns(seconds: float) -> void:
+	for ability in ability_cooldowns.keys():
+		var left = ability_cooldowns[ability] - seconds
+		if left <= 0.01:
+			ability_cooldowns.erase(ability)
+			ability_cooldown_finished.emit(ability)
+		else:
+			ability_cooldowns[ability] = left
+
 ## Ability crystal pickup: cut every running cooldown by `fraction` (1.0 = ready right away)
 func boost_cooldowns(fraction: float) -> void:
 	for ability in ability_cooldowns.keys():

@@ -17,7 +17,13 @@ enum BiomeType {
 	SHALLOW_WATER,  # Мелководье - можно проходить медленнее
 	SWAMP,          # Болото - замедляет движение
 	BEACH,          # Пляж - переход между водой и землей
-	MOUNTAIN        # Горы - высокие, нельзя спавниться
+	MOUNTAIN,       # Горы - высокие, нельзя спавниться
+	# Special patches with an effect (BiomeRules); appended: the numbers go over the network
+	MEADOW,         # flower meadow: heals
+	FROST,          # faster but slippery
+	TALL_GRASS,     # hides you like a bush
+	MUSHROOM,       # abilities recharge faster, less sight
+	THORNS          # hurts and slows
 }
 
 var hex_coords: Vector2i = Vector2i.ZERO
@@ -28,10 +34,19 @@ var max_health: float = 100.0
 var is_destroyed: bool = false
 var can_destroy: bool = true
 var can_spawn: bool = true  # Можно ли спавниться на этом тайле
+## Terraces (HexGenerator._build_terraces): the island stands on up to three levels, TERRACE_STEP
+## apart (a jump clears one). Every tile is a column down to COLUMN_BOTTOM, so a higher tile shows
+## a cliff. A ramp tile sits on the lower level and slopes up to the neighbour across edge
+## `ramp_dir`; its top is the only tilted collision on the map.
+var level: int = 0
+var ramp_dir: int = -1
 
 const HEX_RADIUS: float = 2.0
 const HEX_INNER_RADIUS: float = HEX_RADIUS * 0.8660254
 const HEX_HEIGHT: float = 0.3
+const TERRACE_STEP: float = 1.4     # world units between terrace levels (a jump reaches ~2: it clears one)
+const TERRACE_LEVELS: int = 3
+const COLUMN_BOTTOM: float = -0.6   # world y every tile column reaches down to
 const BOUNCE_DEPTH: float = 0.18   # how far a tile dips when a hero lands on it
 const BOUNCE_TILT: float = 0.08    # radians, tilting away from the impact
 # Edge k faces 60 * k degrees in the XZ plane; corner i (60 * i + 30) sits between edges i, i + 1
@@ -60,121 +75,119 @@ func _ready():
 	# For mountains, create extra volumetric geometry
 	if biome_type == BiomeType.MOUNTAIN:
 		_create_mountain_geometry()
+	BiomeDecor.decorate(self)  # grass, flowers, reeds, lilies, mushrooms, ice, thorns...
 
 func _create_mesh():
 	var mesh_instance = MeshInstance3D.new()
 	mesh_instance.name = "MeshInstance"
-
-	var mesh := ArrayMesh.new()
-
-	var vertices := PackedVector3Array()
-	var indices := PackedInt32Array()
-	var normals := PackedVector3Array()
-
-	# Top hex
-	for i in range(6):
-		var angle = deg_to_rad(60 * i + 30)
-		var x = cos(angle) * HEX_RADIUS
-		var z = sin(angle) * HEX_RADIUS
-		vertices.append(Vector3(x, HEX_HEIGHT * 0.5, z))
-		normals.append(Vector3.UP)
-
-	# Bottom hex
-	for i in range(6):
-		var angle = deg_to_rad(60 * i + 30)
-		var x = cos(angle) * HEX_RADIUS
-		var z = sin(angle) * HEX_RADIUS
-		vertices.append(Vector3(x, -HEX_HEIGHT * 0.5, z))
-		normals.append(Vector3.DOWN)
-
-	# Top face
-	for i in range(1, 5):
-		indices.append(0)
-		indices.append(i)
-		indices.append(i + 1)
-
-	# Bottom face
-	for i in range(1, 5):
-		indices.append(6)
-		indices.append(6 + i + 1)
-		indices.append(6 + i)
-
-	# Side faces
-	for i in range(6):
-		var a = i
-		var b = (i + 1) % 6
-		var c = i + 6
-		var d = ((i + 1) % 6) + 6
-
-		indices.append(a)
-		indices.append(b)
-		indices.append(d)
-
-		indices.append(a)
-		indices.append(d)
-		indices.append(c)
-
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = vertices
-	arrays[Mesh.ARRAY_INDEX] = indices
-	arrays[Mesh.ARRAY_NORMAL] = normals
-
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-
-	mesh_instance.mesh = mesh
+	mesh_instance.mesh = _build_column_mesh()
 	mesh_instance.set_surface_override_material(0, _get_biome_material())
 	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-
 	add_child(mesh_instance)
 
+func is_ramp() -> bool:
+	return ramp_dir >= 0
 
+## Height of top corner i (at 60 * i + 30 degrees) above the flat top: a ramp rises towards edge
+## `ramp_dir` - the two corners of that edge are a whole step up, the far ones stay down
+func _corner_lift(i: int) -> float:
+	if not is_ramp():
+		return 0.0
+	var along = cos(deg_to_rad(60.0 * i + 30.0 - 60.0 * ramp_dir)) * HEX_RADIUS / HEX_INNER_RADIUS
+	return TERRACE_STEP * clamp((along + 1.0) * 0.5, 0.0, 1.0)
+
+## How far the middle of the walkable top is above the flat top (ramps: half a step)
+func surface_offset() -> float:
+	return TERRACE_STEP * 0.5 if is_ramp() else 0.0
+
+## Local y of the column's foot: down to COLUMN_BOTTOM, so raised tiles show a cliff, not a gap
+func _column_bottom() -> float:
+	return min(-HEX_HEIGHT * 0.5, COLUMN_BOTTOM - position.y)
+
+func _top_corners() -> Array:
+	var corners: Array = []
+	for i in range(6):
+		var angle = deg_to_rad(60 * i + 30)
+		corners.append(Vector3(cos(angle) * HEX_RADIUS, HEX_HEIGHT * 0.5 + _corner_lift(i), sin(angle) * HEX_RADIUS))
+	return corners
+
+## The top hexagon and six side walls down to the column's foot, each face with its own normals
+## (the shader paints steep faces as a cliff). No bottom: it is never seen.
+func _build_column_mesh() -> ArrayMesh:
+	var top: Array = _top_corners()
+	var bottom_y = _column_bottom()
+	var st = SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var up = (top[2] - top[0]).cross(top[1] - top[0]).normalized()
+	if up.y < 0.0:
+		up = -up
+	for i in range(1, 5):
+		for v in [top[0], top[i], top[i + 1]]:  # clockwise from above: Godot's front face
+			st.set_normal(up)
+			st.add_vertex(v)
+	for i in range(6):
+		var a: Vector3 = top[i]
+		var b: Vector3 = top[(i + 1) % 6]
+		var a_low = Vector3(a.x, bottom_y, a.z)
+		var b_low = Vector3(b.x, bottom_y, b.z)
+		var mid = (a + b) * 0.5
+		var out = Vector3(mid.x, 0.0, mid.z).normalized()
+		for v in [a, b_low, b, a, a_low, b_low]:  # front faces outwards
+			st.set_normal(out)
+			st.add_vertex(v)
+	return st.commit()
 
 func _create_collision():
 	var collision = CollisionShape3D.new()
 	collision.name = "CollisionShape"
-
-	var shape = ConvexPolygonShape3D.new()
-	var points := PackedVector3Array()
-
-	for i in range(6):
-		var angle = deg_to_rad(60 * i + 30)
-		var x = cos(angle) * HEX_RADIUS
-		var z = sin(angle) * HEX_RADIUS
-		points.append(Vector3(x, HEX_HEIGHT * 0.5, z))
-		points.append(Vector3(x, -HEX_HEIGHT * 0.5, z))
-
-	shape.points = points
-	collision.shape = shape
+	collision.shape = _build_column_shape()
 	add_child(collision)
 
+func _build_column_shape() -> ConvexPolygonShape3D:
+	var shape = ConvexPolygonShape3D.new()
+	var points := PackedVector3Array()
+	var bottom_y = _column_bottom()
+	for corner in _top_corners():
+		points.append(corner)
+		points.append(Vector3(corner.x, bottom_y, corner.z))
+	shape.points = points
+	return shape
 
+## Height, level or ramp changed after the tile was built: new column mesh and collision
+func rebuild_column() -> void:
+	var mesh_instance = get_node_or_null("MeshInstance") as MeshInstance3D
+	if mesh_instance:
+		mesh_instance.mesh = _build_column_mesh()
+		_visual_rest.erase(mesh_instance)
+	var collision = get_node_or_null("CollisionShape") as CollisionShape3D
+	if collision:
+		collision.shape = _build_column_shape()
 
 func _generate_hex_vertices() -> PackedVector3Array:
 	var vertices = PackedVector3Array()
 	var center = Vector3(0, height, 0)
-	
+
 	for i in range(6):
 		var angle = deg_to_rad(60 * i)
 		var x = cos(angle) * HEX_INNER_RADIUS
 		var z = sin(angle) * HEX_INNER_RADIUS
 		vertices.append(center + Vector3(x, 0, z))
-	
+
 	# Center vertex
 	vertices.append(center)
-	
+
 	return vertices
 
 func _generate_hex_indices() -> PackedInt32Array:
 	var indices = PackedInt32Array()
 	var center_index = 6
-	
+
 	for i in range(6):
 		var next = (i + 1) % 6
 		indices.append(center_index)
 		indices.append(i)
 		indices.append(next)
-	
+
 	return indices
 
 func _get_biome_material() -> Material:
@@ -205,12 +218,20 @@ static func speed_factor(biome: int) -> float:
 			return 0.8
 		BiomeType.SWAMP:
 			return 0.85
+		BiomeType.FROST:
+			return BiomeRules.FROST_SPEED
+		BiomeType.TALL_GRASS:
+			return BiomeRules.TALL_GRASS_SPEED
+		BiomeType.THORNS:
+			return BiomeRules.THORNS_SPEED
 	return 1.0
 
 ## Same kind of ground (land / water) at nearly the same level: the two tiles look like one
 func joins(other: HexTile) -> bool:
 	if not other or other.is_destroyed or is_destroyed or other.is_water() != is_water():
 		return false
+	if is_ramp() or other.is_ramp():
+		return false  # the slope is built into the mesh, corners stay where they are
 	return abs(other.position.y - position.y) <= (WATER_JOIN_STEP if is_water() else LAND_JOIN_STEP)
 
 ## Tell the shader what lies across each edge and where each top corner should sit, so joined
@@ -259,27 +280,22 @@ func update_edges(grid: HexGrid) -> void:
 	if water:
 		mesh.set_instance_shader_parameter("shallow", 1.0 if biome_type == BiomeType.SHALLOW_WATER else 0.0)
 
-func take_damage(amount: float):
-	if is_destroyed or not can_destroy:
-		return
-	
-	tile_health -= amount
-	tile_damaged.emit(tile_health)
-	
-	if tile_health <= 0.0:
-		destroy()
+## Shots and blasts don't break the floor (holes used to appear under fire, and only on the
+## shooter's side - they were never synced). The island only changes through the zone and events.
+func take_damage(_amount: float):
+	pass
 
 func destroy():
 	if is_destroyed:
 		return
-	
+
 	is_destroyed = true
 	tile_destroyed.emit()
 	# The neighbours get a rim along the hole right away
 	var grid = get_parent() as HexGrid
 	if grid:
 		grid.refresh_edges_around(hex_coords)
-	
+
 	# Animate destruction
 	var tween = create_tween()
 	tween.tween_property(self, "scale", Vector3.ONE * 0.01, 0.5)  # not 0: physics can't invert a zero basis
@@ -349,12 +365,15 @@ func set_biome(biome: BiomeType):
 	if mesh_instance:
 		var material = _get_biome_material()
 		mesh_instance.set_surface_override_material(0, material)
+	if is_inside_tree():
+		BiomeDecor.decorate(self)  # the old biome's decor goes, the new one's comes
 
 func set_height(new_height: float):
 	height = new_height
 	# Use position if not in tree, global_position if in tree
 	if is_inside_tree():
 		global_position.y = new_height * HEX_HEIGHT
+		rebuild_column()  # the column must still reach the bottom
 	else:
 		position.y = new_height * HEX_HEIGHT
 
@@ -413,6 +432,8 @@ func flood(to_biome: int, water_y: float, seconds: float = 0.0) -> void:
 
 func _finish_flood(to_biome: int) -> void:
 	height = position.y / HEX_HEIGHT
+	ramp_dir = -1  # water lies flat
+	rebuild_column()
 	set_biome(to_biome)
 	var grid = get_parent() as HexGrid
 	if grid:

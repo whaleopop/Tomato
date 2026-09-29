@@ -6,7 +6,7 @@ signal map_generated(grid: HexGrid)
 
 ## Radius used for real matches. Server, clients and the spawn cutscene must all use the
 ## same value: lake placement depends on the radius, so different radii give different maps.
-const MATCH_MAP_RADIUS: int = 11  # 397 tiles of radius 2 (the outer ring is the mountain wall)
+const MATCH_MAP_RADIUS: int = 15  # 721 tiles of radius 2 (the outer ring is the mountain wall)
 
 var hex_generator: HexGenerator = null
 var grid: HexGrid = null
@@ -54,6 +54,15 @@ func generate_map(radius: int, seed_value: int = -1):
 	# Place procedural structures
 	if enable_structures:
 		await _place_structures_async()
+
+	# Paths connecting biome clusters and small huts
+	_carve_paths(map_seed)
+	grid.update_tile_edges()  # refresh seams after path biome changes
+	for tile in grid.tiles.values():
+		if tile.has_meta("path"):
+			BiomeDecor.decorate(tile)  # now that the whole path is known (fences on its sides)
+	_place_huts(map_seed)
+	Waterfalls.build(grid, map_seed)  # where water meets a terrace
 
 	map_generated.emit(grid)
 
@@ -201,3 +210,124 @@ func _get_structure_type_for_biome(biome: HexTile.BiomeType, rng: RandomNumberGe
 
 		_:
 			return -1  # Skip water and unknown biomes
+
+# ---------------------------------------------------------------- paths
+
+## Carve 4-6 winding dirt paths across the map connecting distant tiles.
+## A path is a drunk-walk of BEACH-biome tiles between two seed points.
+func _carve_paths(seed_val: int) -> void:
+	if not grid:
+		return
+	var rng = RandomNumberGenerator.new()
+	rng.seed = seed_val + 31337
+	var all_land: Array = []
+	for c in grid.tiles:
+		var t = grid.get_tile(c)
+		if t and t.is_playable() and not t.is_water() and t.biome_type != HexTile.BiomeType.MOUNTAIN:
+			all_land.append(c)
+	if all_land.size() < 10:
+		return
+	var path_count = rng.randi_range(4, 6)
+	for _p in range(path_count):
+		var a = all_land[rng.randi() % all_land.size()]
+		var b = all_land[rng.randi() % all_land.size()]
+		_drunk_path(a, b, rng)
+
+func _drunk_path(start: Vector2i, end: Vector2i, rng: RandomNumberGenerator) -> void:
+	var dirs = [Vector2i(1, 0), Vector2i(1, -1), Vector2i(0, -1),
+				Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, 1)]
+	var cur = start
+	var max_steps = 60
+	for _s in range(max_steps):
+		var tile = grid.get_tile(cur)
+		if tile and tile.biome_type not in [HexTile.BiomeType.WATER, HexTile.BiomeType.SHALLOW_WATER,
+				HexTile.BiomeType.MOUNTAIN]:
+			tile.set_meta("path", true)  # BiomeDecor: fences and vegetable beds along it
+			tile.set_biome(HexTile.BiomeType.BEACH)
+		if cur == end:
+			break
+		# Bias towards the end, with some random wandering
+		var toward = (Vector2(end) - Vector2(cur)).normalized()
+		var best_dir = dirs[0]
+		var best_dot = -INF
+		for d in dirs:
+			var dot = Vector2(d).normalized().dot(toward) + rng.randf_range(-0.5, 0.5)
+			if dot > best_dot:
+				best_dot = dot
+				best_dir = d
+		cur = cur + best_dir
+		if not grid.tiles.has(cur):
+			break
+
+# ---------------------------------------------------------------- huts
+
+## Place 6-10 small huts (low CoverWall boxes) on playable land tiles.
+## Each hut is a 3-4 wall enclosure the player can enter but not jump over.
+func _place_huts(seed_val: int) -> void:
+	if not grid:
+		return
+	var rng = RandomNumberGenerator.new()
+	rng.seed = seed_val + 54321
+	var candidates: Array = []
+	for c in grid.tiles:
+		var t = grid.get_tile(c)
+		if t and t.is_playable() and not t.is_water() and not t.is_ramp() and t.biome_type not in [
+				HexTile.BiomeType.MOUNTAIN, HexTile.BiomeType.WATER, HexTile.BiomeType.SHALLOW_WATER]:
+			candidates.append(c)
+	if candidates.is_empty():
+		return
+	var hut_count = rng.randi_range(6, 10)
+	var placed_centers: Array = []
+	var tries = 0
+	while placed_centers.size() < hut_count and tries < 200:
+		tries += 1
+		var c = candidates[rng.randi() % candidates.size()]
+		# Keep huts apart
+		var too_close = false
+		for pc in placed_centers:
+			if DestructionSystem._dist(c, pc) < 3:
+				too_close = true
+				break
+		if too_close:
+			continue
+		placed_centers.append(c)
+		_build_hut(c, rng)
+	grid.set_meta("huts", placed_centers)  # Landmark.plan keeps clear of them
+
+func _build_hut(center: Vector2i, rng: RandomNumberGenerator) -> void:
+	var tile = grid.get_tile(center)
+	if not tile:
+		return
+	var base_pos = tile.global_position
+	# Simple 4-wall box hut, about 2.5m wide, 1.2m tall (player height) — low enough to shoot over
+	var wall_h = 1.2
+	var hw = 1.3  # half-width
+	var walls = [
+		# [from, to, rotation_y]
+		[Vector3(-hw, 0, -hw), Vector3(hw, 0, -hw), 0.0],
+		[Vector3(-hw, 0,  hw), Vector3(hw, 0,  hw), 0.0],
+		[Vector3(-hw, 0, -hw), Vector3(-hw, 0, hw), PI * 0.5],
+		# Leave one side open as a doorway (only 3 walls)
+	]
+	for w in walls:
+		var wall = StaticBody3D.new()
+		var mesh_inst = MeshInstance3D.new()
+		var box = BoxMesh.new()
+		var length = w[0].distance_to(w[1])
+		box.size = Vector3(length, wall_h, 0.22)
+		mesh_inst.mesh = box
+		var mat = StandardMaterial3D.new()
+		mat.albedo_color = Color(0.48, 0.38, 0.28) if rng.randi() % 2 == 0 else Color(0.58, 0.52, 0.46)
+		mat.roughness = 0.9
+		mesh_inst.material_override = mat
+		var mid = (w[0] + w[1]) * 0.5 + Vector3(0, wall_h * 0.5, 0)
+		wall.position = base_pos + mid
+		wall.rotation.y = w[2]
+		var col = CollisionShape3D.new()
+		var cs = BoxShape3D.new()
+		cs.size = box.size
+		col.shape = cs
+		wall.add_child(mesh_inst)
+		wall.add_child(col)
+		wall.collision_layer = HitscanSystem.LAYER_ENVIRONMENT | CoverSpawner.COVER_LAYER
+		grid.add_child(wall)

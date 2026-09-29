@@ -188,6 +188,7 @@ func _spawn_player(player_id: int):
 
 	var server_player = players[player_id]
 	server_player.character_name = lobby_manager.get_player_character(player_id)
+	server_player.cosmetics = lobby_manager.get_player_cosmetics(player_id)
 
 	var spawn_pos = Vector3.ZERO
 	if server_world.hex_grid:
@@ -270,12 +271,29 @@ func _check_match_end():
 
 	match_over = true
 	var winner_id: int = alive[0] if alive.size() == 1 else 0
+	if winner_id != 0 and players.has(winner_id):
+		players[winner_id].place = 1
+		players[winner_id].alive_time = match_time()
 	var winner_name = lobby_manager.get_player_character(winner_id) if winner_id != 0 else ""
 	print("[GameServer] ===== MATCH OVER: winner %d (%s) =====" % [winner_id, winner_name])
 	server_world.stop_match()
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager:
 		network_manager.broadcast_match_end(winner_id, winner_name)
+
+## Participants still standing (the stats' placement)
+func alive_count() -> int:
+	var n = 0
+	for player_id in _participants:
+		var entity = server_world.players.get(player_id)
+		if players.has(player_id) and entity and is_instance_valid(entity):
+			var health = entity.get_component("HealthComponent")
+			if health and not health.is_dead:
+				n += 1
+	return n
+
+func match_time() -> float:
+	return Time.get_ticks_msec() / 1000.0 - _match_start_time
 
 func _on_player_spawned(player_id: int, position: Vector3):
 	var network_manager = get_node_or_null("/root/NetworkManager")

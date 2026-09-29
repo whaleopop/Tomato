@@ -617,6 +617,9 @@ func _build_howto() -> Control:
 		"The fog of war hides everything you can't see. Walls block sight; your weapon sets how far you see.",
 		"In a bush nobody sees you, until you shoot or someone comes very close.",
 		"Water and swamp slow you down; shallow water less than deep.",
+		"The island stands on terraces: walk up a ramp or jump a ledge. From higher ground you see further.",
+		"Landmarks (a windmill, a greenhouse, a giant watering can...) hold most of the chests; the greenhouse and the windmill the best ones.",
+		"Special ground: the flower meadow heals, frost is fast but slippery, tall grass hides you, mushrooms recharge abilities but cut your sight, brambles hurt.",
 		"From the second minute on the island throws events at you: meteors, quakes, night, floods... See the Events tab.",
 		"The last veggie standing wins.",
 	]:

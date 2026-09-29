@@ -33,6 +33,7 @@ const PUSH_SPEED: float = 13.0      # the rising mountain shoves you off
 const PUSH_TIME: float = 0.45
 const CRUSH_DAMAGE: float = 15.0    # still inside when it has risen: thrown out and hurt
 const SHIFT_RADIUS: int = 3         # the final zone moves once the safe radius is this small
+const WIDE_RADIUS: int = 9          # above this the zone takes two rings per step (big maps stay quick)
 
 var grid: HexGrid = null
 var is_active: bool = false
@@ -98,7 +99,7 @@ func _begin_warning():
 		center = _shift_to
 		_shift_to = null
 	if not core_mode:
-		var r = _radius - 1
+		var r = _radius - (2 if _radius > WIDE_RADIUS else 1)
 		while r >= FINAL_RADIUS and marked.is_empty():
 			marked = _tiles_outside(r)
 			if marked.is_empty():
@@ -157,7 +158,10 @@ func _end_burn():
 					health.take_damage(CRUSH_DAMAGE, null)
 	)
 	_enter(Stage.WAIT, _at(WAIT_TIMES, current_phase - 1))
-	if not _shifted and _radius <= SHIFT_RADIUS and _radius - 1 >= FINAL_RADIUS:
+	# Unpredictable zone: shifts every phase once small, and occasionally early
+	var should_shift = (_radius <= SHIFT_RADIUS and _radius - 1 >= FINAL_RADIUS) \
+		or (not _shifted and _radius <= SHIFT_RADIUS + 2 and randf() < 0.4)
+	if should_shift:
 		_plan_shift()
 
 ## The final zone moves over: a new center one or two tiles away, as long as enough of the island
@@ -166,7 +170,8 @@ func _plan_shift():
 	_shifted = true
 	var r = _radius - 1
 	var best: Array = []
-	for d in [2, 1]:
+	# Look up to 3 tiles away for a new center (more unpredictable than 2)
+	for d in [3, 2, 1]:
 		for c in grid.tiles:
 			var tile = grid.get_tile(c)
 			if not tile or not tile.is_playable() or tile.is_water() or _dist(c, center) != d:
@@ -235,6 +240,7 @@ static func shove(entity: Node, hex_grid: HexGrid, raising: Dictionary, center_w
 	var movement = entity.get_component("MovementComponent")
 	if movement:
 		movement.dash(dir.normalized() * PUSH_SPEED, PUSH_TIME)
+		movement.jump()  # hop up a terrace on the way instead of sliding into its cliff
 
 ## Inside a mountain: put back onto the nearest walkable tile. True if it had to.
 static func unstick(entity: Node, hex_grid: HexGrid) -> bool:
@@ -261,7 +267,7 @@ static func unstick(entity: Node, hex_grid: HexGrid) -> bool:
 			best = t
 	if not best:
 		return false
-	entity.global_position = best.global_position + Vector3(0, HexTile.HEX_HEIGHT * 0.5 + 0.2, 0)
+	entity.global_position = best.global_position + Vector3(0, HexTile.HEX_HEIGHT * 0.5 + best.surface_offset() + 0.2, 0)
 	var movement = entity.get_component("MovementComponent")
 	if movement:
 		movement.stop()

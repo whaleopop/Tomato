@@ -10,12 +10,64 @@ var cloud_particles: GPUParticles3D = null
 var time_of_day: float = 10.0  # Start at 10 AM
 var day_cycle_speed: float = 0.0  # 0 = no cycle, set to 0.01 for slow cycle
 
+# The match runs from a bright day into a sunset: `dusk` follows how far the zone has closed in
+# (NetworkManager.zone_changed), the sun sinks and warms, the sky reddens. Night / fog events
+# (MapEvents) darken on top of it and hand the light back to us when they end.
+const DAY_SUN = Color(1.0, 0.95, 0.85)
+const DUSK_SUN = Color(1.0, 0.6, 0.36)
+const DAY_TOP = Color(0.4, 0.6, 0.9)
+const DUSK_TOP = Color(0.34, 0.36, 0.62)
+const DAY_HORIZON = Color(0.7, 0.8, 0.95)
+const DUSK_HORIZON = Color(1.0, 0.62, 0.45)
+var dusk: float = 0.0            # 0 bright day .. 1 sunset
+var _dusk_target: float = 0.0
+var _zone_start: int = -1        # the first safe radius of the match
+var _sky_material: ProceduralSkyMaterial = null
+var ambient_life: AmbientLife = null
+
 func _ready():
 	_create_sun()
 	_create_environment()
 	_create_clouds()
+	ambient_life = AmbientLife.new()
+	ambient_life.name = "AmbientLife"
+	add_child(ambient_life)
+	var ambient_sound = AmbientSound.new()
+	ambient_sound.name = "AmbientSound"
+	add_child(ambient_sound)
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager and network_manager.has_signal("zone_changed"):
+		network_manager.zone_changed.connect(_on_zone_changed)
+
+func _on_zone_changed(kind: String, _coords: Array, _seconds: float, _center: Vector2i, radius: int):
+	if kind.begins_with("core"):
+		_dusk_target = 1.0
+		return
+	if _zone_start < 0 or radius > _zone_start:
+		_zone_start = radius
+	if _zone_start > 1:
+		_dusk_target = clamp(1.0 - float(radius - 1) / float(_zone_start - 1), 0.0, 1.0)
+
+## What the sun looks like right now without events (MapEvents returns to this after a night)
+func day_light() -> Array:
+	return [DAY_SUN.lerp(DUSK_SUN, dusk), lerp(1.2, 0.95, dusk)]
+
+func _update_dusk(delta: float) -> void:
+	dusk = move_toward(dusk, _dusk_target, delta * 0.02)  # slow: a sunset, not a switch
+	if sun:
+		sun.rotation_degrees.x = lerp(-50.0, -16.0, dusk)
+		sun.rotation_degrees.y = lerp(-30.0, -62.0, dusk)
+		if MapEvents.sight_factor >= 0.999:  # no night / fog running: the light is ours
+			var light = day_light()
+			var k = 1.0 - exp(-delta * 1.5)
+			sun.light_color = sun.light_color.lerp(light[0], k)
+			sun.light_energy = lerp(sun.light_energy, light[1], k)
+	if _sky_material:
+		_sky_material.sky_top_color = DAY_TOP.lerp(DUSK_TOP, dusk)
+		_sky_material.sky_horizon_color = DAY_HORIZON.lerp(DUSK_HORIZON, dusk)
 
 func _process(delta: float):
+	_update_dusk(delta)
 	if day_cycle_speed > 0:
 		time_of_day += delta * day_cycle_speed
 		if time_of_day >= 24.0:
@@ -73,6 +125,7 @@ func _create_environment():
 	sky_material.sun_curve = 0.15
 
 	sky.sky_material = sky_material
+	_sky_material = sky_material
 	env.sky = sky
 	env.background_mode = Environment.BG_SKY
 

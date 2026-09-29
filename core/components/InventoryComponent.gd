@@ -202,8 +202,14 @@ func add_weapon_to_slot(weapon: RangedWeapon) -> int:
 				switch_weapon_slot(i)
 
 			return i
-	print("[InventoryComponent] All weapon slots full!")
-	return -1  # No empty slot
+	# All five slots taken: the new gun replaces the one in hand
+	var combat = entity.get_component("CombatComponent") if entity else null
+	if combat:
+		combat.cancel_reload()
+	weapon_slots[current_weapon_slot] = weapon
+	weapon_equipped.emit(weapon, current_weapon_slot)
+	switch_weapon_slot(current_weapon_slot)
+	return current_weapon_slot
 
 ## Remove weapon from slot
 func remove_weapon_from_slot(slot: int) -> RangedWeapon:

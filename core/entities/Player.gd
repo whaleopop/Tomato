@@ -8,6 +8,9 @@ signal player_spawned
 var player_name: String = ""
 var character_data: CharacterData = null
 var is_local_player: bool = false
+## What the hero wears: {"skin", "hat", "weapon"} (Cosmetics ids). Our own from PlayerProfile,
+## others' from the server (lobby -> ServerPlayer -> player state "cosmetics")
+var cosmetics: Dictionary = {}
 
 func _ready():
 	super._ready()
@@ -64,6 +67,9 @@ const KILL_HEIGHT: float = -15.0
 
 func _physics_process(delta: float):
 	super._physics_process(delta)
+	if is_local_player:
+		# Tree canopies open up around you (tree_canopy.gdshader)
+		RenderingServer.global_shader_parameter_set("hero_position", global_position)
 	if global_position.y < KILL_HEIGHT:
 		var health = get_component("HealthComponent")
 		# Only the authority decides deaths; clients learn it through the synced health
@@ -124,6 +130,23 @@ func setup_character(data: CharacterData):
 			var passive_ability = _create_ability_from_data(data.passive_ability)
 			if passive_ability is PassiveAbility:
 				ability_component.add_passive_ability(passive_ability)
+
+	if is_local_player and cosmetics.is_empty():
+		cosmetics = PlayerProfile.equipped_for(data.character_name)
+	_apply_cosmetics()
+
+## Put on a skin / hat / weapon finish (the server tells us what the others wear)
+func apply_cosmetics(wear: Dictionary) -> void:
+	cosmetics = wear.duplicate()
+	_apply_cosmetics()
+
+func _apply_cosmetics() -> void:
+	var mesh = find_child("ModelMesh", true, false) as Node3D
+	if mesh:
+		Cosmetics.apply_to_character(mesh, String(cosmetics.get("skin", "classic")), String(cosmetics.get("hat", "no_hat")))
+	var weapon_visual = get_node_or_null("WeaponVisual")
+	if weapon_visual:
+		weapon_visual.refresh()
 
 func _load_character_model(data: CharacterData):
 	if data.model_path == "" or not ResourceLoader.exists(data.model_path):

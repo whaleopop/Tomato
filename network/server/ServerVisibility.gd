@@ -27,6 +27,7 @@ static func can_see(viewer: Node3D, target: Node3D, grid: HexGrid) -> bool:
 	# Night / fog (MapEvents) and blindness: the same shorter sight as the client's fog
 	var viewer_status = viewer.get_component("StatusComponent")
 	radius *= MapEvents.sight_factor * (viewer_status.sight_factor() if viewer_status else 1.0)
+	radius *= VisibilitySystem.high_ground_factor(viewer.global_position.y) * BiomeRules.sight_factor(grid, viewer.global_position)
 	radius = max(radius, VisibilitySystem.ALWAYS_SEEN + VisibilitySystem.FOG_FADE_DISTANCE * 0.5)
 	# Small Target passive: spotted only from part of the usual distance
 	if target.has_meta("small_target"):
@@ -48,7 +49,7 @@ static func can_see(viewer: Node3D, target: Node3D, grid: HexGrid) -> bool:
 
 	# At night bushes hide better: you must come closer, a shot gives you away for a shorter time
 	var revealed = Time.get_ticks_msec() / 1000.0 - float(target.get_meta("last_reveal_time", -100.0)) < REVEAL_TIME * MapEvents.bush_factor
-	if not revealed and Bush.any_contains(viewer.get_tree(), target.global_position) \
+	if not revealed and (Bush.any_contains(viewer.get_tree(), target.global_position) or BiomeRules.hides(grid, target.global_position)) \
 			and viewer.global_position.distance_to(target.global_position) >= VisibilitySystem.BUSH_REVEAL_DISTANCE * MapEvents.bush_factor:
 		return false
 	return true

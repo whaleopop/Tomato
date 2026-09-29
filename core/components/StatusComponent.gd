@@ -18,6 +18,7 @@ var _push_left: float = 0.0            # how long the last knockback stays in th
 var _push_number: int = 0
 var _last_push_applied: int = 0        # client: the last knockback number already replayed
 var _visual: Node3D = null
+var _biome_tick: float = 0.0           # BiomeRules: healing / thorns in steps
 
 func _init(p_entity = null):
 	entity = p_entity
@@ -84,6 +85,7 @@ func sight_factor() -> float:
 	return float(effects.blind.value) if effects.has("blind") else 1.0
 
 func update(delta: float):
+	_update_biome(delta)
 	if effects.is_empty() and _push_left <= 0.0:
 		return
 	_push_left = max(_push_left - delta, 0.0)
@@ -97,6 +99,34 @@ func update(delta: float):
 		_refresh_visual()
 		changed.emit()
 	_animate_visual(delta)
+
+## The ground's effect (BiomeRules): recharge on every copy (the caster predicts its cooldowns),
+## healing and thorns only on the server - health reaches the clients in the sync
+func _update_biome(delta: float) -> void:
+	var movement = entity.get_component("MovementComponent") if entity and entity.has_method("get_component") else null
+	if not movement or not movement.is_grounded:
+		return
+	var biome: int = movement.terrain_biome
+	if biome == HexTile.BiomeType.MUSHROOM:
+		var abilities = entity.get_component("AbilityComponent")
+		if abilities:
+			abilities.advance_cooldowns(delta * BiomeRules.MUSHROOM_RECHARGE)
+	if biome != HexTile.BiomeType.MEADOW and biome != HexTile.BiomeType.THORNS:
+		_biome_tick = 0.0
+		return
+	_biome_tick += delta
+	if _biome_tick < BiomeRules.TICK:
+		return
+	_biome_tick -= BiomeRules.TICK
+	if not _is_authority():
+		return
+	var health = entity.get_component("HealthComponent")
+	if not health or health.is_dead:
+		return
+	if biome == HexTile.BiomeType.MEADOW:
+		health.heal(BiomeRules.MEADOW_HEAL * BiomeRules.TICK)
+	else:
+		health.take_damage(BiomeRules.THORNS_DAMAGE * BiomeRules.TICK, null)
 
 # ---------------------------------------------------------------- network
 

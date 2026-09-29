@@ -7,6 +7,9 @@ var biome_noise: FastNoiseLite = null
 var lake_noise: FastNoiseLite = null  # Для генерации озер
 var river_noise: FastNoiseLite = null  # Для генерации рек
 var detail_noise: FastNoiseLite = null  # Для мелких деталей
+var terrace_noise: FastNoiseLite = null  # plateaus (_build_terraces)
+var special_noise: FastNoiseLite = null  # which special biome a patch is (_add_special_biomes)
+var special_mask: FastNoiseLite = null   # where the patches are
 var noise_seed: int = -1
 
 # Lake generation settings
@@ -42,6 +45,19 @@ func _init():
 	detail_noise.frequency = 0.4
 	detail_noise.noise_type = FastNoiseLite.TYPE_PERLIN
 
+	terrace_noise = FastNoiseLite.new()
+	terrace_noise.frequency = 0.075  # per tile: plateaus a few tiles across
+	terrace_noise.noise_type = FastNoiseLite.TYPE_PERLIN
+	terrace_noise.fractal_octaves = 2
+
+	special_noise = FastNoiseLite.new()
+	special_noise.noise_type = FastNoiseLite.TYPE_CELLULAR
+	special_noise.cellular_return_type = FastNoiseLite.RETURN_CELL_VALUE
+	special_noise.frequency = 0.16
+	special_mask = FastNoiseLite.new()
+	special_mask.noise_type = FastNoiseLite.TYPE_PERLIN
+	special_mask.frequency = 0.11
+
 func generate_grid(radius: int, seed_value: int = -1) -> HexGrid:
 	# Set seed if provided
 	if seed_value >= 0:
@@ -51,6 +67,9 @@ func generate_grid(radius: int, seed_value: int = -1) -> HexGrid:
 		lake_noise.seed = seed_value + 2000
 		river_noise.seed = seed_value + 3000
 		detail_noise.seed = seed_value + 4000
+		terrace_noise.seed = seed_value + 7000
+		special_noise.seed = seed_value + 8000
+		special_mask.seed = seed_value + 8100
 	else:
 		noise_seed = randi()
 		noise.seed = noise_seed
@@ -58,6 +77,9 @@ func generate_grid(radius: int, seed_value: int = -1) -> HexGrid:
 		lake_noise.seed = noise_seed + 2000
 		river_noise.seed = noise_seed + 3000
 		detail_noise.seed = noise_seed + 4000
+		terrace_noise.seed = noise_seed + 7000
+		special_noise.seed = noise_seed + 8000
+		special_mask.seed = noise_seed + 8100
 
 	# Generate lake centers
 	_generate_lake_centers(radius)
@@ -82,7 +104,9 @@ func generate_grid(radius: int, seed_value: int = -1) -> HexGrid:
 
 	# Fourth pass: add islands in large lakes
 	_add_lake_islands(grid)
+	_add_special_biomes(grid)
 	_raise_rim(grid, radius)
+	_build_terraces(grid, radius)
 
 	return grid
 
@@ -97,6 +121,9 @@ func generate_grid_async(radius: int, seed_value: int = -1) -> HexGrid:
 		lake_noise.seed = seed_value + 2000
 		river_noise.seed = seed_value + 3000
 		detail_noise.seed = seed_value + 4000
+		terrace_noise.seed = seed_value + 7000
+		special_noise.seed = seed_value + 8000
+		special_mask.seed = seed_value + 8100
 	else:
 		noise_seed = randi()
 		noise.seed = noise_seed
@@ -104,6 +131,9 @@ func generate_grid_async(radius: int, seed_value: int = -1) -> HexGrid:
 		lake_noise.seed = noise_seed + 2000
 		river_noise.seed = noise_seed + 3000
 		detail_noise.seed = noise_seed + 4000
+		terrace_noise.seed = noise_seed + 7000
+		special_noise.seed = noise_seed + 8000
+		special_mask.seed = noise_seed + 8100
 
 	# Generate lake centers
 	_generate_lake_centers(radius)
@@ -152,7 +182,9 @@ func generate_grid_async(radius: int, seed_value: int = -1) -> HexGrid:
 	# Fourth pass: add islands
 	print("[HexGenerator] Fourth pass: Adding lake islands...")
 	_add_lake_islands(grid)
+	_add_special_biomes(grid)
 	_raise_rim(grid, radius)
+	_build_terraces(grid, radius)
 
 	print("[HexGenerator] Map generation complete!")
 	return grid
@@ -166,6 +198,170 @@ func _raise_rim(grid: HexGrid, radius: int):
 			tile.set_biome(HexTile.BiomeType.MOUNTAIN)
 			tile.can_spawn = false
 			tile.can_destroy = false
+
+# ---------------------------------------------------------------- special biomes
+
+const SPECIAL_MASK: float = 0.12  # mask noise above this: a special patch (about a quarter of the land)
+const SPECIAL_BAG = [HexTile.BiomeType.MEADOW, HexTile.BiomeType.MEADOW, HexTile.BiomeType.TALL_GRASS,
+	HexTile.BiomeType.TALL_GRASS, HexTile.BiomeType.TALL_GRASS, HexTile.BiomeType.MUSHROOM, HexTile.BiomeType.MUSHROOM,
+	HexTile.BiomeType.FROST, HexTile.BiomeType.FROST, HexTile.BiomeType.THORNS]
+const SPECIAL_ON = [HexTile.BiomeType.GRASS, HexTile.BiomeType.FOREST, HexTile.BiomeType.DESERT, HexTile.BiomeType.ROCK]
+
+## Patches of meadow, frost, tall grass, mushrooms and brambles (BiomeRules) on ordinary land:
+## a slow mask decides where, a cellular noise which one, so every patch is one biome
+func _add_special_biomes(grid: HexGrid) -> void:
+	var coords_list: Array = grid.tiles.keys()
+	coords_list.sort()
+	for c in coords_list:
+		var tile: HexTile = grid.tiles[c]
+		if not tile.biome_type in SPECIAL_ON or special_mask.get_noise_2d(c.x, c.y) < SPECIAL_MASK:
+			continue
+		# One value per cell, hashed into a weighted bag (the raw values bunch up)
+		var cell = int(abs(special_noise.get_noise_2d(c.x, c.y)) * 100003.0)
+		tile.set_biome(SPECIAL_BAG[cell % SPECIAL_BAG.size()])
+
+# ---------------------------------------------------------------- terraces
+
+const TERRACE_THRESHOLDS = [-0.12, 0.16]  # terrace noise above these: level 1, level 2
+const WATER_TOP: float = -0.05          # world y of deep water's surface
+const SHALLOW_TOP: float = 0.03          # shallow water / rivers a touch higher
+const RAMP_EVERY: int = 9                # one more ramp per this many tiles along a plateau's edge
+
+## The island on up to three levels (HexTile.TERRACE_STEP apart): plateaus from a slow noise,
+## water / beach / swamp at the bottom, neighbours at most one level apart (a jump clears it), no
+## lone pillars or pits, ramps up onto every plateau. Seeded and in a fixed order: the same on
+## the server and every client.
+func _build_terraces(grid: HexGrid, radius: int) -> void:
+	var coords_list: Array = grid.tiles.keys()
+	coords_list.sort()
+	var levels: Dictionary = {}
+	for c in coords_list:
+		var tile: HexTile = grid.tiles[c]
+		var v = terrace_noise.get_noise_2d(c.x, c.y)
+		var lv = 0
+		for threshold in TERRACE_THRESHOLDS:
+			if v > threshold:
+				lv += 1
+		if tile.biome_type in [HexTile.BiomeType.WATER, HexTile.BiomeType.SHALLOW_WATER, HexTile.BiomeType.SWAMP, HexTile.BiomeType.BEACH]:
+			lv = 0
+		levels[c] = lv
+	var rim = func(c: Vector2i) -> bool: return max(abs(c.x), abs(c.y), abs(c.x + c.y)) >= radius
+
+	# Lone pillars come down, lone pits fill up (the rim doesn't count)
+	for c in coords_list:
+		if rim.call(c):
+			continue
+		var lo = 99
+		var hi = -1
+		for n in _get_hex_neighbors(c):
+			if levels.has(n) and not rim.call(n):
+				lo = mini(lo, levels[n])
+				hi = maxi(hi, levels[n])
+		if hi >= 0 and levels[c] > hi:
+			levels[c] = hi
+		elif lo < 99 and levels[c] < lo and grid.tiles[c].biome_type != HexTile.BiomeType.WATER:
+			levels[c] = lo
+	# At most one level between neighbours: only ever lowered, so the water stays at the bottom
+	var changed = true
+	while changed:
+		changed = false
+		for c in coords_list:
+			for n in _get_hex_neighbors(c):
+				if levels.has(n) and levels[c] > levels[n] + 1:
+					levels[c] = levels[n] + 1
+					changed = true
+	# The rim mountains stand at the height of the land inside, so nobody jumps over them
+	for c in coords_list:
+		if rim.call(c):
+			var top = 0
+			for n in _get_hex_neighbors(c):
+				if levels.has(n) and not rim.call(n):
+					top = maxi(top, levels[n])
+			levels[c] = top
+
+	for c in coords_list:
+		var tile: HexTile = grid.tiles[c]
+		tile.level = levels[c]
+		if tile.level > 0:
+			tile.set_height(tile.height + tile.level * HexTile.TERRACE_STEP / HexTile.HEX_HEIGHT)
+	_place_ramps(grid, coords_list, levels, rim)
+	# Water lies below its banks (the land shows an earth bank above it); MovementComponent steps
+	# back out onto the shore
+	for c in coords_list:
+		var tile: HexTile = grid.tiles[c]
+		if tile.biome_type == HexTile.BiomeType.WATER:
+			tile.set_height((WATER_TOP - HexTile.HEX_HEIGHT * 0.5) / HexTile.HEX_HEIGHT)
+		elif tile.biome_type == HexTile.BiomeType.SHALLOW_WATER:
+			tile.set_height((SHALLOW_TOP - HexTile.HEX_HEIGHT * 0.5) / HexTile.HEX_HEIGHT)
+
+## A ramp is a lower tile that slopes up across one edge onto a plateau. Its far side must be
+## walkable ground on its own level, so you walk straight on and up.
+func _place_ramps(grid: HexGrid, coords_list: Array, levels: Dictionary, rim: Callable) -> void:
+	var rng = RandomNumberGenerator.new()
+	rng.seed = noise_seed + 7100
+	var region_of: Dictionary = {}
+	var regions: Array = []  # [level, [coords]]
+	for c in coords_list:
+		if levels[c] == 0 or region_of.has(c) or rim.call(c):
+			continue
+		var members: Array = []
+		var stack: Array = [c]
+		region_of[c] = regions.size()
+		while not stack.is_empty():
+			var cur = stack.pop_back()
+			members.append(cur)
+			for n in _get_hex_neighbors(cur):
+				if levels.has(n) and not region_of.has(n) and not rim.call(n) and levels[n] == levels[c]:
+					region_of[n] = regions.size()
+					stack.append(n)
+		regions.append([levels[c], members])
+
+	var used: Dictionary = {}  # tiles that are ramps or a ramp's landing
+	for region in regions:
+		var lv: int = region[0]
+		var candidates: Array = []  # [lower tile, edge towards the plateau]
+		for c in region[1]:
+			if grid.tiles[c].is_mountain():
+				continue  # a ramp into a rock wall leads nowhere
+			for k in 6:
+				var low_c: Vector2i = c - HexTile.EDGE_DIRECTIONS[k]  # the plateau lies across edge k of low_c
+				var far_c: Vector2i = low_c - HexTile.EDGE_DIRECTIONS[k]
+				if not levels.has(low_c) or not levels.has(far_c) or rim.call(low_c) or rim.call(far_c):
+					continue
+				if levels[low_c] != lv - 1 or levels[far_c] != lv - 1:
+					continue
+				var low: HexTile = grid.tiles[low_c]
+				var far: HexTile = grid.tiles[far_c]
+				if not _ramp_ground(low) or not _ramp_ground(far):
+					continue
+				candidates.append([low_c, k])
+		if candidates.is_empty():
+			continue  # still reachable with a jump
+		var wanted = 1 + candidates.size() / RAMP_EVERY
+		var placed: Array = []
+		var tries = 0
+		while placed.size() < wanted and tries < candidates.size() * 2:
+			tries += 1
+			var pick = candidates[rng.randi() % candidates.size()]
+			var low_c: Vector2i = pick[0]
+			if used.has(low_c):
+				continue
+			var too_close = false
+			for other in placed:
+				if _hex_distance(other, low_c) < 3.0:
+					too_close = true
+			if too_close:
+				continue
+			var ramp: HexTile = grid.tiles[low_c]
+			ramp.ramp_dir = pick[1]
+			ramp.can_spawn = false
+			used[low_c] = true
+			used[low_c - HexTile.EDGE_DIRECTIONS[pick[1]]] = true
+			placed.append(low_c)
+
+## Dry, flat ground a ramp can stand on / lead down to
+func _ramp_ground(tile: HexTile) -> bool:
+	return not tile.is_ramp() and not (tile.biome_type in [HexTile.BiomeType.WATER, HexTile.BiomeType.SHALLOW_WATER, HexTile.BiomeType.MOUNTAIN])
 
 ## Generate random lake and pond centers
 func _generate_lake_centers(radius: int):

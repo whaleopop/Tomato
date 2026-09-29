@@ -174,6 +174,9 @@ func spawn_player_at(player_id: int, position: Vector3, character_name: String =
 	add_child(player)
 
 	# Same stats/abilities/model as on the owning client, otherwise speed and health differ
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager and network_manager.game_server and network_manager.game_server.players.has(player_id):
+		player.cosmetics = network_manager.game_server.players[player_id].cosmetics.duplicate()
 	var char_data = CharacterRegistry.get_by_name(character_name)
 	if char_data:
 		player.setup_character(char_data)

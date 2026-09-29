@@ -9,7 +9,11 @@ var start_button: Button = null
 var connect_button: Button = null
 var settings_button: Button = null
 var guide_button: Button = null
+var shop_button: Button = null
+var training_button: Button = null
 var quit_button: Button = null
+var coins_label: Label = null
+var shop: Shop = null
 
 var showcase: CharacterShowcase = null
 var showcase_name: Label = null
@@ -29,10 +33,22 @@ func _ready():
 	if network_manager:
 		network_manager.stop_all()
 
+	var game_manager_node = get_node_or_null("/root/GameManager")
+	if game_manager_node:
+		game_manager_node.training_mode = false
 	_roster = CharacterRegistry.get_all()
 	_showcase_index = randi() % _roster.size()
 	_create_ui()
 	_show_next_character()
+
+	# First start: a name and the first hero
+	if not PlayerProfile.has_account() or PlayerProfile.needs_starter():
+		var onboarding = Onboarding.new()
+		add_child(onboarding)
+		showcase.visible = false
+		onboarding.finished.connect(func():
+			showcase.visible = true
+			_update_coins())
 
 	var game_manager = get_node_or_null("/root/GameManager")
 	if game_manager and game_manager.last_error != "":
@@ -82,6 +98,16 @@ func _create_ui():
 	guide_button = UITheme.create_button("GUIDE  ·  HEROES, WEAPONS, LOOT", buttons, Vector2(0, 52))
 	guide_button.pressed.connect(_on_guide_pressed)
 
+	var extra_row = HBoxContainer.new()
+	extra_row.add_theme_constant_override("separation", 12)
+	buttons.add_child(extra_row)
+	shop_button = UITheme.create_button("SHOP", extra_row, Vector2(0, 52))
+	shop_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shop_button.pressed.connect(_on_shop_pressed)
+	training_button = UITheme.create_button("TRAINING GROUND", extra_row, Vector2(0, 52))
+	training_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	training_button.pressed.connect(_on_training_pressed)
+
 	var small_row = HBoxContainer.new()
 	small_row.add_theme_constant_override("separation", 12)
 	buttons.add_child(small_row)
@@ -111,6 +137,20 @@ func _create_ui():
 
 	showcase_name = UITheme.create_title("", right)
 	showcase_name.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
+
+	# ---- Coins (top-right)
+	var wallet = PanelContainer.new()
+	wallet.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.7), Color(1.0, 0.8, 0.3, 0.7), 99, 20, 7))
+	wallet.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	wallet.offset_left = -330
+	wallet.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	wallet.offset_right = -32
+	wallet.offset_top = 28
+	add_child(wallet)
+	coins_label = UITheme.create_heading("", wallet)
+	coins_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	coins_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.45))
+	_update_coins()
 
 	# ---- Version (bottom-right)
 	var version = UITheme.create_label(VERSION, self, UITheme.FONT_TINY)
@@ -172,7 +212,7 @@ func show_toast(text: String, color: Color = UITheme.ACCENT_INFO):
 	tween.tween_callback(holder.queue_free)
 
 func _set_buttons_enabled(enabled: bool):
-	for b in [start_button, connect_button, guide_button, settings_button, quit_button]:
+	for b in [start_button, connect_button, guide_button, shop_button, training_button, settings_button, quit_button]:
 		if b:
 			b.disabled = not enabled
 
@@ -230,6 +270,29 @@ func _on_guide_pressed():
 	guide.closed.connect(func():
 		guide = null
 		showcase.visible = true)
+
+func _update_coins():
+	if coins_label:
+		var who = PlayerProfile.nickname
+		coins_label.text = (who + "  ·  " if who != "" else "") + tr("%d coins") % PlayerProfile.get_coins()
+
+func _on_shop_pressed():
+	if shop:
+		return
+	shop = Shop.new()
+	add_child(shop)
+	showcase.visible = false  # one 3D preview at a time
+	shop.closed.connect(func():
+		shop = null
+		showcase.visible = true
+		_update_coins())
+
+## Offline arena with every gun and dummies: go through character select first
+func _on_training_pressed():
+	var game_manager = get_node_or_null("/root/GameManager")
+	if game_manager:
+		game_manager.training_mode = true
+	_transition_to("res://scenes/CharacterSelectScene.tscn")
 
 func _unhandled_input(event: InputEvent):
 	if settings_layer and event.is_action_pressed("pause"):

@@ -36,6 +36,7 @@ var _dash_time: float = 0.0
 ## Ground under the feet: water / swamp slow you down (HexTile.speed_factor). Server and client
 ## read the same map, so the prediction agrees with the server.
 var terrain_multiplier: float = 1.0
+var terrain_biome: int = -1  # the tile under the feet (BiomeRules: grip here, effects in StatusComponent)
 
 func _init(p_entity = null):  # p_entity: Entity
 	entity = p_entity
@@ -121,7 +122,8 @@ func _update_character_body(delta: float):
 	if combat and combat.equipped_ranged_weapon:
 		current_speed *= combat.equipped_ranged_weapon.move_factor
 	var target_velocity = Vector3.ZERO if stunned else move_direction * current_speed
-	var current_control = acceleration if is_grounded else acceleration * air_control
+	var grip = BiomeRules.grip(terrain_biome) if is_grounded else 1.0  # frost: you slide
+	var current_control = (acceleration if is_grounded else acceleration * air_control) * grip
 
 	# Smooth horizontal acceleration
 	velocity.x = move_toward(velocity.x, target_velocity.x, current_control * delta)
@@ -129,7 +131,7 @@ func _update_character_body(delta: float):
 
 	# Apply friction when not moving
 	if move_direction.length_squared() < 0.01:
-		var current_friction = friction if is_grounded else friction * air_control
+		var current_friction = (friction if is_grounded else friction * air_control) * grip
 		velocity.x = move_toward(velocity.x, 0, current_friction * delta)
 		velocity.z = move_toward(velocity.z, 0, current_friction * delta)
 
@@ -141,6 +143,16 @@ func _update_character_body(delta: float):
 
 	# Combine horizontal and vertical velocity
 	body.velocity = Vector3(velocity.x, vertical_velocity, velocity.z)
+
+	# A low ledge (out of the water, a bank, a bump) is stepped onto, not walked into.
+	# Terrace cliffs are far higher than STEP_HEIGHT: those still take a jump or a ramp.
+	if is_grounded:
+		_step_up(body, delta)
+	elif vertical_velocity > -6.0 and move_direction.length_squared() > 0.01:
+		# Jumped at a ledge that is a bit too high (out of the water under a terrace): pull up
+		if _step_up(body, delta, MANTLE_HEIGHT):
+			vertical_velocity = 0.0
+			body.velocity.y = 0.0
 
 	# Move and slide
 	body.move_and_slide()
@@ -161,6 +173,37 @@ func _update_character_body(delta: float):
 		else:
 			movement_stopped.emit()
 
+const STEP_HEIGHT: float = 0.5
+const MANTLE_HEIGHT: float = 1.0   # in the air (a jump): a ledge up to this far above you is climbed
+const STEP_PROBE: float = 0.3      # how far ahead the ledge is looked for (about the body's radius)
+
+## Blocked ahead but free `height` higher: lift the body onto the ledge (the same test runs on
+## the server and in the client's prediction, so they agree). True if it climbed.
+func _step_up(body: CharacterBody3D, delta: float, height: float = STEP_HEIGHT) -> bool:
+	var motion = Vector3(body.velocity.x, 0.0, body.velocity.z) * delta
+	if motion.length_squared() < 0.000001:
+		return false
+	var probe = motion.normalized() * max(motion.length(), STEP_PROBE)
+	var from = body.global_transform
+	if not body.test_move(from, probe):
+		return false  # nothing in the way
+	var lift = Vector3.UP * height
+	if body.test_move(from, lift):
+		return false  # no headroom
+	var raised = from.translated(lift)
+	if body.test_move(raised, probe):
+		return false  # a wall or a cliff, not a step
+	# Settle onto the ledge: from the raised spot ahead, down until we touch it. The rounded
+	# bottom may meet the ledge's corner first (a slanted normal): that still counts, the next
+	# frames finish the climb.
+	var collision = KinematicCollision3D.new()
+	if body.test_move(raised.translated(probe), -lift, collision):
+		var rise = height - collision.get_travel().length()
+		if rise > 0.02 and collision.get_normal().y > 0.3:
+			body.global_position.y += rise + 0.01
+			return true
+	return false
+
 ## What we stand on (a short ray down to the environment layer). In the air the last value stays,
 ## so jumping doesn't get you through a lake faster.
 func _update_terrain(body: CharacterBody3D) -> void:
@@ -171,6 +214,7 @@ func _update_terrain(body: CharacterBody3D) -> void:
 	var hit = body.get_world_3d().direct_space_state.intersect_ray(query)
 	if hit and hit.collider is HexTile:
 		terrain_multiplier = HexTile.speed_factor(hit.collider.biome_type)
+		terrain_biome = hit.collider.biome_type
 
 func _update_simple(delta: float):
 	# Fallback for non-CharacterBody3D entities

@@ -79,6 +79,20 @@ func set_player_character(player_id: int, character_name: String):
 func get_player_character(player_id: int) -> String:
 	return players_characters.get(player_id, "")
 
+var players_cosmetics: Dictionary = {}  # player_id -> {"skin", "hat", "weapon"}
+
+## Only known ids get through (it is just looks, but keep the data tidy)
+func set_player_cosmetics(player_id: int, wear: Dictionary) -> void:
+	var clean := {}
+	for key in ["skin", "hat", "weapon"]:
+		var id = String(wear.get(key, ""))
+		if id != "" and Cosmetics.price_of(id) >= 0:
+			clean[key] = id
+	players_cosmetics[player_id] = clean
+
+func get_player_cosmetics(player_id: int) -> Dictionary:
+	return players_cosmetics.get(player_id, {})
+
 ## The client's per-run identity (NetworkManager.client_token): recognises rejoining players
 func set_player_token(player_id: int, token: String):
 	if players_ready.has(player_id):
@@ -98,6 +112,7 @@ func remove_player(player_id: int):
 	players_spawn.erase(player_id)
 	players_names.erase(player_id)
 	players_characters.erase(player_id)
+	players_cosmetics.erase(player_id)
 	players_tokens.erase(player_id)
 	print("[LobbyManager] Player %d left lobby" % player_id)
 
@@ -262,6 +277,8 @@ func get_lobby_state() -> Dictionary:
 		"players_ready": players_ready.duplicate(),
 		"players_spawn": players_spawn.duplicate(),
 		"players_names": players_names.duplicate(),
+		"players_characters": players_characters.duplicate(),  # portraits in the lobby list
+		"players_cosmetics": players_cosmetics.duplicate(),
 		"reserved_spawns": reserved_spawns.keys(),
 		"reserved_by": reserved_spawns.duplicate(),
 		"countdown": ceili(countdown_timer) if state == LobbyState.COUNTDOWN else 0

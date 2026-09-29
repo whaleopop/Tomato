@@ -18,11 +18,23 @@ var rng := RandomNumberGenerator.new()
 var hex_grid: HexGrid = null
 var walls: Array[CoverWall] = []
 var bushes: Array[Bush] = []
+var landmarks: Array[Landmark] = []
+var trees: Array[GardenTree] = []
 
 ## occupied: tile coords that must not get a bush (loot containers)
 func setup(grid: HexGrid, seed_value: int, occupied: Dictionary = {}) -> void:
 	hex_grid = grid
 	rng.seed = seed_value + 90210
+	# Landmarks first (Landmark.plan: the same spots LootSpawner put their chests on)
+	var plan = Landmark.plan(grid, seed_value)
+	for entry in plan:
+		var landmark = Landmark.new()
+		landmark.kind = entry.kind
+		landmark.place(grid.get_tile(entry.coords), grid)
+		grid.get_tile(entry.coords).set_meta("landmark", entry.kind)  # the landing map shows it
+		add_child(landmark)
+		landmarks.append(landmark)
+	var taken = Landmark.footprint(plan)
 	var coords_list: Array = grid.tiles.keys()
 	coords_list.sort()
 	var used_edges: Dictionary = {}
@@ -31,11 +43,40 @@ func setup(grid: HexGrid, seed_value: int, occupied: Dictionary = {}) -> void:
 		if not tile or not _is_land(tile):
 			continue
 		var roll = rng.randf()
+		if taken.has(c):
+			continue  # the landmark and its chests stand here
 		if roll < WALL_CHANCE:
-			_place_wall_piece(c, tile, used_edges)
+			_place_wall_piece(c, tile, used_edges, taken)
 		elif roll < WALL_CHANCE + BUSH_CHANCE and not occupied.has(c):
 			_place_bush(c, tile)
-	print("[CoverSpawner] %d wall segments, %d bushes" % [walls.size(), bushes.size()])
+	_plant_trees(coords_list, taken, occupied, seed_value)
+	print("[CoverSpawner] %d landmarks, %d wall segments, %d bushes, %d trees" % [landmarks.size(), walls.size(), bushes.size(), trees.size()])
+
+## Trees in the forest (and one now and then on grass), off the tile center (containers) and the
+## edges (walls). Their own RNG, so the walls and bushes stay where they were.
+func _plant_trees(coords_list: Array, taken: Dictionary, occupied: Dictionary, seed_value: int) -> void:
+	var tree_rng = RandomNumberGenerator.new()
+	tree_rng.seed = seed_value + 31415
+	for c in coords_list:
+		var tile = hex_grid.get_tile(c)
+		if not tile or not _is_land(tile) or taken.has(c):
+			continue
+		var count = 0
+		if tile.biome_type == HexTile.BiomeType.FOREST:
+			count = tree_rng.randi_range(1, 3)
+		elif tile.biome_type == HexTile.BiomeType.GRASS and tree_rng.randf() < 0.06:
+			count = 1
+		var start = tree_rng.randf() * TAU
+		for i in count:
+			var a = start + i * TAU / max(count, 1) + tree_rng.randf_range(-0.4, 0.4)
+			var r = tree_rng.randf_range(0.75, 1.1) * HexTile.HEX_RADIUS * 0.55
+			var tree = GardenTree.new()
+			tree.tree_seed = tree_rng.randi()
+			tree.name = "Tree_%d_%d_%d" % [c.x, c.y, i]
+			tree.position = hex_grid.hex_to_world(c) + Vector3(cos(a) * r, tile_top(tile), sin(a) * r)
+			add_child(tree)
+			tree.attach_to(tile)
+			trees.append(tree)
 
 ## Tiles holding loot containers (same on every peer: containers come from the seeded LootSpawner)
 static func container_tiles(grid: HexGrid, loot_spawner: LootSpawner) -> Dictionary:
@@ -47,7 +88,7 @@ static func container_tiles(grid: HexGrid, loot_spawner: LootSpawner) -> Diction
 	return result
 
 func _is_land(tile: HexTile) -> bool:
-	return not tile.is_destroyed and not (tile.biome_type in [HexTile.BiomeType.WATER,
+	return not tile.is_destroyed and not tile.is_ramp() and not (tile.biome_type in [HexTile.BiomeType.WATER,
 		HexTile.BiomeType.SHALLOW_WATER, HexTile.BiomeType.MOUNTAIN])
 
 func _wall_kind(biome: int) -> int:
@@ -60,7 +101,7 @@ func _wall_kind(biome: int) -> int:
 			return CoverWall.Kind.STONE
 	return CoverWall.Kind.STONE if rng.randf() < 0.6 else CoverWall.Kind.WOOD
 
-func _place_wall_piece(c: Vector2i, tile: HexTile, used_edges: Dictionary):
+func _place_wall_piece(c: Vector2i, tile: HexTile, used_edges: Dictionary, taken: Dictionary = {}):
 	var kind = _wall_kind(tile.biome_type)
 	var start = rng.randi() % 6
 	var length = 1 + rng.randi() % 3
@@ -71,7 +112,7 @@ func _place_wall_piece(c: Vector2i, tile: HexTile, used_edges: Dictionary):
 			continue
 		var other = hex_grid.get_tile(n)
 		# Only between land tiles at most one step apart: no walls over cliffs or water
-		if not other or not _is_land(other) or abs(other.height - tile.height) > MAX_STEP:
+		if not other or not _is_land(other) or abs(other.height - tile.height) > MAX_STEP or taken.has(n):
 			continue
 		used_edges[key] = true
 		_spawn_wall(tile, other, kind)
@@ -106,7 +147,7 @@ func _place_bush(c: Vector2i, tile: HexTile):
 
 ## Height of the walkable top of a tile
 static func tile_top(tile: HexTile) -> float:
-	return tile.height * HexTile.HEX_HEIGHT + HexTile.HEX_HEIGHT * 0.5
+	return tile.height * HexTile.HEX_HEIGHT + HexTile.HEX_HEIGHT * 0.5 + tile.surface_offset()
 
 ## Is the straight line between two points blocked by cover? (sight / line of fire)
 static func line_blocked(world: World3D, from: Vector3, to: Vector3) -> bool:

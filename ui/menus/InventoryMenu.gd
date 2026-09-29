@@ -4,11 +4,14 @@ class_name InventoryMenu
 
 var inventory_component: InventoryComponent = null
 var slot_buttons: Array[Button] = []
+var weapon_slot_buttons: Array[Button] = []
 var slots_container: GridContainer = null
+var weapon_slots_container: HBoxContainer = null
 var panel: GlassPanel = null
 var title_label: Label = null
 var info_label: Label = null
-var selected_slot: int = -1
+var selected_slot: int = -1       # >=0: item slot; -100..-104: weapon slot (-(slot+100))
+
 
 const SLOT_SIZE = Vector2(78, 78)
 const SLOTS_PER_ROW = 5
@@ -50,6 +53,19 @@ func _create_ui():
 	var close_btn = UITheme.create_button("✕", header, Vector2(44, 44))
 	close_btn.pressed.connect(func(): visible = false)
 
+	# Weapon hot-bar section
+	UITheme.create_caption("Weapons  (1–5)", vbox)
+	weapon_slots_container = HBoxContainer.new()
+	weapon_slots_container.add_theme_constant_override("separation", 10)
+	vbox.add_child(weapon_slots_container)
+	for i in range(5):
+		var ws = _create_weapon_slot_button(i)
+		weapon_slots_container.add_child(ws)
+		weapon_slot_buttons.append(ws)
+
+	UITheme.create_separator(vbox)
+	UITheme.create_caption("Items", vbox)
+
 	slots_container = GridContainer.new()
 	slots_container.columns = SLOTS_PER_ROW
 	slots_container.add_theme_constant_override("h_separation", 10)
@@ -78,7 +94,10 @@ func setup(p_inventory_component: InventoryComponent):
 
 	if inventory_component:
 		inventory_component.inventory.inventory_changed.connect(_update_inventory)
+		inventory_component.weapon_slot_changed.connect(func(_s): _update_weapon_slots())
+		inventory_component.weapon_equipped.connect(func(_w, _s): _update_weapon_slots())
 		_update_inventory()
+		_update_weapon_slots()
 
 func _update_inventory():
 	for button in slot_buttons:
@@ -149,7 +168,57 @@ func _on_slot_pressed(slot: int):
 		info_label.text = "Empty slot"
 	_update_inventory()
 
+func _create_weapon_slot_button(index: int) -> Button:
+	var btn = Button.new()
+	btn.custom_minimum_size = SLOT_SIZE
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override("font_size", 11)
+	btn.clip_text = true
+	btn.pressed.connect(_on_weapon_slot_pressed.bind(index))
+	return btn
+
+func _update_weapon_slots() -> void:
+	if not inventory_component:
+		return
+	for i in range(weapon_slot_buttons.size()):
+		var btn = weapon_slot_buttons[i] as Button
+		if not btn:
+			continue
+		var weapon = inventory_component.get_weapon_in_slot(i)
+		var is_active = i == inventory_component.current_weapon_slot and weapon != null
+		var is_sel = selected_slot == -(i + 100)
+		if weapon:
+			var color = UITheme.ACCENT_SECONDARY
+			if is_active:
+				btn.add_theme_stylebox_override("normal", UITheme.glow_box(Color(color, 0.28), 0.4, 16, 10))
+			elif is_sel:
+				btn.add_theme_stylebox_override("normal", UITheme.glow_box(Color(UITheme.ACCENT_PRIMARY, 0.28), 0.4, 16, 10))
+			else:
+				btn.add_theme_stylebox_override("normal", UITheme.glass_box(Color(color, 0.12), Color(color, 0.5), 16, 6, 6))
+			var short = tr(weapon.item_name, "short")
+			btn.text = "%d  %s" % [i + 1, short]
+		else:
+			btn.add_theme_stylebox_override("normal", UITheme.glass_box(Color(1, 1, 1, 0.03), Color(1, 1, 1, 0.07), 16, 6, 6))
+			btn.text = str(i + 1)
+
+func _on_weapon_slot_pressed(index: int) -> void:
+	selected_slot = -(index + 100)
+	var weapon = inventory_component.get_weapon_in_slot(index) if inventory_component else null
+	if weapon:
+		info_label.text = tr(weapon.item_name)
+	else:
+		info_label.text = tr("Empty weapon slot")
+	_update_weapon_slots()
+	_update_inventory()
+
 func _on_use_pressed():
+	if selected_slot < -99:
+		# Weapon slot selected — equip it
+		var w_slot = -(selected_slot + 100)
+		if inventory_component:
+			inventory_component.switch_weapon_slot(w_slot)
+			_update_weapon_slots()
+		return
 	if selected_slot >= 0 and inventory_component:
 		# The server does it for real (else the next health sync undoes a heal); here for feedback
 		_send_to_server({"use_item": selected_slot})
@@ -157,13 +226,22 @@ func _on_use_pressed():
 		_update_inventory()
 
 func _on_drop_pressed():
+	if selected_slot < -99:
+		# Drop weapon from slot
+		var w_slot = -(selected_slot + 100)
+		if inventory_component:
+			_send_to_server({"drop_weapon": w_slot})
+			inventory_component.remove_weapon_from_slot(w_slot)
+			_update_weapon_slots()
+			info_label.text = tr("Weapon dropped")
+		return
 	if selected_slot >= 0 and inventory_component:
 		var inventory = inventory_component.get_inventory()
 		if inventory and selected_slot < inventory.slots.size():
 			_send_to_server({"drop_item": selected_slot})
 			inventory_component.remove_item(selected_slot)
 			_update_inventory()
-			info_label.text = "Item dropped"
+			info_label.text = tr("Item dropped")
 
 func _send_to_server(action: Dictionary):
 	var owner_entity = inventory_component.entity if inventory_component else null

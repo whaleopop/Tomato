@@ -15,6 +15,9 @@ uniform vec3 shallow_color : source_color = vec3(0.22, 0.62, 0.78);
 uniform vec3 deep_color : source_color = vec3(0.07, 0.25, 0.48);
 uniform vec3 sky_color : source_color = vec3(0.62, 0.78, 0.95);
 uniform vec3 foam_color : source_color = vec3(0.92, 0.97, 1.0);
+uniform vec3 shore_color : source_color = vec3(0.3, 0.85, 0.82);  // turquoise along the banks
+uniform float caustic_strength : hint_range(0.0, 1.0) = 0.22;
+uniform float sparkle_strength : hint_range(0.0, 2.0) = 0.5;
 
 uniform float wave_speed : hint_range(0.1, 5.0) = 1.0;
 uniform float wave_height : hint_range(0.0, 0.2) = 0.025;   // vertex bob: small, the shore must meet
@@ -66,6 +69,28 @@ float noise(vec2 p) {
 	vec2 f = fract(p);
 	f = f * f * (3.0 - 2.0 * f);
 	return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+}
+
+// Distance to the nearest cell point of a jittered grid (voronoi F1)
+float cells(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	float d = 1.0;
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			vec2 o = vec2(float(x), float(y));
+			vec2 h = vec2(hash(i + o), hash(i + o + vec2(17.0, 31.0)));
+			d = min(d, length(o + h - f));
+		}
+	}
+	return d;
+}
+
+// Bright wavering lines of light on the bottom, seen through clear shallow water
+float caustics(vec2 p, float t) {
+	float a = cells(p * 1.3 + vec2(t * 0.12, t * 0.07));
+	float b = cells(p * 1.7 - vec2(t * 0.09, -t * 0.11) + 5.0);
+	return pow(1.0 - min(a, b), 9.0);
 }
 
 float corner_offset(vec3 v) {
@@ -149,12 +174,14 @@ void fragment() {
 	// Depth color: shallow tiles lighter, blending into their neighbours at the border
 	float shallow_amount = shallow;
 	float shore = 0.0;
+	float shore_d = 1.0;  // distance to the nearest bank (unit hexagon)
 	for (int k = 0; k < 6; k++) {
 		vec4 info = edge_info(k);
 		float angle = 1.04719755 * float(k);
 		float d = 0.8660254 - dot(local_pos.xz / hex_radius, vec2(cos(angle), sin(angle)));
 		if (info.a > 0.5) {
 			shore = max(shore, 1.0 - smoothstep(0.0, 0.32, d));
+			shore_d = min(shore_d, d);
 		} else {
 			float w = 1.0 - smoothstep(0.0, 0.5, d);
 			shallow_amount = mix(shallow_amount, (shallow + info.r) * 0.5, w * w);
@@ -162,17 +189,31 @@ void fragment() {
 	}
 	float swirl = noise(p * 0.35 + vec2(t * 0.05, 0.0));
 	vec3 water = mix(deep_color, shallow_color, clamp(shallow_amount * 0.75 + shore * 0.35 + (swirl - 0.5) * 0.15, 0.0, 1.0));
+	// Clear turquoise over the sandy slope near the bank, light dancing on the bottom
+	float bank = 1.0 - smoothstep(0.0, 0.55, shore_d);
+	water = mix(water, shore_color, bank * 0.55);
+	float clear = clamp(bank + shallow_amount * 0.6, 0.0, 1.0);
+	water += vec3(0.75, 0.95, 1.0) * caustics(p, t) * caustic_strength * clear;
 
 	// Shore foam: broken, slowly pulsing line along the land
 	float foam_noise_v = noise(p * 3.0 + vec2(t * 0.4, -t * 0.25));
 	float pulse = 0.5 + 0.5 * sin(t * 1.5 + (p.x + p.y) * 0.7);
 	float foam = shore * smoothstep(0.35, 0.75, foam_noise_v + shore * 0.35 * pulse) * foam_amount;
+	// Lines of foam that leave the bank and fade as they go out, like small waves lapping
+	for (int w = 0; w < 2; w++) {
+		float phase = fract(t * 0.22 + float(w) * 0.5 + foam_noise_v * 0.15);
+		float line = 1.0 - smoothstep(0.0, 0.025, abs(shore_d - phase * 0.4));
+		foam = max(foam, line * (1.0 - phase) * step(shore_d, 0.5) * 0.8 * foam_amount);
+	}
 	foam = max(foam, ripple_foam(p) * 0.85 * ripple_strength);
 
 	// Reflection tint: grazing views mirror the sky
 	float fresnel = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
 	vec3 color = mix(water, sky_color, clamp(fresnel * 0.65, 0.0, 0.6));
 	color = mix(color, foam_color, foam);
+	// Sun glints: tiny bright specks that come and go with the waves
+	float glint = smoothstep(0.82, 0.95, noise(p * 7.0 + vec2(t * 0.6, -t * 0.4)) * noise(p * 11.0 - vec2(t * 0.8, t * 0.3)));
+	color += vec3(1.0, 0.98, 0.9) * glint * sparkle_strength * (1.0 - foam);
 	// Old "clarity" look: a touch of the dark abyss below
 	color = mix(vec3(0.03, 0.06, 0.12), color, clamp(water_clarity + 0.25, 0.0, 1.0));
 
@@ -182,6 +223,10 @@ void fragment() {
 		color = mix(color, color * 0.6 + hot * 0.25, danger * 0.6);
 		EMISSION = hot * danger * (0.15 + 0.35 * pulse);
 	}
+
+	// The same drifting cloud shadows as on the ground (hex_tile.gdshader)
+	float cloud = smoothstep(0.45, 0.75, noise(p * 0.035 + vec2(TIME * 0.018, TIME * 0.009)));
+	color *= 1.0 - cloud * 0.18;
 
 	ALBEDO = color;
 	ROUGHNESS = mix(0.04, 0.5, foam);

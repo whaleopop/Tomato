@@ -111,7 +111,7 @@ func _rebuild_texture():
 		if tile.is_mountain():
 			color = MOUNTAIN_COLOR
 		elif not fog or fog.is_tile_explored(coords):
-			color = HexMapView.BIOME_COLORS.get(tile.biome_type, Color.GRAY)
+			color = HexMapView.terrace_shade(HexMapView.BIOME_COLORS.get(tile.biome_type, Color.GRAY), tile.level)
 			color.a = 0.85
 		img.fill_rect(Rect2i(int(p.x) - dot / 2, int(p.y) - dot / 2, dot, dot), color)
 	_tile_texture = ImageTexture.create_from_image(img)
@@ -146,6 +146,19 @@ func _draw():
 			var sc = inset.position + _world_to_map(hex_grid.hex_to_world(_shift_center)) * scale_to_rect
 			var sr = (_shift_radius + 0.55) * VisibilitySystem.HEX_SPACING * _world_scale * scale_to_rect.x
 			draw_arc(sc, sr, 0, TAU, 48, Color(UITheme.ACCENT_WARNING, 0.55 + 0.4 * pulse), 2.0, true)
+
+		# Landmarks (Landmark): a steady diamond in their color
+		for landmark in get_tree().get_nodes_in_group("map_landmarks"):
+			if not landmark is Node3D or not is_instance_valid(landmark):
+				continue
+			var lc = inset.position + _world_to_map(landmark.global_position) * scale_to_rect
+			if not inset.has_point(lc):
+				continue
+			var lcol: Color = landmark.get_meta("marker_color", Color.WHITE)
+			var dia = PackedVector2Array([lc + Vector2(0, -5), lc + Vector2(5, 0), lc + Vector2(0, 5), lc + Vector2(-5, 0)])
+			draw_colored_polygon(dia, Color(0.05, 0.06, 0.1, 0.85))
+			var inner = PackedVector2Array([lc + Vector2(0, -3.5), lc + Vector2(3.5, 0), lc + Vector2(0, 3.5), lc + Vector2(-3.5, 0)])
+			draw_colored_polygon(inner, lcol)
 
 		# Map events everybody knows about: meteor circles, the harvest bonus, the zone drop
 		for marker in get_tree().get_nodes_in_group("map_markers"):

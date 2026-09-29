@@ -25,6 +25,7 @@ const ALWAYS_SEEN: float = 3.5           # around you, visible even through a wa
 const BUSH_REVEAL_DISTANCE: float = 2.4  # world units: this close you spot someone in a bush
 const SHOT_REVEAL_DISTANCE: float = 1.2  # a shot from inside a bush gives the shooter away
 const FADE_SPEED: float = 4.0            # fog values per second on screen
+const HIGH_GROUND_SIGHT: float = 0.12    # sight bonus per terrace level you stand on
 
 var visibility_sources: Array[VisibilitySource] = []
 var bullet_trails: Array[BulletTrail] = []
@@ -102,7 +103,7 @@ func _add_sight(source: VisibilitySource, sight: Dictionary):
 	# Night / fog (MapEvents) halves everybody's sight, a blinding ability even more; your
 	# neighbours stay half visible
 	var status = source.entity.get_component("StatusComponent") if source.entity.has_method("get_component") else null
-	var factor = MapEvents.sight_factor * (status.sight_factor() if status else 1.0)
+	var factor = MapEvents.sight_factor * (status.sight_factor() if status else 1.0) * high_ground_factor(pos.y) * BiomeRules.sight_factor(hex_grid, pos)
 	var radius = max(to_hexes(source.get_visibility_range() * factor), always + fade * 0.5)
 	var space = source.entity.get_world_3d().direct_space_state
 	var query = PhysicsRayQueryParameters3D.new()
@@ -196,7 +197,7 @@ func _can_see_player(player: Node3D, me: Node3D) -> bool:
 				my_range = combat.equipped_ranged_weapon.visibility_range
 			if dist > my_range * MapEvents.sight_factor * float(player.get_meta("small_target")):
 				return false
-	if not Bush.any_contains(get_tree(), player.global_position):
+	if not Bush.any_contains(get_tree(), player.global_position) and not BiomeRules.hides(hex_grid, player.global_position):
 		return true
 	# Hidden in a bush: only when right next to them, sharing the bush, or they just fired
 	if me and player.global_position.distance_to(me.global_position) < BUSH_REVEAL_DISTANCE * MapEvents.bush_factor:
@@ -209,7 +210,7 @@ func _can_see_player(player: Node3D, me: Node3D) -> bool:
 ## The local player is hidden in a bush (HUD hint)
 func is_local_hidden() -> bool:
 	return local_player != null and is_instance_valid(local_player) and local_player.is_inside_tree() \
-		and Bush.any_contains(get_tree(), local_player.global_position)
+		and (Bush.any_contains(get_tree(), local_player.global_position) or BiomeRules.hides(hex_grid, local_player.global_position))
 
 # ---------------------------------------------------------------- fog texture
 
@@ -313,6 +314,11 @@ func is_explored(world_pos: Vector3) -> bool:
 	return reveal_all or hex_grid == null or explored.has(hex_grid.world_to_hex(world_pos))
 
 ## World distance -> hex distance on this map's tiles
+## Standing on a higher terrace you see further (ServerVisibility uses the same)
+static func high_ground_factor(y: float) -> float:
+	var level = clamp(floor((y + 0.2) / HexTile.TERRACE_STEP), 0.0, float(HexTile.TERRACE_LEVELS - 1))
+	return 1.0 + HIGH_GROUND_SIGHT * level
+
 static func to_hexes(distance: float) -> float:
 	return distance / HEX_SPACING
 

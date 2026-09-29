@@ -39,7 +39,8 @@ func _send_player_name():
 	if game_manager and game_manager.selected_character and network_lobby:
 		var char_name = game_manager.selected_character.character_name
 		# Nickname: CharacterName_RandomNumber
-		network_lobby.client_set_name("%s_%d" % [tr(char_name), randi() % 1000])  # shown to everyone
+		var nick = PlayerProfile.nickname if PlayerProfile.has_account() else "%s_%d" % [tr(char_name), randi() % 1000]
+		network_lobby.client_set_name(nick)  # shown to everyone
 		network_lobby.client_set_character(char_name)
 
 func _setup_network():
@@ -78,8 +79,11 @@ func _setup_host_map(hex_grid: HexGrid):
 			grid_data[coords] = {
 				"biome": tile.biome_type,
 				"height": tile.height,
+				"level": tile.level,  # terrace (HexMapView shades it)
 				"spawnable": tile.can_spawn
 			}
+			if tile.has_meta("landmark"):
+				grid_data[coords]["landmark"] = tile.get_meta("landmark")  # drawn with its name
 
 	var reserved: Array = []
 	var network_manager = get_node_or_null("/root/NetworkManager")
@@ -116,11 +120,15 @@ func _on_lobby_state_updated(state: Dictionary):
 	# Players list with names from server
 	var players_ready_state = state.get("players_ready", {})
 	var players_names_state = state.get("players_names", {})
+	var characters_state = state.get("players_characters", {})
+	var cosmetics_state = state.get("players_cosmetics", {})
 	var players_data: Dictionary = {}
 	for player_id in players_ready_state.keys():
 		players_data[player_id] = {
 			"name": players_names_state.get(player_id, "Player_%d" % player_id),
-			"ready": players_ready_state[player_id]
+			"ready": players_ready_state[player_id],
+			"character": characters_state.get(player_id, ""),
+			"cosmetics": cosmetics_state.get(player_id, {})
 		}
 	spawn_menu.update_players_list(players_data)
 

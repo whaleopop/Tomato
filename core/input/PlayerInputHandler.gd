@@ -170,9 +170,7 @@ func _capture_and_send_input():
 			move_direction = camera.transform_direction(move_direction)
 		input_data["move_direction"] = move_direction
 
-	# Jump (Space)
-	if _pressed("jump"):
-		input_data["jump"] = true
+	# Jump disabled for standard mode
 
 	# Capture sprint input (Shift)
 	input_data["sprint"] = Input.is_action_pressed("sprint")

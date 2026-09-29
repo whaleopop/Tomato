@@ -96,12 +96,13 @@ func set_player_name(player_name: String):
 	_broadcast_lobby_state()
 
 @rpc("any_peer", "call_remote", "reliable")
-func set_player_character(character_name: String, client_token: String):
+func set_player_character(character_name: String, client_token: String, cosmetics: Dictionary):
 	if not is_server or not lobby_manager:
 		return
 
 	var player_id = multiplayer.get_remote_sender_id()
 	lobby_manager.set_player_character(player_id, character_name)
+	lobby_manager.set_player_cosmetics(player_id, cosmetics)
 	lobby_manager.set_player_token(player_id, client_token)
 	print("[NetworkLobby] Player %d selected character: %s" % [player_id, character_name])
 
@@ -109,6 +110,8 @@ func set_player_character(character_name: String, client_token: String):
 	var game_server = get_node_or_null("/root/NetworkManager/GameServer")
 	if game_server and game_server.game_started:
 		game_server.spawn_late_joiner(player_id)
+	else:
+		_broadcast_lobby_state()  # the lobby list shows the hero
 
 # === Server -> Client RPCs ===
 
@@ -246,8 +249,11 @@ func _serialize_hex_grid(hex_grid: HexGrid) -> Dictionary:
 			result[coords] = {
 				"biome": tile.biome_type,
 				"height": tile.height,
+				"level": tile.level,  # terrace (HexMapView shades it)
 				"spawnable": tile.can_spawn
 			}
+			if tile.has_meta("landmark"):
+				result[coords]["landmark"] = tile.get_meta("landmark")  # drawn with its name
 
 	return result
 
@@ -295,13 +301,17 @@ func client_set_name(player_name: String):
 	else:
 		set_player_name.rpc_id(1, player_name)
 
+## Our hero and what it wears (PlayerProfile) go to the server; others see the skin, hat and guns
 func client_set_character(character_name: String):
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	var token: String = network_manager.client_token if network_manager else ""
+	var wear = PlayerProfile.equipped_for(character_name)
 	if is_server:
 		# Local server player
 		if lobby_manager:
 			lobby_manager.set_player_character(1, character_name)
 			lobby_manager.set_player_token(1, token)
+			lobby_manager.set_player_cosmetics(1, wear)
+			_broadcast_lobby_state()
 	else:
-		set_player_character.rpc_id(1, character_name, token)
+		set_player_character.rpc_id(1, character_name, token, wear)

@@ -296,6 +296,8 @@ func apply_world_state(state: Dictionary):
 			if char_name != "":
 				var char_data = CharacterRegistry.get_by_name(char_name)
 				if char_data:
+					if not player.is_local_player:
+						player.cosmetics = player_data.get("cosmetics", {})
 					player.setup_character(char_data)
 					players_character_applied[player_id] = true
 

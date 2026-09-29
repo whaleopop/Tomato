@@ -16,6 +16,8 @@ var death_screen: Control = null
 
 var player: Player = null
 
+var _hero_card_small: ParallaxCard = null  # permanent small card bottom-left
+
 func _ready():
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -68,6 +70,7 @@ func _ready():
 
 	_create_weapon_slots_ui()
 	_create_crosshair()
+	_create_hero_card_small()
 
 	alert_holder = CenterContainer.new()
 	alert_holder.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -128,6 +131,8 @@ func setup(p_player: Player, hex_grid: HexGrid = null):
 	minimap.track(player)
 	if hex_grid:
 		minimap.setup_grid(hex_grid)
+	_setup_hero_card(player)
+	_animate_hero_card_intro(player)
 
 func _process(delta: float):
 	if player and is_instance_valid(player):
@@ -369,6 +374,13 @@ func _show_status_pill():
 		elif status.has("slow"):
 			text = tr("Slowed")
 			color = UITheme.ACCENT_INFO
+	# Otherwise: what the ground under us does (BiomeRules)
+	var movement = player.get_component("MovementComponent") if text == "" and player and is_instance_valid(player) else null
+	if movement and movement.is_grounded:
+		var info = BiomeRules.describe(movement.terrain_biome)
+		if not info.is_empty():
+			text = tr(info[0]) + ": " + info[1]
+			color = info[2]
 	if text == "":
 		buff_pill.visible = false
 		return
@@ -441,6 +453,7 @@ func _on_match_ended(winner_id: int, winner_name: String):
 	var sub_text = "Last veggie standing - the island is yours!" if i_won else (tr("%s is the last one standing") % winner_text if winner_id != 0 else "Nobody survived the harvest")
 	var sub = UITheme.create_label(sub_text, box)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_reward_row(box, i_won)
 	var leave = UITheme.create_primary_button("BACK TO MENU", box, Vector2(300, 56))
 	leave.pressed.connect(_on_leave_pressed)
 
@@ -516,12 +529,62 @@ func _on_player_died():
 	title.add_theme_color_override("font_color", UITheme.ACCENT_DANGER.lightened(0.2))
 	var sub = UITheme.create_label("You got mashed. Better luck next harvest!", box)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_reward_row(box, false)
 
 	var leave = UITheme.create_primary_button("BACK TO MENU", box, Vector2(300, 56))
 	leave.pressed.connect(_on_leave_pressed)
 
 	death_screen.modulate.a = 0.0
 	create_tween().tween_property(death_screen, "modulate:a", 1.0, 0.5)
+
+# ---------------------------------------------------------------- coins
+
+var _rewarded: bool = false
+
+## Coins for the match (once: at elimination or at the end), shown on the card
+func _reward_row(box: Control, won: bool) -> void:
+	if _rewarded or not _is_real_match():
+		return
+	_rewarded = true
+	var stats = _my_stats()
+	if won:
+		stats["place"] = 1
+	var lines = PlayerProfile.match_reward(stats)
+	var total = 0
+	var table = GridContainer.new()
+	table.columns = 3
+	table.add_theme_constant_override("h_separation", 22)
+	table.add_theme_constant_override("v_separation", 2)
+	table.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(table)
+	for line in lines:
+		total += int(line[2])
+		UITheme.create_label(line[0], table, UITheme.FONT_SMALL).add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
+		UITheme.create_label(line[1], table, UITheme.FONT_SMALL)
+		var coins_label = UITheme.create_label("+%d" % int(line[2]), table, UITheme.FONT_SMALL)
+		coins_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	PlayerProfile.add_coins(total)
+	var pill = UITheme.create_pill(tr("+%d coins") % total, Color(1.0, 0.8, 0.3), box)
+	pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+
+func _is_real_match() -> bool:
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	return network_manager != null and (network_manager.is_server() or network_manager.game_client != null)
+
+## How our match went: the server counts it (ServerPlayer), clients read it from the state
+func _my_stats() -> Dictionary:
+	if not player or not is_instance_valid(player):
+		return {}
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager and network_manager.game_server and network_manager.game_server.players.has(player.entity_id):
+		var sp = network_manager.game_server.players[player.entity_id]
+		var t = sp.alive_time if sp.place > 0 else network_manager.game_server.match_time()
+		return {"kills": sp.kills, "damage": int(sp.damage_dealt), "place": sp.place, "time": int(t)}
+	var scene = get_tree().current_scene
+	var client_world = scene.get_node_or_null("ClientWorld") if scene else null
+	if client_world:
+		return client_world.last_player_states.get(player.entity_id, {}).get("stats", {}).duplicate()
+	return {}
 
 func _on_leave_pressed():
 	# MainMenu stops the server/client when it opens
@@ -682,3 +745,91 @@ func _get_weapon_color(weapon_type: RangedWeapon.WeaponType) -> Color:
 			return Color("ffd24a")
 		_:
 			return Color(0.6, 0.6, 0.6)
+
+# ---------------------------------------------------------------- hero card
+
+func _create_hero_card_small() -> void:
+	_hero_card_small = ParallaxCard.new()
+	_hero_card_small.card_size = Vector2(110, 153)
+	_hero_card_small.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_hero_card_small.offset_left = 20
+	_hero_card_small.offset_bottom = -108  # just above the weapon slots row
+	_hero_card_small.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hero_card_small.visible = false
+	add_child(_hero_card_small)
+
+func _setup_hero_card(p: Player) -> void:
+	if not _hero_card_small or not p:
+		return
+	var data: CharacterData = p.get_meta("character_data", null) if p.has_meta("character_data") else null
+	if not data and p.has_method("get_component"):
+		pass  # data lives on Player directly after setup_character
+	# Player stores it as player.character_data after setup_character
+	if "character_data" in p:
+		data = p.character_data
+	if not data:
+		return
+	var wear = PlayerProfile.equipped_for(data.character_name)
+	_hero_card_small.title = tr(data.character_name)
+	_hero_card_small.subtitle = Cosmetics.TIER_NAMES[Cosmetics.tier_of(Cosmetics.hero_id(data.character_name))]
+	_hero_card_small.accent = data.color
+	_hero_card_small.live = ["hero", [data.character_name, wear.skin, wear.hat]]
+	_hero_card_small.always_live = true
+	_hero_card_small.refresh()
+	_hero_card_small.visible = true
+
+func _animate_hero_card_intro(p: Player) -> void:
+	if not p:
+		return
+	var data: CharacterData = p.character_data if "character_data" in p else null
+	if not data:
+		return
+	var wear = PlayerProfile.equipped_for(data.character_name)
+
+	# Big card in the center for 2.5 seconds, then shrinks to the corner
+	var big = ParallaxCard.new()
+	big.card_size = Vector2(240, 334)
+	big.title = tr(data.character_name)
+	big.subtitle = Cosmetics.TIER_NAMES[Cosmetics.tier_of(Cosmetics.hero_id(data.character_name))]
+	big.accent = data.color
+	big.live = ["hero", [data.character_name, wear.skin, wear.hat]]
+	big.always_live = true
+	big.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	big.set_anchors_preset(Control.PRESET_CENTER)
+	big.offset_left = -120
+	big.offset_top = -167
+	big.offset_right = 120
+	big.offset_bottom = 167
+	add_child(big)
+
+	# Label below the card
+	var label = UITheme.create_title(tr("YOUR HERO"), self)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.set_anchors_preset(Control.PRESET_CENTER)
+	label.offset_top = 180
+	label.offset_bottom = 220
+	label.offset_left = -200
+	label.offset_right = 200
+	label.add_theme_color_override("font_color", data.color.lightened(0.3))
+	label.modulate.a = 0.0
+
+	big.modulate.a = 0.0
+	big.scale = Vector2(0.7, 0.7)
+	big.pivot_offset = big.card_size / 2.0
+
+	var t = create_tween().set_parallel()
+	t.tween_property(big, "modulate:a", 1.0, 0.4)
+	t.tween_property(big, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	t.tween_property(label, "modulate:a", 1.0, 0.4)
+
+	await get_tree().create_timer(2.5).timeout
+	if not is_instance_valid(big):
+		return
+	var t2 = create_tween().set_parallel()
+	t2.tween_property(big, "modulate:a", 0.0, 0.4)
+	t2.tween_property(label, "modulate:a", 0.0, 0.3)
+	await t2.finished
+	if is_instance_valid(big):
+		big.queue_free()
+	if is_instance_valid(label):
+		label.queue_free()

@@ -6,6 +6,11 @@ var player_id: int = -1
 var player_entity: Player = null
 var last_input_time: float = 0.0
 var character_name: String = ""  # Character class name for syncing
+var cosmetics: Dictionary = {}   # what the hero wears (lobby), sent to everybody with the character
+var kills: int = 0               # eliminations this match (coins at the end: PlayerHUD)
+var damage_dealt: float = 0.0    # to other players
+var place: int = 0               # 1 = winner, set when out (or at the end)
+var alive_time: float = 0.0      # seconds from the match start to elimination / the end
 
 # Lag compensation: buffer of recent inputs with timestamps
 var input_buffer: Array = []
@@ -28,6 +33,33 @@ func connect_to_entity_signals():
 	var abilities = player_entity.get_component("AbilityComponent")
 	if abilities and not abilities.ability_cast.is_connected(_on_ability_cast):
 		abilities.ability_cast.connect(_on_ability_cast)
+	var health = player_entity.get_component("HealthComponent")
+	if health and not health.died.is_connected(_on_died):
+		health.died.connect(_on_died)
+	if health and not health.damage_taken.is_connected(_on_damaged):
+		health.damage_taken.connect(_on_damaged)
+
+## Somebody hurt us: it counts as their damage dealt
+func _on_damaged(amount: float, source) -> void:
+	if amount <= 0.0 or source == null or not is_instance_valid(source) or source == player_entity or not "entity_id" in source:
+		return
+	var game_server = get_parent() as GameServer
+	if game_server and game_server.players.has(source.entity_id):
+		game_server.players[source.entity_id].damage_dealt += amount
+
+## We went down: our place is everyone still standing + 1; whoever hit us last gets the kill
+func _on_died():
+	var server = get_parent() as GameServer
+	if server:
+		place = server.alive_count() + 1
+		alive_time = server.match_time()
+	var health = player_entity.get_component("HealthComponent") if is_instance_valid(player_entity) else null
+	var killer = health.last_attacker if health else null
+	if killer == null or not is_instance_valid(killer) or not "entity_id" in killer:
+		return
+	var game_server = get_parent() as GameServer
+	if game_server and game_server.players.has(killer.entity_id):
+		game_server.players[killer.entity_id].kills += 1
 
 ## Shooting / casting gives you away for a moment (ServerVisibility, even from a bush)
 func _mark_revealed():
@@ -121,6 +153,8 @@ func process_input(input_data: Dictionary):
 			inventory_comp.use_item(int(input_data.use_item))
 		if input_data.has("drop_item"):
 			inventory_comp.remove_item(int(input_data.drop_item))
+		if input_data.has("drop_weapon"):
+			inventory_comp.remove_weapon_from_slot(int(input_data.drop_weapon))
 
 	if input_data.get("reload", false):
 		var combat_comp = player_entity.get_component("CombatComponent")
@@ -171,6 +205,8 @@ func get_sync_data() -> Dictionary:
 		"position": player_entity.global_position,
 		"rotation": player_entity.global_rotation,
 		"character_name": character_name,
+		"cosmetics": cosmetics,
+		"stats": {"kills": kills, "damage": int(damage_dealt), "place": place, "time": int(alive_time)},
 	}
 
 	# Add component data

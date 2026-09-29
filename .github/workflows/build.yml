@@ -1,6 +1,7 @@
 # Windows build of the game on every push to master / main (and by hand from the Actions tab).
 # Exports the "Windows Desktop" preset with Godot's headless editor and uploads the result as an
-# artifact (Actions -> the run -> Artifacts). A tag "v*" also attaches the zip to a GitHub release.
+# artifact (Actions -> the run -> Artifacts). A tag "v*" also publishes a GitHub release with the zip,
+# described by the tagged commit's message.
 name: Build
 
 on:
@@ -49,8 +50,14 @@ jobs:
           name: Royaltim-windows
           path: build/Royaltim-windows.zip
 
+      - name: Release notes (the tagged commit's message)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: git log -1 --format=%B > build/release_notes.md
+
       - name: Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: Royaltim ${{ github.ref_name }}
+          body_path: build/release_notes.md
           files: build/Royaltim-windows.zip

@@ -278,8 +278,16 @@ func _set_atmosphere(style: String, seconds: float) -> void:
 		targets.append([env, "fog_light_energy", 1.0 if fog else b.fog_energy])
 		targets.append([env, "fog_sun_scatter", 0.0 if fog else b.fog_scatter])
 	if sun and is_instance_valid(sun):
-		targets.append([sun, "light_energy", b.sun_energy * (0.3 if night else 1.0)])
-		targets.append([sun, "light_color", Color(0.6, 0.7, 1.0) if night else b.sun_color])
+		# Back to the day's light as it is now: GameEnvironment moves it towards the sunset
+		var day_color: Color = b.sun_color
+		var day_energy: float = b.sun_energy
+		var environment = _find_in_scene("GameEnvironment")
+		if environment and environment.has_method("day_light"):
+			var light = environment.day_light()
+			day_color = light[0]
+			day_energy = light[1]
+		targets.append([sun, "light_energy", day_energy * (0.3 if night else 1.0)])
+		targets.append([sun, "light_color", Color(0.6, 0.7, 1.0) if night else day_color])
 	var back_to_day = env and style == ""
 	if targets.is_empty():
 		return

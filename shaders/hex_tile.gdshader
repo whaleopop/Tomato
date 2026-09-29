@@ -16,6 +16,9 @@ uniform float tile_height : hint_range(0.0, 1.0) = 0.0;
 uniform float edge_width : hint_range(0.0, 0.2) = 0.05;
 uniform vec3 edge_color : source_color = vec3(0.15, 0.35, 0.12);
 uniform float blend_width : hint_range(0.05, 0.8) = 0.42;  // how far two biomes fade into each other
+uniform float roughness = 0.8;
+uniform float grassy = 0.0;     // grass biomes: sunlit tips, darker hollows, fine blade grain
+uniform float cloud_shadows = 0.18;  // drifting cloud shadows (the same field on water and decor)  // per biome (ShaderHelper): the frost is glossy
 uniform float rim_width : hint_range(0.01, 0.3) = 0.1;     // dark rim on steps and cliffs
 uniform float hex_radius = 1.0;  // HexTile.HEX_RADIUS: edge math runs on the unit hexagon
 
@@ -42,6 +45,8 @@ instance uniform float danger = 0.0;  // zone: 0.55 marked for the next step, 1.
 
 varying vec3 world_position;
 varying vec3 local_position;
+varying vec3 local_normal;
+uniform vec3 cliff_color : source_color = vec3(0.47, 0.38, 0.3);  // terrace walls (HexTile columns)
 
 // Integer hash of a lattice cell. The old fract(p * big) hash gave the same cell different
 // values depending on how the compiler folded `i + vec2(1, 0)`, which drew the noise grid as lines.
@@ -83,6 +88,7 @@ vec4 edge_info(int k) {
 void vertex() {
 	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	local_position = VERTEX;
+	local_normal = NORMAL;
 	if (VERTEX.y > 0.0) {
 		VERTEX.y += corner_offset(VERTEX);  // the side faces share these vertices, so they follow
 	}
@@ -118,12 +124,33 @@ void fragment() {
 	float patches = value_noise(world_position.xz * 0.18) * 0.65 + value_noise(world_position.xz * 0.55 + 7.3) * 0.35;
 	color *= 1.0 + (patches - 0.5) * 2.0 * patch_strength;
 
+	// 2b) Grass: big soft sunlit / shaded swathes like wind over a meadow, and a fine grain of blades
+	if (grassy > 0.0) {
+		float sweep = value_noise(world_position.xz * 0.06 + vec2(TIME * 0.02, 0.0));
+		vec3 sunlit = color * vec3(1.12, 1.08, 0.82) + vec3(0.04, 0.03, 0.0);
+		vec3 hollow = color * vec3(0.78, 0.88, 0.85);
+		color = mix(hollow, sunlit, smoothstep(0.25, 0.75, sweep)) ;
+		float grain = value_noise(world_position.xz * vec2(9.0, 3.5)) * 0.6 + value_noise(world_position.xz * vec2(3.2, 11.0)) * 0.4;
+		color *= mix(1.0, 0.9 + grain * 0.2, grassy);
+	}
+
 	// 3) rims only where the ground really changes (steps, water, void)
 	color = mix(color, edge_color, rim * 0.55);
 
 	// Top face highlighting (sides of raised tiles are darker)
 	float top_factor = smoothstep(0.0, 0.1, local_position.y);
 	color = mix(color * 0.8, color, top_factor);
+
+	// Terrace cliffs: steep faces below the grassy lip are layered earth and stone
+	float steep = 1.0 - smoothstep(0.35, 0.7, local_normal.y);
+	float below_lip = 1.0 - smoothstep(0.02, 0.12, local_position.y);
+	if (steep * below_lip > 0.0) {
+		float strata = 0.86 + 0.14 * smoothstep(0.35, 0.65, fract(world_position.y * 2.2 + value_noise(world_position.xz * 0.7) * 0.6));
+		float grain = 0.9 + 0.2 * value_noise(vec2(world_position.x + world_position.z, world_position.y) * 3.1);
+		vec3 cliff = mix(cliff_color, tile_color * 0.6, 0.22) * strata * grain;
+		cliff *= mix(0.6, 1.0, smoothstep(-1.0, 0.0, local_position.y));  // darker towards the foot
+		color = mix(color, cliff, steep * below_lip);
+	}
 
 	// Damage effect - redden and darken
 	if (damage_amount > 0.0) {
@@ -151,7 +178,11 @@ void fragment() {
 		EMISSION = hot * (crack * (0.7 + 1.3 * pulse) + 0.12 * pulse * top_factor) * danger;
 	}
 
+	// Clouds drifting over the island
+	float cloud = smoothstep(0.45, 0.75, value_noise(world_position.xz * 0.035 + vec2(TIME * 0.018, TIME * 0.009)));
+	color *= 1.0 - cloud * cloud_shadows;
+
 	ALBEDO = color;
-	ROUGHNESS = 0.8;
+	ROUGHNESS = roughness;
 	METALLIC = 0.0;
 }

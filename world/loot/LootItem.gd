@@ -298,10 +298,12 @@ func _pickup(player: Player):
 func _apply_effect(player: Player):
 	match item_type:
 		ItemType.HEALTH:
-			var health = player.get_component("HealthComponent")
-			if health:
-				health.heal(item_value * float(player.get_meta("heal_bonus", 1.0)))  # Big Heart passive
-				print("[LootItem] Healed player for %f" % item_value)
+			var inventory = player.get_component("InventoryComponent")
+			if inventory:
+				var pack = HealthPack.new()
+				pack.heal_amount = item_value
+				inventory.add_item(pack)
+				print("[LootItem] Added Health Pack (heal=%f) to inventory" % item_value)
 		ItemType.AMMO:
 			var inventory = player.get_component("InventoryComponent")
 			if inventory:

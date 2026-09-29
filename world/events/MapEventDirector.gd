@@ -214,6 +214,8 @@ func _plan_flood() -> Dictionary:
 				water_y = max(water_y, n.position.y)
 		if water_y == -INF:
 			continue
+		if tile.level > 0:
+			continue  # the terraces stay dry
 		if tile.biome_type == HexTile.BiomeType.BEACH or tile.position.y - water_y < 0.2:
 			drown.append([c, water_y])
 	if deepen.size() + drown.size() < 3:

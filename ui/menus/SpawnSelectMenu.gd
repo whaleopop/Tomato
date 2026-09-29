@@ -6,7 +6,8 @@ signal spawn_confirmed(hex_coords: Vector2i)
 signal ready_toggled(is_ready: bool)
 
 const INVALID = Vector2i(-9999, -9999)
-const BIOME_NAMES = ["Grass", "Forest", "Desert", "Rock", "Water", "Shallow water", "Swamp", "Beach", "Mountain"]
+const BIOME_NAMES = ["Grass", "Forest", "Desert", "Rock", "Water", "Shallow water", "Swamp", "Beach", "Mountain",
+	"Flower meadow", "Frost", "Tall grass", "Mushroom grove", "Brambles"]
 
 # UI elements
 var map_view: HexMapView = null
@@ -17,6 +18,7 @@ var players_list: VBoxContainer = null
 var players_count: Label = null
 var status_label: Label = null
 var map_spinner: Control = null
+var _hover_card: ParallaxCard = null  # the hero card of the player row under the mouse
 
 # State
 var selected_spawn: Vector2i = INVALID
@@ -66,7 +68,7 @@ func _create_ui():
 
 func _create_left_panel() -> Control:
 	var card = UITheme.create_panel(null, 20)
-	card.custom_minimum_size.x = 250
+	card.custom_minimum_size.x = 290
 
 	var box = VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
@@ -132,7 +134,7 @@ func _create_right_panel() -> Control:
 	legend.add_theme_constant_override("h_separation", 14)
 	legend.add_theme_constant_override("v_separation", 6)
 	box.add_child(legend)
-	for biome in [0, 1, 2, 7, 6, 3, 8, 4]:
+	for biome in [0, 1, 2, 7, 6, 3, 8, 4, 9, 10, 11, 12, 13]:
 		_add_legend_item(legend, HexMapView.BIOME_COLORS[biome], BIOME_NAMES[biome])
 	_add_legend_item(legend, Color(1.0, 0.38, 0.40), "Taken")
 	_add_legend_item(legend, UITheme.ACCENT_PRIMARY, "Yours")
@@ -266,6 +268,7 @@ func update_reserved_spawns(new_reserved: Array):
 		map_view.set_reserved(filtered)
 
 func update_players_list(players_data: Dictionary):
+	_hide_hero_card()
 	for child in players_list.get_children():
 		child.queue_free()
 
@@ -277,6 +280,7 @@ func update_players_list(players_data: Dictionary):
 			ready_count += 1
 
 		var row = PanelContainer.new()
+		row.mouse_filter = Control.MOUSE_FILTER_STOP
 		var is_me = player_id == my_player_id
 		var fill = Color(UITheme.ACCENT_PRIMARY, 0.12) if is_me else Color(1, 1, 1, 0.05)
 		row.add_theme_stylebox_override("panel", UITheme.glass_box(fill, Color(1, 1, 1, 0.08), 14, 12, 8))
@@ -284,6 +288,7 @@ func update_players_list(players_data: Dictionary):
 
 		var hbox = HBoxContainer.new()
 		hbox.add_theme_constant_override("separation", 10)
+		hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(hbox)
 
 		var dot = Panel.new()
@@ -296,19 +301,87 @@ func update_players_list(players_data: Dictionary):
 			dot_box.shadow_color = Color(UITheme.ACCENT_SUCCESS, 0.6)
 			dot_box.shadow_size = 5
 		dot.add_theme_stylebox_override("panel", dot_box)
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		hbox.add_child(dot)
 
-		var name_lbl = UITheme.create_label(data.get("name", tr("Player %d") % player_id), hbox, UITheme.FONT_SMALL)
-		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# The hero's portrait (like the shop's chips); hover the row for the hero's card
+		var hero: CharacterData = CharacterRegistry.get_by_name(String(data.get("character", "")))
+		var wear: Dictionary = data.get("cosmetics", {})
+		var portrait = TextureRect.new()
+		portrait.custom_minimum_size = Vector2(44, 44)
+		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var frame = PanelContainer.new()
+		var accent = hero.color if hero else Color(1, 1, 1, 0.3)
+		frame.add_theme_stylebox_override("panel", UITheme.glass_box(Color(accent, 0.18), Color(accent.lightened(0.3), 0.8), 12, 2, 2))
+		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		frame.add_child(portrait)
+		hbox.add_child(frame)
+		if hero:
+			ItemRenderer.get_instance(get_tree()).hero(hero.character_name, String(wear.get("skin", "")), String(wear.get("hat", "")),
+				func(tex): if is_instance_valid(portrait): portrait.texture = HeroChips._crop(tex, false))
+
+		var names = VBoxContainer.new()
+		names.add_theme_constant_override("separation", -2)
+		names.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		names.alignment = BoxContainer.ALIGNMENT_CENTER
+		names.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hbox.add_child(names)
+		var name_lbl = UITheme.create_label(data.get("name", tr("Player %d") % player_id), names, UITheme.FONT_SMALL)
 		name_lbl.clip_text = true
 		name_lbl.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+		var hero_lbl = UITheme.create_label(hero.character_name if hero else "Choosing a hero...", names, UITheme.FONT_TINY)
+		hero_lbl.clip_text = true
+		hero_lbl.add_theme_color_override("font_color", hero.color.lightened(0.35) if hero else UITheme.TEXT_MUTED)
 
+		if hero:
+			row.mouse_default_cursor_shape = Control.CURSOR_HELP
+			row.mouse_entered.connect(_show_hero_card.bind(row, hero, wear, String(data.get("name", ""))))
+			row.mouse_exited.connect(_hide_hero_card)
+			row.gui_input.connect(func(event):
+				if event is InputEventMouseMotion and is_instance_valid(_hover_card):
+					var p = event.position / row.size
+					_hover_card._target = Vector2(p.x - 0.5, p.y - 0.5) * 2.0)
+
+		var pill: Control = null
 		if is_me:
-			UITheme.create_pill("You", UITheme.ACCENT_PRIMARY, hbox)
+			pill = UITheme.create_pill("You", UITheme.ACCENT_PRIMARY, hbox)
 		elif player_id == 1:
-			UITheme.create_pill("Host", UITheme.ACCENT_SECONDARY, hbox)
+			pill = UITheme.create_pill("Host", UITheme.ACCENT_SECONDARY, hbox)
+		if pill:
+			pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	players_count.text = tr("%d / %d ready") % [ready_count, players_data.size()]
+
+## A shop card of the player's hero (in their skin and hat) next to the list
+func _show_hero_card(row: Control, hero: CharacterData, wear: Dictionary, player_name: String):
+	_hide_hero_card()
+	var skin = String(wear.get("skin", ""))
+	var hat = String(wear.get("hat", ""))
+	var card = ParallaxCard.new()
+	card.title = hero.character_name
+	card.subtitle = Cosmetics.name_of(skin) if skin != "" else Cosmetics.TIER_NAMES[Cosmetics.tier_of(Cosmetics.hero_id(hero.character_name))]
+	card.accent = hero.color
+	card.badge = player_name
+	card.live = ["hero", [hero.character_name, skin, hat]]
+	card.always_live = true
+	card.z_index = 20
+	add_child(card)
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE  # the row keeps the hover
+	var at = row.global_position - global_position + Vector2(row.size.x + 40, row.size.y / 2.0 - card.card_size.y / 2.0)
+	at.y = clamp(at.y, 20.0, size.y - card.card_size.y - 20.0)
+	card.position = at
+	card.modulate.a = 0.0
+	card.create_tween().tween_property(card, "modulate:a", 1.0, 0.12)
+	ItemRenderer.get_instance(get_tree()).hero(hero.character_name, skin, hat, func(tex): if is_instance_valid(card): card.set_art(tex))
+	_hover_card = card
+
+func _hide_hero_card():
+	if is_instance_valid(_hover_card):
+		_hover_card.queue_free()
+	_hover_card = null
 
 func show_countdown(seconds: int):
 	countdown_label.visible = true

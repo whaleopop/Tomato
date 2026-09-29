@@ -12,6 +12,7 @@ var client_world: ClientWorld = null
 var visibility_system: VisibilitySystem = null
 var pause_menu: PauseMenu = null
 var loading_overlay: Control = null
+var training_ground: TrainingGround = null
 
 func _ready():
 	add_to_group("game_scene")
@@ -30,7 +31,11 @@ func _initialize_game():
 	is_initialized = true
 
 	var network_manager = get_node_or_null("/root/NetworkManager")
-	if network_manager and network_manager.is_server():
+	var game_manager = get_node_or_null("/root/GameManager")
+	if game_manager and game_manager.training_mode:
+		print("[GameSceneController] Training ground")
+		_setup_training()
+	elif network_manager and network_manager.is_server():
 		print("[GameSceneController] Running as HOST")
 		await _setup_as_host()
 	elif network_manager and network_manager.game_client:
@@ -187,6 +192,19 @@ func _setup_offline_debug():
 
 	_setup_local_player(player)
 
+## Training ground: offline arena, every gun, dummies (scenes/training/TrainingGround.gd)
+func _setup_training():
+	_create_debug_floor()
+	training_ground = TrainingGround.new()
+	training_ground.name = "TrainingGround"
+	add_child(training_ground)
+	var game_manager = get_node_or_null("/root/GameManager")
+	var player = training_ground.build(game_manager.selected_character if game_manager else null)
+	_setup_local_player(player)
+	var ui_layer = get_node_or_null("UI")
+	if ui_layer:
+		training_ground.add_hud(ui_layer)
+
 func _create_debug_floor():
 	# Invisible floor as safety net (in case player falls through map)
 	var floor_body = StaticBody3D.new()
@@ -221,6 +239,8 @@ func _setup_local_player(player: Player):
 			grid = client_world.hex_grid
 		elif visibility_system:
 			grid = visibility_system.hex_grid
+		elif training_ground:
+			grid = training_ground.grid
 		hud.setup(player, grid)
 		_connect_destruction_alerts(hud)
 

@@ -7,6 +7,7 @@ var grid_radius: int = 20
 var terrain_version: int = 0  # bumped when tiles change their ground (flood): the minimap redraws
 
 func _init(p_radius: int = 20):
+	add_to_group("hex_grid")  # AmbientSound finds the water around the camera
 	grid_radius = p_radius
 
 func add_tile(coords: Vector2i, tile: HexTile):

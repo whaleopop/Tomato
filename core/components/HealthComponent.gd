@@ -49,6 +49,8 @@ func take_damage(amount: float, source = null) -> float:  # source: Entity
 		if actual_damage <= 0.0:
 			damage_taken.emit(0.0, source)  # still a hit (flinch, hit marker)
 			return absorbed
+	if source != null and is_instance_valid(source) and source != entity:
+		last_attacker = source
 	var dealt = absorbed + _apply_damage(actual_damage, source)
 	_thorns(dealt, source)
 	return dealt
@@ -98,6 +100,8 @@ func heal(amount: float) -> float:
 		healed.emit(actual_heal)
 	
 	return actual_heal
+
+var last_attacker = null  # who hit us last (server): gets the kill
 
 func die():
 	if is_dead:

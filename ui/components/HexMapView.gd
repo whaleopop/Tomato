@@ -19,6 +19,11 @@ const BIOME_COLORS = {
 	6: Color("6e7f45"),  # SWAMP
 	7: Color("e6d39a"),  # BEACH
 	8: Color("6d6774"),  # MOUNTAIN
+	9: Color("8fc46a"),  # MEADOW
+	10: Color("cfe6f2"), # FROST
+	11: Color("a6b347"), # TALL_GRASS
+	12: Color("6b5a82"), # MUSHROOM
+	13: Color("6e4a36"), # THORNS
 }
 
 var tiles: Dictionary = {}     # Vector2i -> {biome, spawnable}
@@ -59,6 +64,10 @@ func is_selectable(coords: Vector2i) -> bool:
 		return false
 	var t = tiles[coords]
 	return t.get("spawnable", t.get("biome", 0) != 4)
+
+## Higher terraces are drawn lighter, so the plateaus read on the flat map
+static func terrace_shade(color: Color, level: int) -> Color:
+	return color.darkened(0.14) if level <= 0 else color.lightened(0.1 * (level - 1))
 
 func biome_color(biome: int) -> Color:
 	return BIOME_COLORS.get(biome, Color(0.5, 0.5, 0.5))
@@ -125,6 +134,7 @@ func _draw():
 		var t = tiles[c]
 		var center = hex_to_pixel(c)
 		var color = biome_color(t.get("biome", 0))
+		color = terrace_shade(color, int(t.get("level", 0)))
 		var spawnable = t.get("spawnable", true)
 		if not spawnable:
 			color = color.darkened(0.35)
@@ -134,6 +144,24 @@ func _draw():
 		if c == hovered and is_selectable(c):
 			color = color.lightened(0.35)
 		draw_colored_polygon(_hex_points(center, inner), color)
+
+	# Landmarks: a diamond in their color and the name, so you know where the loot is
+	var font = UITheme.font_black()
+	for c in tiles.keys():
+		var kind = int(tiles[c].get("landmark", -1))
+		if kind < 0 or kind >= Landmark.NAMES.size():
+			continue
+		var p = hex_to_pixel(c)
+		var s = max(_hex_size * 1.1, 6.0)
+		var col: Color = Landmark.COLORS[kind]
+		draw_colored_polygon(PackedVector2Array([p + Vector2(0, -s), p + Vector2(s, 0), p + Vector2(0, s), p + Vector2(-s, 0)]), Color(0.05, 0.06, 0.1, 0.9))
+		var k = s * 0.68
+		draw_colored_polygon(PackedVector2Array([p + Vector2(0, -k), p + Vector2(k, 0), p + Vector2(0, k), p + Vector2(-k, 0)]), col)
+		var text = tr(Landmark.NAMES[kind])
+		var fs = 13
+		var w = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		draw_string_outline(font, p + Vector2(-w / 2.0, -s - 4), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0.03, 0.04, 0.08, 0.9))
+		draw_string(font, p + Vector2(-w / 2.0, -s - 4), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col.lightened(0.35))
 
 	# Map center marker
 	var mid = hex_to_pixel(Vector2i.ZERO)
