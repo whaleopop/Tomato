@@ -95,7 +95,7 @@ func _update_interact_prompt():
 
 func _create_interact_prompt():
 	interact_prompt = Label3D.new()
-	interact_prompt.text = "[E] %s" % tr(item_name)
+	interact_prompt.text = "[X] %s" % tr(item_name)
 	interact_prompt.position = Vector3(0, 0.8, 0)
 	interact_prompt.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	interact_prompt.font_size = 36

@@ -11,6 +11,11 @@ var kills: int = 0               # eliminations this match (coins at the end: Pl
 var damage_dealt: float = 0.0    # to other players
 var place: int = 0               # 1 = winner, set when out (or at the end)
 var alive_time: float = 0.0      # seconds from the match start to elimination / the end
+## Recent hits on us [id, x, z, amount, msec]: sent to our own client only (TickSystem strips
+## them for others) for the damage direction arcs; ids let the client skip repeats
+var _hits: Array = []
+var _hit_id: int = 0
+const HIT_KEEP_MSEC: int = 1000
 
 # Lag compensation: buffer of recent inputs with timestamps
 var input_buffer: Array = []
@@ -38,6 +43,12 @@ func connect_to_entity_signals():
 		health.died.connect(_on_died)
 	if health and not health.damage_taken.is_connected(_on_damaged):
 		health.damage_taken.connect(_on_damaged)
+	if health and not health.hit_from.is_connected(_on_hit_from):
+		health.hit_from.connect(_on_hit_from)
+
+func _on_hit_from(pos: Vector3, amount: float) -> void:
+	_hit_id += 1
+	_hits.append([_hit_id, snappedf(pos.x, 0.1), snappedf(pos.z, 0.1), int(ceil(amount)), Time.get_ticks_msec()])
 
 ## Somebody hurt us: it counts as their damage dealt
 func _on_damaged(amount: float, source) -> void:
@@ -55,11 +66,42 @@ func _on_died():
 		alive_time = server.match_time()
 	var health = player_entity.get_component("HealthComponent") if is_instance_valid(player_entity) else null
 	var killer = health.last_attacker if health else null
-	if killer == null or not is_instance_valid(killer) or not "entity_id" in killer:
-		return
 	var game_server = get_parent() as GameServer
-	if game_server and game_server.players.has(killer.entity_id):
-		game_server.players[killer.entity_id].kills += 1
+	if killer != null and is_instance_valid(killer) and "entity_id" in killer and killer != player_entity:
+		if game_server and game_server.players.has(killer.entity_id):
+			game_server.players[killer.entity_id].kills += 1
+	else:
+		killer = null
+	_announce_kill(killer, game_server)
+
+## The kill feed, the victim's killer card: names and heroes from the lobby, the killer's gun and
+## health as they are right now
+func _announce_kill(killer, game_server: GameServer) -> void:
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if not network_manager or not game_server:
+		return
+	var lobby = game_server.lobby_manager
+	var info = {
+		"victim_name": String(lobby.players_names.get(player_id, "Player_%d" % player_id)) if lobby else "",
+		"victim_hero": character_name,
+		"weapon": -1,
+	}
+	var killer_id = 0
+	if killer:
+		killer_id = int(killer.entity_id)
+		var ks: ServerPlayer = game_server.players.get(killer_id)
+		info["killer_name"] = String(lobby.players_names.get(killer_id, "Player_%d" % killer_id)) if lobby else ""
+		info["killer_hero"] = ks.character_name if ks else (lobby.get_player_character(killer_id) if lobby else "")
+		info["killer_wear"] = ks.cosmetics.duplicate() if ks else {}
+		info["killer_kills"] = ks.kills if ks else 0
+		var kcombat = killer.get_component("CombatComponent")
+		if kcombat and kcombat.equipped_ranged_weapon:
+			info["weapon"] = int(kcombat.equipped_ranged_weapon.weapon_type)
+		var khealth = killer.get_component("HealthComponent")
+		if khealth:
+			info["killer_health"] = int(ceil(khealth.current_health))
+			info["killer_max_health"] = int(khealth.max_health)
+	network_manager.broadcast_kill(player_id, killer_id, info)
 
 ## Shooting / casting gives you away for a moment (ServerVisibility, even from a bush)
 func _mark_revealed():
@@ -232,6 +274,11 @@ func get_sync_data() -> Dictionary:
 			data["magazine_size"] = combat.equipped_ranged_weapon.magazine_size
 
 	# Stun, blind, stealth, knockback (StatusComponent): the victim's client acts on them
+	var now = Time.get_ticks_msec()
+	_hits = _hits.filter(func(h): return now - h[4] < HIT_KEEP_MSEC)
+	if not _hits.is_empty():
+		data["hits"] = _hits.map(func(h): return [h[0], h[1], h[2], h[3]])
+
 	var status = player_entity.get_component("StatusComponent")
 	if status:
 		var fx = status.to_sync()

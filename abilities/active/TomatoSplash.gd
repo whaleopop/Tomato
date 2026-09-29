@@ -5,6 +5,9 @@ class_name TomatoSplash
 var damage: float = 30.0
 var splash_radius: float = 3.0
 
+func aim_preview() -> Dictionary:
+	return {"shape": "circle", "range": max_range, "radius": splash_radius}
+
 func _init():
 	ability_name = "Tomato Splash"
 	cooldown = 8.0

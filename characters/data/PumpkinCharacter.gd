@@ -5,7 +5,7 @@ class_name PumpkinCharacter
 func _init():
 	character_name = "Pumpkin"
 	description = "A massive tank with thick protective shell"
-	base_health = 150.0
+	base_health = 300.0
 	base_speed = 4.0
 	model_path = "res://models/characters/Pumpkin.glb"
 	color = Color(0.95, 0.42, 0.08)

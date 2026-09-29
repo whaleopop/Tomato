@@ -5,6 +5,9 @@ class_name CarrotStrike
 var damage: float = 25.0
 var hit_radius: float = 1.2   # players don't collide with each other, so the dash goes through them
 
+func aim_preview() -> Dictionary:
+	return {"shape": "line", "range": dash_distance, "width": hit_radius * 2.0}
+
 func _init():
 	super()
 	ability_name = "Carrot Strike"

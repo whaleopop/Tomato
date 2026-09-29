@@ -5,6 +5,9 @@ class_name HealingSprout
 var heal_amount: float = 30.0     # in total, spread over heal_duration
 var heal_radius: float = 5.0
 var heal_duration: float = 3.0
+
+func aim_preview() -> Dictionary:
+	return {"shape": "self", "radius": heal_radius}
 const HEAL_TICKS: int = 6
 
 func _init():

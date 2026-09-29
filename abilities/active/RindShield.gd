@@ -9,6 +9,9 @@ var radius: float = 3.5
 var push_speed: float = 11.0
 var damage: float = 10.0
 
+func aim_preview() -> Dictionary:
+	return {"shape": "self", "radius": radius}
+
 func _init():
 	ability_name = "Rind Shield"
 	cooldown = 12.0

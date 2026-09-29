@@ -460,7 +460,7 @@ func _reel_loot() -> void:
 	build_arena(7)
 	cam_cut(Vector3(0, 6, 11), Vector3(0, 0.3, 0))
 	await fade(0.0, 0.8)
-	chapter(tr("Containers and loot"), tr("Walk up, press E - and grab what flies out"), 3.0, UITheme.ACCENT_INFO)
+	chapter(tr("Containers and loot"), tr("Walk up, press X - and grab what flies out"), 3.0, UITheme.ACCENT_INFO)
 	await wait(3.2)
 	var hero = spawn_hero(CharacterRegistry.get_by_name("Pineapple"), tile_top(Vector2i(-1, 2)), tile_top(Vector2i(0, 0)))
 	var types = [

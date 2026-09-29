@@ -10,6 +10,7 @@ signal match_starting(late_join: bool)
 var is_server: bool = false
 var lobby_manager: LobbyManager = null
 var last_map_data: Dictionary = {}  # Client: last map received for the spawn menu
+var last_lobby_state: Dictionary = {}  # names / heroes of everyone (the spectator bar reads them in the match)
 
 func _ready():
 	pass
@@ -129,6 +130,7 @@ func _send_spawn_result(success: bool, hex_q: int, hex_r: int):
 
 @rpc("authority", "call_remote", "reliable")
 func _receive_lobby_state(state: Dictionary):
+	last_lobby_state = state
 	lobby_state_updated.emit(state)
 
 @rpc("authority", "call_remote", "reliable")
@@ -211,6 +213,7 @@ func _broadcast_lobby_state():
 	_receive_lobby_state.rpc(state)
 
 	# Also emit locally for server UI
+	last_lobby_state = state
 	lobby_state_updated.emit(state)
 
 # === Server utility functions ===
@@ -250,6 +253,7 @@ func _serialize_hex_grid(hex_grid: HexGrid) -> Dictionary:
 				"biome": tile.biome_type,
 				"height": tile.height,
 				"level": tile.level,  # terrace (HexMapView shades it)
+				"ramp": tile.ramp_dir,  # HexMap3DView tilts it
 				"spawnable": tile.can_spawn
 			}
 			if tile.has_meta("landmark"):

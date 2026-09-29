@@ -158,6 +158,15 @@ func _load_character_model(data: CharacterData):
 		print("[Player] Failed to load model: %s" % data.model_path)
 		return
 
+	# Remote players spawn before their hero is known (the character comes with a later state):
+	# they got the placeholder capsule, which then stayed inside the hero's model. Drop it, and
+	# an earlier model (hero switch), before the new one takes the name "Model".
+	for old_name in ["PlayerMesh", "Model"]:
+		var old = get_node_or_null(old_name)
+		if old:
+			remove_child(old)
+			old.queue_free()
+
 	# Create model container for proper positioning
 	var model_container = Node3D.new()
 	model_container.name = "Model"

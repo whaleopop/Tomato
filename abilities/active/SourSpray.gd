@@ -9,6 +9,9 @@ var angle: float = 70.0          # degrees, the whole cone
 var blind_time: float = 3.5
 var blind_factor: float = 0.35   # share of their sight left
 
+func aim_preview() -> Dictionary:
+	return {"shape": "cone", "range": reach, "angle": angle}
+
 func _init():
 	ability_name = "Sour Spray"
 	cooldown = 9.0

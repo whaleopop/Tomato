@@ -14,6 +14,7 @@ static var language: String = "ru"
 static var player_name: String = ""
 static var last_server_ip: String = "127.0.0.1"
 static var last_server_port: int = 7777
+static var third_person: bool = false  # CameraController's view (V)
 
 static func load_and_apply():
 	var cfg = ConfigFile.new()
@@ -27,6 +28,7 @@ static func load_and_apply():
 		player_name = cfg.get_value("player", "name", player_name)
 		last_server_ip = cfg.get_value("network", "last_ip", last_server_ip)
 		last_server_port = cfg.get_value("network", "last_port", last_server_port)
+		third_person = cfg.get_value("video", "third_person", third_person)
 	Locale.setup(language)
 	apply()
 
@@ -47,6 +49,7 @@ static func save():
 	cfg.set_value("audio", "master_volume", master_volume)
 	cfg.set_value("video", "fullscreen", fullscreen)
 	cfg.set_value("video", "vsync", vsync)
+	cfg.set_value("video", "third_person", third_person)
 	cfg.set_value("interface", "language", language)
 	cfg.set_value("player", "name", player_name)
 	cfg.set_value("network", "last_ip", last_server_ip)

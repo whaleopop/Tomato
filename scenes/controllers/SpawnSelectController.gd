@@ -80,6 +80,7 @@ func _setup_host_map(hex_grid: HexGrid):
 				"biome": tile.biome_type,
 				"height": tile.height,
 				"level": tile.level,  # terrace (HexMapView shades it)
+				"ramp": tile.ramp_dir,  # HexMap3DView tilts it
 				"spawnable": tile.can_spawn
 			}
 			if tile.has_meta("landmark"):

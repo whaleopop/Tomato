@@ -82,7 +82,8 @@ func spawn_initial_containers():
 
 	# Clamp to min/max
 	_shuffle(spawn_positions)
-	var count = mini(clampi(spawn_positions.size(), min_containers, max_containers), spawn_positions.size())
+	var area = tiles.size() / 721.0  # min / max were tuned for the radius-15 map
+	var count = mini(clampi(spawn_positions.size(), int(min_containers * area), int(max_containers * area)), spawn_positions.size())
 	spawn_positions.resize(count)
 
 	# Spawn containers

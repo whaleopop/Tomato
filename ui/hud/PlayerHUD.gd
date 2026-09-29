@@ -8,11 +8,18 @@ var ability_bar: AbilityBar = null
 var minimap: Minimap = null
 var ammo_display: AmmoDisplay = null
 var crosshair: Control = null
+var aim_overlay: AimOverlay = null        # gun reach, ability areas, where the hero is
+var damage_indicator: DamageIndicator = null  # where hits came from
 var weapon_slots_ui: HBoxContainer = null
 var alive_label: Label = null
 var alert_holder: CenterContainer = null
 var alert_list: VBoxContainer = null  # a few alerts stack (a zone step and its supply drop come together)
 var death_screen: Control = null
+var kill_feed: KillFeed = null      # every elimination, top right
+var spectator: Spectator = null     # after we are out: watch the killer / the survivors
+var _death_info: Dictionary = {}    # our own elimination: {killer_id, info} (NetworkManager.player_killed)
+var _killer_slot: Control = null    # the death card's killer part, filled when the kill arrives
+var _known_names: Dictionary = {}   # player id -> nickname, from the kills so far (the spectator bar)
 
 var player: Player = null
 
@@ -20,6 +27,7 @@ var _hero_card_small: ParallaxCard = null  # permanent small card bottom-left
 
 func _ready():
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_to_group("player_hud")  # CameraController's view switch shows an alert
 
 	health_bar = HealthBar.new()
 	health_bar.name = "HealthBar"
@@ -47,6 +55,15 @@ func _ready():
 	alive_label = UITheme.create_label("", alive_holder, UITheme.FONT_SMALL)
 	alive_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	alive_label.add_theme_font_override("font", UITheme.font_black())
+
+	kill_feed = KillFeed.new()
+	kill_feed.name = "KillFeed"
+	kill_feed.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	kill_feed.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	kill_feed.offset_left = -460
+	kill_feed.offset_right = -20
+	kill_feed.offset_top = 276
+	add_child(kill_feed)
 
 	ability_bar = AbilityBar.new()
 	ability_bar.name = "AbilityBar"
@@ -99,6 +116,8 @@ func _ready():
 		network_manager.zone_changed.connect(_on_zone_changed)
 	if network_manager and network_manager.has_signal("map_event"):
 		network_manager.map_event.connect(_on_map_event)
+	if network_manager and network_manager.has_signal("player_killed"):
+		network_manager.player_killed.connect(_on_player_killed)
 
 func _place(control: Control, preset: int, offset: Vector2):
 	control.set_anchors_preset(preset)
@@ -128,6 +147,9 @@ func setup(p_player: Player, hex_grid: HexGrid = null):
 		_update_weapon_slots_display(inventory)
 
 	crosshair.player = player
+	kill_feed.my_id = player.entity_id
+	aim_overlay.player = player
+	damage_indicator.track(player)
 	minimap.track(player)
 	if hex_grid:
 		minimap.setup_grid(hex_grid)
@@ -429,6 +451,8 @@ func _on_match_ended(winner_id: int, winner_name: String):
 		# Already eliminated: tell who took it
 		death_screen.queue_free()
 		death_screen = null
+	if spectator:
+		spectator.visible = false
 	result_screen = Control.new()
 	result_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
 	result_screen.add_to_group("blocks_game_input")  # clicking the button must not fire
@@ -511,31 +535,130 @@ func _on_player_died():
 	add_child(death_screen)
 
 	var dim = ColorRect.new()
-	dim.color = Color(0.12, 0.0, 0.02, 0.35)
+	dim.color = Color(0.12, 0.0, 0.02, 0.3)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	death_screen.add_child(dim)
 
 	var center = CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	death_screen.add_child(center)
 
 	var card = UITheme.create_panel(center, 30)
 	card.tint = UITheme.GLASS_TINT_DARK
+	var row = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 28)
+	card.add_child(row)
+	# Who took us out: their hero card and how they stand (filled by _fill_killer_card)
+	_killer_slot = VBoxContainer.new()
+	_killer_slot.add_theme_constant_override("separation", 10)
+	row.add_child(_killer_slot)
+
 	var box = VBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
-	card.add_child(box)
-
+	box.custom_minimum_size.x = 340
+	row.add_child(box)
 	var title = UITheme.create_title("ELIMINATED", box)
 	title.add_theme_color_override("font_color", UITheme.ACCENT_DANGER.lightened(0.2))
 	var sub = UITheme.create_label("You got mashed. Better luck next harvest!", box)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_reward_row(box, false)
 
-	var leave = UITheme.create_primary_button("BACK TO MENU", box, Vector2(300, 56))
+	var watch = UITheme.create_primary_button("SPECTATE", box, Vector2(300, 56))
+	watch.pressed.connect(_start_spectating)
+	var leave = UITheme.create_button("BACK TO MENU", box, Vector2(300, 50))
 	leave.pressed.connect(_on_leave_pressed)
+
+	_fill_killer_card()
+	# The camera goes to whoever did it right away; the bar comes with SPECTATE
+	spectator = Spectator.new()
+	spectator.name = "Spectator"
+	spectator.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	spectator.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	spectator.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	spectator.offset_bottom = -24
+	spectator.visible = false
+	add_child(spectator)
+	spectator.leave_pressed.connect(_on_leave_pressed)
+	spectator._names = _known_names.duplicate()
+	spectator.start(player, int(_death_info.get("killer_id", 0)))
+	for c in [ability_bar, crosshair, aim_overlay, weapon_slots_ui]:
+		if c:
+			c.visible = false
+	if ammo_display:
+		ammo_display.modulate.a = 0.0  # it shows itself again on every update
 
 	death_screen.modulate.a = 0.0
 	create_tween().tween_property(death_screen, "modulate:a", 1.0, 0.5)
+
+func _start_spectating():
+	if death_screen:
+		var t = create_tween()
+		t.tween_property(death_screen, "modulate:a", 0.0, 0.25)
+		t.tween_callback(func(): if death_screen: death_screen.visible = false)
+	if spectator:
+		spectator.visible = true
+
+## Someone went down (NetworkManager.player_killed): if it was us, remember who did it
+func _on_player_killed(victim_id: int, killer_id: int, info: Dictionary):
+	if info.has("victim_name"):
+		_known_names[victim_id] = String(info["victim_name"])
+	if killer_id != 0 and info.has("killer_name"):
+		_known_names[killer_id] = String(info["killer_name"])
+	if not player or not is_instance_valid(player) or victim_id != player.entity_id:
+		return
+	_death_info = {"killer_id": killer_id, "info": info}
+	_fill_killer_card()
+	if spectator and killer_id != 0:
+		var killer = spectator._player_by_id(killer_id)
+		if killer and spectator._alive(killer):
+			spectator.follow(killer)
+
+func _fill_killer_card():
+	if not is_instance_valid(_killer_slot) or _death_info.is_empty():
+		return
+	for c in _killer_slot.get_children():
+		c.queue_free()
+	var killer_id = int(_death_info.get("killer_id", 0))
+	var info: Dictionary = _death_info.get("info", {})
+	if killer_id == 0:
+		var lbl = UITheme.create_heading("The island got you", _killer_slot)
+		lbl.add_theme_color_override("font_color", UITheme.ACCENT_WARNING)
+		return
+	var hero_name = String(info.get("killer_hero", ""))
+	var hero: CharacterData = CharacterRegistry.get_by_name(hero_name) if hero_name != "" else null
+	var wear: Dictionary = info.get("killer_wear", {})
+	var cap = UITheme.create_caption("Eliminated by", _killer_slot)
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if hero:
+		var skin = String(wear.get("skin", ""))
+		var hat = String(wear.get("hat", ""))
+		var hero_card = ParallaxCard.new()
+		hero_card.title = hero.character_name
+		hero_card.subtitle = Cosmetics.name_of(skin) if skin != "" else ""
+		hero_card.accent = hero.color
+		hero_card.badge = String(info.get("killer_name", ""))
+		hero_card.live = ["hero", [hero.character_name, skin, hat]]
+		hero_card.always_live = true
+		hero_card.custom_minimum_size = hero_card.card_size
+		_killer_slot.add_child(hero_card)
+		ItemRenderer.get_instance(get_tree()).hero(hero.character_name, skin, hat, func(tex): if is_instance_valid(hero_card): hero_card.set_art(tex))
+	var name_lbl = UITheme.create_heading(String(info.get("killer_name", "")), _killer_slot)
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_lbl.add_theme_color_override("font_color", KillFeed.hero_color(hero_name))
+	var facts: Array = []
+	var gun = KillFeed.weapon_name(int(info.get("weapon", -1)))
+	if gun != "":
+		facts.append(tr("with %s") % tr(gun))
+	if info.has("killer_health"):
+		facts.append(tr("%d / %d HP left") % [int(info["killer_health"]), int(info.get("killer_max_health", 0))])
+	facts.append(tr("Kills: %d") % int(info.get("killer_kills", 0)))
+	for f in facts:
+		var l = UITheme.create_label(f, _killer_slot, UITheme.FONT_SMALL)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
 
 # ---------------------------------------------------------------- coins
 
@@ -597,6 +720,14 @@ func _on_leave_pressed():
 # ---------------------------------------------------------------- crosshair
 
 func _create_crosshair():
+	damage_indicator = DamageIndicator.new()
+	damage_indicator.name = "DamageIndicator"
+	damage_indicator.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(damage_indicator)
+	aim_overlay = AimOverlay.new()
+	aim_overlay.name = "AimOverlay"
+	aim_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(aim_overlay)
 	crosshair = Crosshair.new()
 	crosshair.name = "Crosshair"
 	crosshair.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -618,28 +749,70 @@ class Crosshair extends Control:
 		if not camera:
 			return
 
-		var mouse_pos = get_viewport().get_mouse_position()
+		var mouse_pos = CameraController.aim_screen_point(get_viewport())
+		# The gun's own reticle (fire_mode); an ability being aimed; red past the gun's reach
+		# (the aim line and range circle are AimOverlay's)
+		var handler = player.get_node_or_null("InputHandler") as PlayerInputHandler
+		var combat = player.get_component("CombatComponent")
+		var weapon: RangedWeapon = combat.equipped_ranged_weapon if combat else null
+		var mode = weapon.fire_mode if weapon else "single"
+		if handler and handler.aiming_ability >= 0:
+			mode = "ability"
+		var col = Color(1, 1, 1, 0.92)
+		var far = mode != "ability" and AimOverlay.out_of_range(player)
+		if far:
+			col = AimOverlay.OUT_OF_RANGE
+		var shadow = Color(0, 0, 0, 0.35)
 		var accent = UITheme.ACCENT_PRIMARY
 
-		# Dashed aim line from the character to the cursor
-		var start = camera.unproject_position(player.global_position + Vector3(0, 1.0, 0))
-		var dir = (mouse_pos - start).normalized()
-		var dist = start.distance_to(mouse_pos)
-		var d = 26.0
-		while d < dist - 22.0:
-			draw_line(start + dir * d, start + dir * min(d + 7.0, dist - 22.0), Color(1, 1, 1, 0.35), 2.0, true)
-			d += 14.0
-
-		# Ring + ticks; an earthquake (MapEvents) widens and shakes them
+		# An earthquake (MapEvents) widens and shakes it
 		var wobble = MapEvents.spread_factor - 1.0
-		var r = 11.0 * (1.0 + wobble * 0.35)
+		var grow = 1.0 + wobble * 0.35
 		if wobble > 0.0:
 			mouse_pos += Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * wobble
-		draw_arc(mouse_pos, r, 0, TAU, 32, Color(0, 0, 0, 0.35), 4.0, true)
-		draw_arc(mouse_pos, r, 0, TAU, 32, Color(1, 1, 1, 0.9), 2.0, true)
-		for v in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
-			draw_line(mouse_pos + v * (r + 4.0), mouse_pos + v * (r + 10.0), Color(1, 1, 1, 0.9), 2.0, true)
-		draw_circle(mouse_pos, 2.5, accent)
+		var p = mouse_pos
+		match mode:
+			"pierce":  # sniper / marksman: a fine cross with a gap and a dot
+				for v in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
+					draw_line(p + v * 7.0, p + v * 24.0, shadow, 4.0, true)
+					draw_line(p + v * 7.0, p + v * 24.0, col, 1.6, true)
+				draw_arc(p, 30.0, 0, TAU, 48, Color(col, 0.35), 1.2, true)
+				draw_circle(p, 2.0, accent)
+			"spread":  # shotguns: four wide brackets, as wide as the spread
+				var angle = weapon.spread_angle if weapon else 25.0
+				var r = (12.0 + angle * 0.7) * grow
+				for k in 4:
+					var m = TAU * k / 4.0 + PI / 4.0
+					draw_arc(p, r, m - 0.42, m + 0.42, 10, shadow, 5.0, true)
+					draw_arc(p, r, m - 0.42, m + 0.42, 10, col, 2.4, true)
+				draw_circle(p, 2.5, accent)
+			"flame":  # flamethrower: a chevron and a soft ring
+				draw_arc(p, 16.0 * grow, 0, TAU, 32, Color(1.0, 0.6, 0.3, 0.35), 5.0, true)
+				draw_colored_polygon(PackedVector2Array([p + Vector2(0, -9), p + Vector2(8, 6), p + Vector2(-8, 6)]), Color(1.0, 0.65, 0.3, 0.9))
+			"lob":  # grenade launcher: a dashed landing circle and a cross
+				var r2 = 15.0 * grow
+				for k in 12:
+					var a0 = TAU * k / 12.0
+					draw_arc(p, r2, a0, a0 + TAU / 24.0, 4, col, 2.4, true)
+				draw_line(p + Vector2(-6, 0), p + Vector2(6, 0), col, 2.0, true)
+				draw_line(p + Vector2(0, -6), p + Vector2(0, 6), col, 2.0, true)
+			"ability":  # an ability is being aimed: a diamond in the hero's color
+				var hc = player.character_data.color.lightened(0.3) if player.character_data else UITheme.ACCENT_SECONDARY
+				var d = 13.0
+				var pts = PackedVector2Array([p + Vector2(0, -d), p + Vector2(d, 0), p + Vector2(0, d), p + Vector2(-d, 0), p + Vector2(0, -d)])
+				draw_polyline(pts, shadow, 5.0, true)
+				draw_polyline(pts, hc, 2.5, true)
+				draw_circle(p, 3.0, hc)
+			_:  # single shots: ring + ticks
+				var r3 = 11.0 * grow
+				draw_arc(p, r3, 0, TAU, 32, shadow, 4.0, true)
+				draw_arc(p, r3, 0, TAU, 32, col, 2.0, true)
+				for v in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
+					draw_line(p + v * (r3 + 4.0), p + v * (r3 + 10.0), col, 2.0, true)
+				draw_circle(p, 2.5, accent)
+		if far:  # past the gun's reach: a small cross over it
+			draw_line(p + Vector2(-5, -5), p + Vector2(5, 5), col, 2.0, true)
+			draw_line(p + Vector2(-5, 5), p + Vector2(5, -5), col, 2.0, true)
 
 # ---------------------------------------------------------------- weapon slots
 

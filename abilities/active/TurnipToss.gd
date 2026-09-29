@@ -6,6 +6,9 @@ var damage: float = 35.0
 var impact_radius: float = 3.0
 var leap_speed: float = 20.0
 
+func aim_preview() -> Dictionary:
+	return {"shape": "circle", "range": max_range, "radius": impact_radius}
+
 func _init():
 	ability_name = "Turnip Toss"
 	cooldown = 9.0

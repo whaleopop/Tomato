@@ -5,7 +5,7 @@ class_name CornCharacter
 func _init():
 	character_name = "Corn"
 	description = "A ranged specialist with kernel projectiles"
-	base_health = 85.0
+	base_health = 170.0
 	base_speed = 5.5
 	model_path = "res://models/characters/Corn.glb"
 	color = Color(1.0, 0.8, 0.2)

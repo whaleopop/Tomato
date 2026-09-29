@@ -9,6 +9,9 @@ signal healed(amount: float)
 signal died
 signal revived
 signal shield_changed(shield: float)
+## Where a hit came from (the attacker's position): the HUD's damage direction arcs. The server
+## emits it from take_damage; clients from the player state ("hits", NetworkingComponent)
+signal hit_from(position: Vector3, amount: float)
 
 var max_health: float = 100.0
 var current_health: float = 100.0
@@ -48,12 +51,18 @@ func take_damage(amount: float, source = null) -> float:  # source: Entity
 		actual_damage -= absorbed
 		if actual_damage <= 0.0:
 			damage_taken.emit(0.0, source)  # still a hit (flinch, hit marker)
+			_report_hit(source, absorbed)
 			return absorbed
 	if source != null and is_instance_valid(source) and source != entity:
 		last_attacker = source
 	var dealt = absorbed + _apply_damage(actual_damage, source)
+	_report_hit(source, dealt)
 	_thorns(dealt, source)
 	return dealt
+
+func _report_hit(source, amount: float) -> void:
+	if amount > 0.0 and source is Node3D and is_instance_valid(source) and source != entity:
+		hit_from.emit(source.global_position, amount)
 
 ## Spiky Skin passive (meta "thorns"): whoever hurt us gets a share of it back (not reflected again)
 func _thorns(dealt: float, source) -> void:
@@ -90,7 +99,18 @@ func _apply_damage(amount: float, source = null) -> float:
 func heal(amount: float) -> float:
 	if not enabled or is_dead:
 		return 0.0
-	
+	# Like damage, only the server heals; clients get it from the sync (_apply_heal). A client
+	# healing its own copy (regeneration, photosynthesis) was then pulled back by the next state
+	# and that drop showed as a "-2" hit. The return value still says how much it would heal
+	# (a health pack at full health stays in the inventory).
+	if not _is_authority():
+		return max(0.0, min(amount, max_health - current_health))
+	return _apply_heal(amount)
+
+## Internal: heal without the authority check (network sync)
+func _apply_heal(amount: float) -> float:
+	if not enabled or is_dead:
+		return 0.0
 	var old_health = current_health
 	current_health = min(max_health, current_health + amount)
 	var actual_heal = current_health - old_health

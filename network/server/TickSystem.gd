@@ -47,6 +47,9 @@ func _sync_clients():
 				state.players[player_id] = data
 				continue
 			var target = world.get_player(player_id) if world else null
+			if data.has("hits"):
+				data = data.duplicate()
+				data.erase("hits")  # who shot them is only for their own client
 			if ServerVisibility.can_see(viewer, target, world.hex_grid if world else null):
 				state.players[player_id] = data
 			else:

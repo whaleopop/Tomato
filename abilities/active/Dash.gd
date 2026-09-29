@@ -5,6 +5,9 @@ class_name Dash
 var dash_speed: float = 15.0
 var dash_distance: float = 5.0
 
+func aim_preview() -> Dictionary:
+	return {"shape": "line", "range": dash_distance, "width": 1.0}
+
 func _init():
 	ability_name = "Dash"
 	cooldown = 3.0

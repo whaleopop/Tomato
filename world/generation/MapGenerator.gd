@@ -6,7 +6,8 @@ signal map_generated(grid: HexGrid)
 
 ## Radius used for real matches. Server, clients and the spawn cutscene must all use the
 ## same value: lake placement depends on the radius, so different radii give different maps.
-const MATCH_MAP_RADIUS: int = 15  # 721 tiles of radius 2 (the outer ring is the mountain wall)
+const MATCH_MAP_RADIUS: int = 21  # 1387 tiles of radius 2, twice the old 15 (the outer ring is the mountain wall)
+const BASE_RADIUS: int = 15        # paths / huts were tuned for this size: bigger maps get more
 
 var hex_generator: HexGenerator = null
 var grid: HexGrid = null
@@ -67,6 +68,11 @@ func generate_map(radius: int, seed_value: int = -1):
 	map_generated.emit(grid)
 
 	return grid
+
+## Map area relative to BASE_RADIUS (same on every peer: it only depends on the radius)
+func _area_factor() -> float:
+	var r = float(map_radius)
+	return (3.0 * r * (r + 1.0) + 1.0) / (3.0 * BASE_RADIUS * (BASE_RADIUS + 1.0) + 1.0)
 
 func get_map_seed() -> int:
 	return map_seed
@@ -227,7 +233,7 @@ func _carve_paths(seed_val: int) -> void:
 			all_land.append(c)
 	if all_land.size() < 10:
 		return
-	var path_count = rng.randi_range(4, 6)
+	var path_count = int(round(rng.randi_range(4, 6) * _area_factor()))
 	for _p in range(path_count):
 		var a = all_land[rng.randi() % all_land.size()]
 		var b = all_land[rng.randi() % all_land.size()]
@@ -276,7 +282,7 @@ func _place_huts(seed_val: int) -> void:
 			candidates.append(c)
 	if candidates.is_empty():
 		return
-	var hut_count = rng.randi_range(6, 10)
+	var hut_count = int(round(rng.randi_range(6, 10) * _area_factor()))
 	var placed_centers: Array = []
 	var tries = 0
 	while placed_centers.size() < hut_count and tries < 200:

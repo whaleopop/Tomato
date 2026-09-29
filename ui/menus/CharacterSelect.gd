@@ -201,7 +201,7 @@ func _build_info():
 
 	var description = UITheme.create_label(c.description if c.description else "A brave vegetable warrior!", info, UITheme.FONT_SMALL)
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	UITheme.create_stat_row("Health", c.base_health, 150.0, UITheme.ACCENT_SUCCESS, info)
+	UITheme.create_stat_row("Health", c.base_health, 320.0, UITheme.ACCENT_SUCCESS, info)
 	UITheme.create_stat_row("Speed", c.base_speed, 8.0, UITheme.ACCENT_INFO, info)
 	if c.active_ability:
 		_add_ability_info(c.active_ability, "Active · F", UITheme.ACCENT_SECONDARY)

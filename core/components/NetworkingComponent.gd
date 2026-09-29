@@ -23,6 +23,7 @@ const MAX_EXTRAPOLATION_TIME: float = 0.2  # Max 200ms of extrapolation to preve
 var last_velocity: Vector3 = Vector3.ZERO
 var last_sync_timestamp: int = 0
 var last_update_time: float = 0.0  # Track when we last received an update
+var _last_hit_id: int = 0  # ServerPlayer's hit ids already shown
 var target_position: Vector3 = Vector3.ZERO  # Target position for interpolation
 var target_rotation: Vector3 = Vector3.ZERO  # Target rotation for interpolation
 
@@ -193,11 +194,17 @@ func _apply_component_sync_data(data: Dictionary):
 			if health.current_health != new_health:
 				var diff = new_health - health.current_health
 				if diff > 0:
-					health.heal(diff)
+					health._apply_heal(diff)
 				elif diff < 0:
 					health._apply_damage(-diff)  # Direct apply without resistance
 			if data.has("shield"):
 				health.set_shield(float(data["shield"]))
+			# Where our hits came from (only our own state carries them): the HUD's direction arcs
+			if data.has("hits") and _is_local():
+				for h in data["hits"]:
+					if int(h[0]) > _last_hit_id:
+						_last_hit_id = int(h[0])
+						health.hit_from.emit(Vector3(float(h[1]), entity.global_position.y, float(h[2])), float(h[3]))
 
 	# Stun, blind, stealth, knockback: the server's word, also for our own predicted player
 	var status = entity.get_component("StatusComponent")

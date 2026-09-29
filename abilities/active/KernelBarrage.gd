@@ -6,6 +6,9 @@ var damage_per_kernel: float = 15.0
 var kernel_count: int = 5
 var spread_angle: float = 30.0  # Degrees
 
+func aim_preview() -> Dictionary:
+	return {"shape": "cone", "range": 14.0, "angle": spread_angle}
+
 func _init():
 	ability_name = "Kernel Barrage"
 	cooldown = 7.0

@@ -1,4 +1,4 @@
-## Minimap (top-right): the hex map as a glowing dot grid, your arrow, visible enemies.
+## Minimap (top-right): the hex map as a glowing dot grid and your arrow (no enemies on it).
 ## Fog of war: only explored tiles show their biome, the rest is a faint outline of the island.
 ## The tile layer is baked into a texture and rebuilt when tiles get explored or destroyed.
 extends Control
@@ -171,13 +171,7 @@ func _draw():
 			draw_circle(mc, 3.0, color)
 			draw_arc(mc, 5.0 + 2.5 * pulse, 0, TAU, 16, Color(color, 0.85 - 0.5 * pulse), 1.5, true)
 
-	# Other players currently visible to us
-	for p in get_tree().get_nodes_in_group("players"):
-		if p == tracked_player or not is_instance_valid(p) or not p.visible:
-			continue
-		var mp = inset.position + _world_to_map(p.global_position) * scale_to_rect
-		if inset.has_point(mp):
-			draw_circle(mp, 4.0, UITheme.ACCENT_DANGER)
+	# Other players are never drawn: the minimap doesn't give enemies away
 
 	# Us: arrow pointing where we look
 	if tracked_player and is_instance_valid(tracked_player):

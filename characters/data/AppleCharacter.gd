@@ -5,7 +5,7 @@ class_name AppleCharacter
 func _init():
 	character_name = "Apple"
 	description = "A furious apple bruiser that keeps the doctor - and everyone else - away"
-	base_health = 115.0
+	base_health = 230.0
 	base_speed = 5.5
 	model_path = "res://models/characters/Apple.glb"
 	color = Color(0.85, 0.2, 0.15)

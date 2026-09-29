@@ -227,7 +227,7 @@ func _update_interact_prompt():
 
 func _create_interact_prompt():
 	interact_prompt = Label3D.new()
-	interact_prompt.text = "[E] Open"
+	interact_prompt.text = "[X] Open"
 	interact_prompt.position = Vector3(0, _body_size().y + 0.55, 0)
 	interact_prompt.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	interact_prompt.font_size = 48
@@ -250,7 +250,7 @@ func take_damage(amount: float, source = null):
 		is_opening = true
 		_play_open_animation(source as Player if source is Player else null)
 
-## Called when player presses interact key (E) near container
+## Called when player presses interact key (X) near container
 func interact(player: Player = null):
 	if is_opened or is_opening:
 		return

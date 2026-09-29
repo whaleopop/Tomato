@@ -5,7 +5,7 @@ class_name BananaCharacter
 func _init():
 	character_name = "Banana"
 	description = "Quick, slippery and always ready to throw a peel under your feet"
-	base_health = 85.0
+	base_health = 170.0
 	base_speed = 7.0
 	model_path = "res://models/characters/Banana.glb"
 	color = Color(1.0, 0.88, 0.2)

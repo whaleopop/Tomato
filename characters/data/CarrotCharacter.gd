@@ -5,7 +5,7 @@ class_name CarrotCharacter
 func _init():
 	character_name = "Carrot"
 	description = "A swift orange fighter with sharp precision"
-	base_health = 80.0
+	base_health = 160.0
 	base_speed = 7.5
 	model_path = "res://models/characters/Carrot.glb"
 	color = Color(1.0, 0.45, 0.12)

@@ -5,7 +5,7 @@ class_name TomatoCharacter
 func _init():
 	character_name = "Tomato"
 	description = "A brave red warrior with juicy resilience"
-	base_health = 90.0
+	base_health = 180.0
 	base_speed = 6.0
 	model_path = "res://models/characters/Tomato.glb"  # Generated from art/concepts/tomato.png
 	color = Color(0.9, 0.2, 0.2)  # Red

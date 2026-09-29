@@ -5,7 +5,7 @@ class_name BroccoliCharacter
 func _init():
 	character_name = "Broccoli"
 	description = "A defensive support with healing capabilities"
-	base_health = 100.0
+	base_health = 200.0
 	base_speed = 5.0
 	model_path = "res://models/characters/Broccoli.glb"
 	color = Color(0.35, 0.68, 0.22)

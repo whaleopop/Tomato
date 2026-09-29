@@ -6,6 +6,9 @@ var damage: float = 25.0
 var range: float = 3.0
 var angle: float = 90.0  # Degrees
 
+func aim_preview() -> Dictionary:
+	return {"shape": "cone", "range": range, "angle": angle}
+
 func _init():
 	ability_name = "Slashing Strike"
 	cooldown = 4.0

@@ -37,30 +37,39 @@ static func _create_flash_mesh() -> MeshInstance3D:
 
 	return mesh_instance
 
-## Create a bullet tracer from start to end
+## Create a bullet tracer from start to end: a bright core in a soft glow, both fading out
+const TRACER_CORE: float = 0.06   # radius, world units (heroes are ~1.2 tall)
+const TRACER_GLOW: float = 0.16
 static func create_tracer(parent: Node3D, start: Vector3, end: Vector3, color: Color = Color(1, 0.9, 0.4), duration: float = 0.1) -> void:
-	var tracer = _create_tracer_mesh(start, end, color)
+	duration = max(duration, 0.16)  # thick tracers stay a moment longer, so you see where it came from
+	var tracer = _create_tracer_mesh(start, end, color, TRACER_CORE, 0.95, 3.0)
 	parent.add_child(tracer)
+	var glow = _create_tracer_mesh(start, end, color, TRACER_GLOW, 0.3, 1.5)
+	parent.add_child(glow)
 
-	# Animate fade out
-	var material = tracer.material_override as StandardMaterial3D
-	if material:
-		var tween = tracer.create_tween()
+	for node in [tracer, glow]:
+		var material = node.material_override as StandardMaterial3D
+		var tween = node.create_tween()
 		tween.tween_property(material, "albedo_color:a", 0.0, duration)
 		tween.parallel().tween_property(material, "emission_energy_multiplier", 0.0, duration)
-		tween.tween_callback(tracer.queue_free)
+		tween.parallel().tween_property(node, "scale:x", 0.3, duration)  # thins out as it fades
+		tween.parallel().tween_property(node, "scale:z", 0.3, duration)
+		tween.tween_callback(node.queue_free)
 
-static func _create_tracer_mesh(start: Vector3, end: Vector3, color: Color) -> MeshInstance3D:
+static func _create_tracer_mesh(start: Vector3, end: Vector3, color: Color, radius: float = TRACER_CORE, alpha: float = 0.9, energy: float = 3.0) -> MeshInstance3D:
 	var mesh_instance = MeshInstance3D.new()
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	var direction = end - start
 	var length = direction.length()
 
 	# Create cylinder mesh for tracer
 	var mesh = CylinderMesh.new()
-	mesh.top_radius = 0.02
-	mesh.bottom_radius = 0.02
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
 	mesh.height = length
+	mesh.radial_segments = 8
+	mesh.rings = 1
 	mesh_instance.mesh = mesh
 
 	# Position at midpoint
@@ -77,10 +86,10 @@ static func _create_tracer_mesh(start: Vector3, end: Vector3, color: Color) -> M
 
 	# Glowing material
 	var material = StandardMaterial3D.new()
-	material.albedo_color = Color(color.r, color.g, color.b, 0.9)
+	material.albedo_color = Color(color.r, color.g, color.b, alpha)
 	material.emission_enabled = true
 	material.emission = color
-	material.emission_energy_multiplier = 3.0
+	material.emission_energy_multiplier = energy
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mesh_instance.material_override = material

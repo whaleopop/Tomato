@@ -7,6 +7,9 @@ class_name PeelTrap
 const MAX_PEELS: int = 2
 const FLIGHT_TIME: float = 0.3
 
+func aim_preview() -> Dictionary:
+	return {"shape": "circle", "range": max_range, "radius": 0.8}
+
 func _init():
 	ability_name = "Peel Trap"
 	cooldown = 8.0

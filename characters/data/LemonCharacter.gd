@@ -5,7 +5,7 @@ class_name LemonCharacter
 func _init():
 	character_name = "Lemon"
 	description = "Small, fast and very sour. Leaves a sting"
-	base_health = 80.0
+	base_health = 160.0
 	base_speed = 7.5
 	model_path = "res://models/characters/Lemon.glb"
 	color = Color(1.0, 0.82, 0.15)

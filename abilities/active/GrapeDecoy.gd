@@ -8,6 +8,9 @@ var stealth_time: float = 3.5
 var decoy_time: float = 2.6
 var decoy_speed: float = 6.0
 
+func aim_preview() -> Dictionary:
+	return {"shape": "line", "range": decoy_speed * decoy_time, "width": 0.8}
+
 func _init():
 	ability_name = "Grape Decoy"
 	cooldown = 12.0

@@ -5,7 +5,7 @@ class_name PepperCharacter
 func _init():
 	character_name = "Pepper"
 	description = "A hot-tempered bell pepper with spicy attacks"
-	base_health = 75.0
+	base_health = 150.0
 	base_speed = 8.0
 	model_path = "res://models/characters/Pepper.glb"
 	color = Color(0.9, 0.18, 0.12)

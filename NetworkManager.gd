@@ -5,6 +5,11 @@ extends Node
 
 signal connection_lost(reason: String)
 signal match_ended(winner_id: int, winner_name: String)  # 0 = nobody left standing
+## Somebody went down (ServerPlayer._on_died): the kill feed, the victim's killer card and
+## spectating. killer_id 0 = nobody else (the zone, map events, your own grenade).
+## info: victim_name, victim_hero, killer_name, killer_hero, killer_wear, weapon (RangedWeapon type, -1
+## none), killer_health, killer_max_health, killer_kills
+signal player_killed(victim_id: int, killer_id: int, info: Dictionary)
 
 var game_server: GameServer = null
 var game_client: GameClient = null
@@ -305,6 +310,18 @@ func _receive_map_event(kind: String, data: Dictionary, elapsed: float):
 	elif game_client:
 		game_client.pending_map_events.append([kind, data, elapsed, Time.get_ticks_msec()])
 	map_event.emit(kind, data, elapsed)
+
+# === Kills ===
+
+## Server: tell everyone who took whom out (reliable: the feed and the victim's card need it)
+func broadcast_kill(victim_id: int, killer_id: int, info: Dictionary):
+	if _has_remote_peers():
+		_receive_kill.rpc(victim_id, killer_id, info)
+	player_killed.emit(victim_id, killer_id, info)  # the host's own HUD
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_kill(victim_id: int, killer_id: int, info: Dictionary):
+	player_killed.emit(victim_id, killer_id, info)
 
 # === Match end ===
 

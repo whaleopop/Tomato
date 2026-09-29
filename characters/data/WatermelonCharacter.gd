@@ -5,7 +5,7 @@ class_name WatermelonCharacter
 func _init():
 	character_name = "Watermelon"
 	description = "A slow, heavy melon with the thickest rind on the island"
-	base_health = 160.0
+	base_health = 320.0
 	base_speed = 3.8
 	model_path = "res://models/characters/Watermelon.glb"
 	color = Color(0.25, 0.6, 0.25)

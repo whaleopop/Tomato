@@ -53,6 +53,15 @@ func deactivate(entity):  # entity: Entity
 	_on_deactivate(entity)
 	ability_finished.emit()
 
+## What the aim preview (PlayerHUD's AimOverlay) draws while the ability key is held:
+## shape "circle" (an area of `radius` at the aimed spot, no further than `range`), "cone" (`range`
+## long, `angle` degrees wide, towards the aim), "line" (`range` long, `width` wide) or "self"
+## (an area of `radius` around the hero). Override it next to the numbers it shows.
+func aim_preview() -> Dictionary:
+	if max_range > 0.0:
+		return {"shape": "circle", "range": max_range, "radius": 1.0}
+	return {"shape": "self", "radius": 1.5}
+
 func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity
 	return true
 

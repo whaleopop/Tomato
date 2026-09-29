@@ -5,7 +5,7 @@ class_name BeetCharacter
 func _init():
 	character_name = "Beet"
 	description = "A powerful melee fighter with crushing attacks"
-	base_health = 110.0
+	base_health = 220.0
 	base_speed = 5.5
 	model_path = "res://models/characters/Beet.glb"
 	color = Color(0.72, 0.1, 0.3)

@@ -1,4 +1,6 @@
-## Lobby / spawn selection: players (left), hex map (center), spawn info + READY (right)
+## Lobby / spawn selection: players (left), hex map (center), spawn info + READY (right).
+## The map is a 3D diorama (HexMap3DView) by default; the flat HexMapView is one click away.
+## Both get the same tiles / reserved / selection, map_view answers the questions.
 extends Control
 class_name SpawnSelectMenu
 
@@ -11,6 +13,9 @@ const BIOME_NAMES = ["Grass", "Forest", "Desert", "Rock", "Water", "Shallow wate
 
 # UI elements
 var map_view: HexMapView = null
+var map_3d: HexMap3DView = null
+var view_button: Button = null
+var map_hint: Label = null
 var info_label: Label = null
 var ready_button: Button = null
 var countdown_label: Label = null
@@ -92,6 +97,30 @@ func _create_center_panel() -> Control:
 	map_view.hex_clicked.connect(_on_hex_pressed)
 	map_view.hex_hovered.connect(_on_hex_hovered)
 	card.add_child(map_view)
+
+	map_3d = HexMap3DView.new()
+	map_3d.hex_clicked.connect(_on_hex_pressed)
+	map_3d.hex_hovered.connect(_on_hex_hovered)
+	card.add_child(map_3d)
+	map_view.visible = false
+
+	# 3D / 2D switch and the camera hint in the map's corners
+	var corners = VBoxContainer.new()
+	corners.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(corners)
+	var top_row = HBoxContainer.new()
+	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	top_row.add_theme_constant_override("separation", 12)
+	corners.add_child(top_row)
+	map_hint = UITheme.create_label("Drag to turn  ·  right drag to move  ·  wheel to zoom  ·  double click to reset", top_row, UITheme.FONT_TINY)
+	map_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	map_hint.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	map_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	map_hint.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	map_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	view_button = UITheme.create_button("2D MAP", top_row, Vector2(120, 38))
+	view_button.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	view_button.pressed.connect(_toggle_map_view)
 
 	# Overlays on top of the map (spinner while waiting, countdown)
 	var overlay = CenterContainer.new()
@@ -176,10 +205,21 @@ func setup(grid_data: Dictionary, p_reserved_spawns: Array, player_id: int):
 func _deferred_setup():
 	if not map_view:
 		_create_ui()
-	map_view.set_tiles(hex_grid_data)
-	map_view.set_reserved(reserved_spawns)
+	for view in _views():
+		view.set_tiles(hex_grid_data)
+		view.set_reserved(reserved_spawns)
 	map_spinner.visible = hex_grid_data.is_empty()
 	show_status("Click a free hex, then press READY")
+
+func _views() -> Array:
+	return [map_view, map_3d]
+
+func _toggle_map_view():
+	var flat = not map_view.visible
+	map_view.visible = flat
+	map_3d.visible = not flat
+	map_hint.visible = not flat
+	view_button.text = "3D MAP" if flat else "2D MAP"
 
 func has_map() -> bool:
 	return map_view != null and not map_view.tiles.is_empty()
@@ -205,7 +245,8 @@ func _on_hex_pressed(coords: Vector2i):
 		return
 
 	selected_spawn = coords
-	map_view.set_selected(coords)
+	for view in _views():
+		view.set_selected(coords)
 	info_label.text = _describe(coords)
 	ready_button.disabled = false
 	spawn_confirmed.emit(coords)
@@ -249,7 +290,8 @@ func _on_back_pressed():
 func clear_selection(message: String = ""):
 	selected_spawn = INVALID
 	if map_view:
-		map_view.set_selected(INVALID)
+		for view in _views():
+			view.set_selected(INVALID)
 	info_label.text = ""
 	ready_button.disabled = true
 	if is_ready:
@@ -265,7 +307,8 @@ func update_reserved_spawns(new_reserved: Array):
 			filtered.append(c)
 	reserved_spawns = filtered
 	if map_view:
-		map_view.set_reserved(filtered)
+		for view in _views():
+			view.set_reserved(filtered)
 
 func update_players_list(players_data: Dictionary):
 	_hide_hero_card()

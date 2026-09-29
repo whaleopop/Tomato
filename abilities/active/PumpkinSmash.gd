@@ -6,6 +6,9 @@ var damage: float = 40.0
 var radius: float = 4.0
 var push_speed: float = 10.0
 
+func aim_preview() -> Dictionary:
+	return {"shape": "self", "radius": radius}
+
 func _init():
 	ability_name = "Pumpkin Smash"
 	cooldown = 10.0

@@ -7,6 +7,9 @@ var damage: float = 35.0
 var radius: float = 1.9
 var stun_time: float = 1.2
 var fall_time: float = 0.75
+
+func aim_preview() -> Dictionary:
+	return {"shape": "circle", "range": max_range, "radius": radius}
 const DROP_HEIGHT: float = 12.0
 
 func _init():

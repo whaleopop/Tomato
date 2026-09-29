@@ -18,10 +18,12 @@ var current_aim_position: Vector3 = Vector3.ZERO
 # One-shot actions are latched every frame and sent with the next input tick: checking
 # is_action_just_pressed only on the 30 Hz tick used to drop most key presses and clicks.
 const LATCHED_ACTIONS = ["jump", "attack", "reload", "interact",
-	"ability_1", "ability_2", "ability_3", "ability_4",
 	"weapon_slot_1", "weapon_slot_2", "weapon_slot_3", "weapon_slot_4", "weapon_slot_5"]
 var _latched: Dictionary = {}
 var _was_blocked: bool = false
+## Abilities cast on release: while the key is held AimOverlay (PlayerHUD) shows the area / range.
+## A quick tap casts like before; RMB (top-down) or opening a menu cancels.
+var aiming_ability: int = -1
 
 func _ready():
 	pass
@@ -37,6 +39,7 @@ func _process(delta: float):
 	var blocked = _input_blocked()
 	if blocked:
 		_latched.clear()
+		aiming_ability = -1
 		if not _was_blocked:
 			_send_stop()  # let go of everything when a menu opens or we die
 		_was_blocked = true
@@ -49,6 +52,7 @@ func _process(delta: float):
 	for action in LATCHED_ACTIONS:
 		if Input.is_action_just_pressed(action):
 			_latched[action] = true
+	_update_ability_aim()
 
 	input_timer += delta
 
@@ -56,6 +60,19 @@ func _process(delta: float):
 		input_timer = 0.0
 		_capture_and_send_input()
 		_latched.clear()
+
+func _update_ability_aim():
+	for i in 4:
+		var action = "ability_%d" % (i + 1)
+		if Input.is_action_just_pressed(action):
+			aiming_ability = i
+		if aiming_ability == i and not Input.is_action_pressed(action):
+			_latched[action] = true  # released (or tapped within one frame): cast
+			aiming_ability = -1
+	var camera = get_viewport().get_camera_3d()
+	var tps = camera is CameraController and camera.third_person
+	if aiming_ability >= 0 and not tps and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		aiming_ability = -1  # changed my mind
 
 func _pressed(action: String) -> bool:
 	return _latched.get(action, false)
@@ -89,6 +106,9 @@ func _update_aim_direction():
 	var camera = get_viewport().get_camera_3d()
 	if not camera:
 		return
+	if camera is CameraController and camera.third_person:
+		_update_aim_third_person(camera)
+		return
 
 	var mouse_pos = get_viewport().get_mouse_position()
 	var ray_origin = camera.project_ray_origin(mouse_pos)
@@ -113,6 +133,24 @@ func _update_aim_direction():
 				else:
 					player.rotation.y = target_angle  # Мгновенная ротация (по умолчанию для мыши)
 
+## Third person: the hero faces where the camera looks; the aim point is what lies under the
+## crosshair (screen center), searched from the hero's distance on so walls behind it don't count
+func _update_aim_third_person(camera: CameraController):
+	var fwd = camera.tps_forward()
+	player.rotation.y = atan2(fwd.x, fwd.z)
+	var center = CameraController.aim_screen_point(get_viewport())
+	var origin = camera.project_ray_origin(center)
+	var dir = camera.project_ray_normal(center)
+	var start = origin + dir * max(0.0, (player.global_position - origin).dot(dir))
+	current_aim_position = start + dir * 80.0
+	var world_3d = get_viewport().world_3d
+	if world_3d:
+		var query = PhysicsRayQueryParameters3D.create(start, current_aim_position)
+		query.exclude = [player.get_rid()]
+		var hit = world_3d.direct_space_state.intersect_ray(query)
+		if not hit.is_empty():
+			current_aim_position = hit.position
+
 ## Get current aim position for crosshair
 func get_aim_position() -> Vector3:
 	return current_aim_position
@@ -125,8 +163,12 @@ func _mouse_target() -> Dictionary:
 	var world_3d = get_viewport().world_3d
 	if not camera or not world_3d:
 		return target
-	var mouse_pos = get_viewport().get_mouse_position()
+	var mouse_pos = CameraController.aim_screen_point(get_viewport())
 	var ray_origin = camera.project_ray_origin(mouse_pos)
+	if camera is CameraController and camera.third_person:
+		# Skip what lies between the camera and the hero (bushes, walls behind us)
+		var dir = camera.project_ray_normal(mouse_pos)
+		ray_origin += dir * max(0.0, (player.global_position - ray_origin).dot(dir))
 	var query = PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + camera.project_ray_normal(mouse_pos) * 1000.0)
 	query.exclude = [player.get_rid()]  # clicking on your own character must not hit you
 	var result = world_3d.direct_space_state.intersect_ray(query)

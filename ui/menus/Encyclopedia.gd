@@ -438,7 +438,7 @@ func _container_info(box: VBoxContainer, type: int, items: int, health_pack: boo
 		for w in weights.values():
 			total += w
 		_fact(box, "On the map", tr("%d%% of the containers") % int(round(100.0 * weights.get(type, 0) / max(total, 1))))
-		_note(box, "Walk up and press E: it opens with a little show and throws the loot around.")
+		_note(box, "Walk up and press X: it opens with a little show and throws the loot around.")
 
 # ---------------------------------------------------------------- map events
 
@@ -583,13 +583,15 @@ func _build_howto() -> Control:
 		["LMB", "Shoot (hold for automatic fire)"],
 		["R", "Reload"],
 		["1 – 5", "Switch weapon"],
-		["F", "Use your ability"],
-		["E", "Open containers, pick up loot"],
+		["F", "Use your ability (hold to see its area, release to cast)"],
+		["X", "Open containers, pick up loot"],
 		["I", "Inventory"],
 		["Shift", "Sprint"],
 		["Space", "Jump"],
-		["Q / Z", "Rotate the camera"],
-		["Wheel", "Zoom"],
+		["Q / E", "Rotate the camera"],
+		["Mouse at the edge", "The camera turns after the cursor"],
+		["V", "Third-person camera on / off"],
+		["RMB", "Aim over the shoulder (third person)"],
 		["Esc", "Pause"],
 	]
 	var grid = GridContainer.new()

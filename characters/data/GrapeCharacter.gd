@@ -5,7 +5,7 @@ class_name GrapeCharacter
 func _init():
 	character_name = "Grape"
 	description = "A whole bunch of trouble: now you see it, now you don't"
-	base_health = 90.0
+	base_health = 180.0
 	base_speed = 6.0
 	model_path = "res://models/characters/Grape.glb"
 	color = Color(0.5, 0.28, 0.7)

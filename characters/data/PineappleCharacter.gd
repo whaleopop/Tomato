@@ -5,7 +5,7 @@ class_name PineappleCharacter
 func _init():
 	character_name = "Pineapple"
 	description = "A grumpy tropical brawler in spiky armor. Lands on your head, crown first"
-	base_health = 125.0
+	base_health = 250.0
 	base_speed = 5.0
 	model_path = "res://models/characters/Pineapple.glb"
 	color = Color(0.95, 0.66, 0.12)
