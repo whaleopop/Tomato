@@ -19,6 +19,8 @@ const ACTIONS = [
 	["interact", "Open containers, pick up loot"],
 	["inventory", "Inventory"],
 	["ability_1", "Ability"],
+	["use_heal", "Use a health pack"],
+	["use_shield", "Drink a shield"],
 	["weapon_slot_1", "Weapon 1"],
 	["weapon_slot_2", "Weapon 2"],
 	["weapon_slot_3", "Weapon 3"],

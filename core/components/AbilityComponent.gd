@@ -70,6 +70,9 @@ func activate_ability(ability_index: int, target_position: Vector3 = Vector3.ZER
 		return false
 
 	var ability = active_abilities[ability_index]
+	var inventory = entity.get_component("InventoryComponent") if entity and entity.has_method("get_component") else null
+	if inventory:
+		inventory.cancel_use()  # casting stops a heal / shield in progress
 
 	# Check cooldown
 	if ability_cooldowns.has(ability) and ability_cooldowns[ability] > 0.0:

@@ -17,7 +17,7 @@ var current_aim_position: Vector3 = Vector3.ZERO
 
 # One-shot actions are latched every frame and sent with the next input tick: checking
 # is_action_just_pressed only on the 30 Hz tick used to drop most key presses and clicks.
-const LATCHED_ACTIONS = ["jump", "attack", "reload", "interact",
+const LATCHED_ACTIONS = ["jump", "attack", "reload", "interact", "use_heal", "use_shield",
 	"weapon_slot_1", "weapon_slot_2", "weapon_slot_3", "weapon_slot_4", "weapon_slot_5"]
 var _latched: Dictionary = {}
 var _was_blocked: bool = false
@@ -240,6 +240,14 @@ func _capture_and_send_input():
 		if _pressed("ability_%d" % (i + 1)):
 			input_data["ability_index"] = i
 			input_data["target_position"] = _mouse_target().position
+
+	# Health pack / shield: takes a few seconds (InventoryComponent.start_use), also on the server
+	for kind in ["heal", "shield"]:
+		if _pressed("use_" + kind):
+			input_data["use_consumable"] = kind
+			var inventory = player.get_component("InventoryComponent")
+			if inventory:
+				inventory.start_use(kind)
 
 	# Capture interact input (E key)
 	if _pressed("interact"):

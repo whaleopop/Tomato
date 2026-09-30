@@ -193,10 +193,12 @@ func process_input(input_data: Dictionary):
 	if inventory_comp:
 		if input_data.has("use_item"):
 			inventory_comp.use_item(int(input_data.use_item))
+		if input_data.has("use_consumable"):
+			inventory_comp.start_use(String(input_data.use_consumable))
 		if input_data.has("drop_item"):
-			inventory_comp.remove_item(int(input_data.drop_item))
+			inventory_comp.drop_item(int(input_data.drop_item))
 		if input_data.has("drop_weapon"):
-			inventory_comp.remove_weapon_from_slot(int(input_data.drop_weapon))
+			inventory_comp.drop_weapon(int(input_data.drop_weapon))
 
 	if input_data.get("reload", false):
 		var combat_comp = player_entity.get_component("CombatComponent")

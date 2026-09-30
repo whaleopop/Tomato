@@ -43,7 +43,7 @@ var terrain_biome: int = -1  # the tile under the feet (BiomeRules: grip here, e
 ## and the owning client (the same inputs); the server's value comes back in the player state
 ## ("stamina") and corrects the client when they drift apart.
 const STAMINA_MAX: float = 100.0
-const STAMINA_DRAIN: float = 22.0       # per second of sprinting: ~4.5 s from full
+const STAMINA_DRAIN: float = 44.0       # per second of sprinting: ~2.3 s from full
 const STAMINA_REGEN: float = 20.0       # per second once resting
 const STAMINA_REGEN_DELAY: float = 0.8  # seconds after the last sprint before it refills
 const STAMINA_RESTART: float = 30.0     # after running dry, sprinting comes back at this much
@@ -127,8 +127,12 @@ func _update_character_body(delta: float):
 	# Calculate horizontal movement
 	if is_grounded:
 		_update_terrain(body)
-	var running = _update_stamina(delta)
+	var inventory = entity.get_component("InventoryComponent") if entity.has_method("get_component") else null
+	var busy = inventory != null and inventory.using != ""  # drinking a shield / using a pack
+	var running = _update_stamina(delta) and not busy
 	var current_speed = speed * (SPRINT_MULTIPLIER if running else 1.0) * terrain_multiplier
+	if busy:
+		current_speed *= InventoryComponent.USE_MOVE_FACTOR
 	if status:
 		current_speed *= status.movement_factor()
 	# Heavy guns slow you down while in hand (RangedWeapon.move_factor: the minigun)

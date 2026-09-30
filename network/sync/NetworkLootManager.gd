@@ -24,12 +24,22 @@ var opened_ids: Dictionary = {}  # container_id -> true
 var picked_ids: Dictionary = {}  # item_id -> true
 var supply_drops: Array = []     # server: [ground_pos, loot_seed, container_id, spawn_time_s, rich]
 const SUPPLY_DROP_FALL_TIME: float = 4.0
+## Things players threw out of the bag / weapon slots (drop_from): the server spawns them and tells
+## everyone (_client_spawn_drop); ids from DROP_ID_START so they never meet container item ids
+const DROP_ID_START: int = 50000000
+const DROP_DISTANCE: float = 1.6
+var next_drop_id: int = DROP_ID_START
+var dropped: Dictionary = {}          # server: id -> [desc, pos, from, dropper_id] still on the ground
+var pending_dropped: Array = []       # late joiner / world not ready: [id, desc, pos, from, dropper_id]
 
 # Set by NetworkManager when the server/client starts
 var is_server: bool = false
 
 func reset():
 	next_container_id = 1
+	next_drop_id = DROP_ID_START
+	dropped.clear()
+	pending_dropped.clear()
 	containers.clear()
 	items.clear()
 	opened_ids.clear()
@@ -42,7 +52,10 @@ func get_late_join_state() -> Dictionary:
 	var drops: Array = []
 	for d in supply_drops:
 		drops.append([d[0], d[1], d[2], now - d[3] > SUPPLY_DROP_FALL_TIME, d[4]])
-	return {"opened": opened_ids.keys(), "picked": picked_ids.keys(), "drops": drops}
+	var thrown: Array = []
+	for id in dropped:
+		thrown.append([id] + dropped[id])
+	return {"opened": opened_ids.keys(), "picked": picked_ids.keys(), "drops": drops, "thrown": thrown}
 
 ## Client: apply it (containers / items not generated yet are handled when they register)
 func apply_late_join_state(state: Dictionary, game_client: GameClient):
@@ -52,6 +65,14 @@ func apply_late_join_state(state: Dictionary, game_client: GameClient):
 		picked_ids[int(id)] = true
 	if game_client:
 		game_client.pending_supply_drops.append_array(state.get("drops", []))
+	pending_dropped.append_array(state.get("thrown", []))
+
+## Late joiner, once the map is there (ClientWorld): the things lying around from drops
+func spawn_pending_drops(parent: Node) -> void:
+	for d in pending_dropped:
+		if not picked_ids.has(int(d[0])):
+			_spawn_drop(parent, int(d[0]), d[1], d[2], d[2], int(d[4]), false)
+	pending_dropped.clear()
 
 func record_supply_drop(ground_pos: Vector3, loot_seed: int, container_id: int, rich: bool = false):
 	supply_drops.append([ground_pos, loot_seed, container_id, Time.get_ticks_msec() / 1000.0, rich])
@@ -110,6 +131,7 @@ func _on_item_picked_up(_item: LootItem, player: Player, item_id: int):
 
 	items.erase(item_id)
 	picked_ids[item_id] = true
+	dropped.erase(item_id)
 	item_picked_up_network.emit(item_id, player_id)
 
 func _has_peer() -> bool:
@@ -238,6 +260,89 @@ func spawn_mirrored_supply_drop(spawner: LootSpawner, ground_pos: Vector3, loot_
 		return
 	var container = spawner.spawn_supply_drop_at(ground_pos, loot_seed, landed, rich)
 	register_container(container, container_id)
+
+# ============ Dropped items ============
+
+## A network-safe description of an item (the item objects themselves never travel); {} = can't drop
+static func describe(item: ItemData) -> Dictionary:
+	if item is RangedWeapon:
+		return {"t": LootItem.ItemType.WEAPON, "w": int(item.weapon_type), "ammo": item.current_ammo}
+	if item is HealthPack:
+		return {"t": LootItem.ItemType.HEALTH, "v": item.heal_amount}
+	if item is ShieldPack:
+		return {"t": LootItem.ItemType.SHIELD, "v": item.shield_amount}
+	if item is AmmoItem:
+		return {"t": LootItem.ItemType.AMMO, "a": int(item.ammo_type), "n": item.ammo_amount}
+	return {}
+
+## Drops one after another land in a fan in front of you, not in one pile
+static func fan_angle(n: int) -> float:
+	return (posmod(n, 5) - 2) * 0.45
+
+static func make_item(desc: Dictionary) -> LootItem:
+	var item = LootItem.new()
+	item.respawn_time = 0.0
+	item.item_type = int(desc.get("t", 0))
+	match item.item_type:
+		LootItem.ItemType.WEAPON:
+			var weapon = RangedWeapon.create_weapon(int(desc.get("w", 0)))
+			weapon.current_ammo = int(desc.get("ammo", weapon.current_ammo))
+			item.item_name = weapon.item_name
+			item.item_data = weapon
+		LootItem.ItemType.HEALTH:
+			item.item_name = "Health Pack"
+			item.item_value = float(desc.get("v", LootContainer.HEALTH_PACK_HEAL))
+		LootItem.ItemType.SHIELD:
+			item.item_name = "Shield"
+			item.item_value = float(desc.get("v", 30.0))
+		LootItem.ItemType.AMMO:
+			var ammo_type = int(desc.get("a", 0))
+			item.item_name = AmmoItem.get_ammo_type_name(ammo_type)
+			item.item_value = float(ammo_type)
+			item.item_data = AmmoItem.new(ammo_type, int(desc.get("n", 30)))
+	return item
+
+## Server (the host's own drops too): the item flies out in front of the player and lands there
+## for everyone. The dropper can't walk it back up for a moment (LootItem.no_auto_pickup_*).
+func drop_from(player: Node3D, item: ItemData) -> void:
+	var desc = describe(item)
+	if desc.is_empty() or not is_instance_valid(player) or not player.get_parent():
+		return
+	var fwd = player.global_transform.basis.z  # heroes face +Z
+	fwd.y = 0.0
+	fwd = fwd.normalized() if fwd.length_squared() > 0.001 else Vector3.FORWARD
+	var id = next_drop_id
+	fwd = fwd.rotated(Vector3.UP, fan_angle(id))
+	var pos = player.global_position + fwd * DROP_DISTANCE + Vector3(0, 0.45, 0)
+	var from = player.global_position + Vector3(0, 1.0, 0)
+	next_drop_id += 1
+	var dropper = int(player.get("entity_id")) if player.get("entity_id") != null else 0
+	dropped[id] = [desc, pos, from, dropper]
+	_spawn_drop(player.get_parent(), id, desc, pos, from, dropper, true)
+	if _has_peer():
+		_client_spawn_drop.rpc(id, desc, pos, from, dropper)
+
+@rpc("authority", "call_remote", "reliable")
+func _client_spawn_drop(id: int, desc: Dictionary, pos: Vector3, from: Vector3, dropper: int):
+	if picked_ids.has(id) or items.has(id):
+		return
+	var local = _get_local_player()
+	var parent = local.get_parent() if local else null
+	if parent == null:
+		pending_dropped.append([id, desc, pos, from, dropper])  # our world isn't there yet
+		return
+	_spawn_drop(parent, id, desc, pos, from, dropper, true)
+
+func _spawn_drop(parent: Node, id: int, desc: Dictionary, pos: Vector3, from: Vector3, dropper: int, fly: bool) -> void:
+	var item = make_item(desc)
+	item.no_auto_pickup_id = dropper
+	item.no_auto_pickup_until = Time.get_ticks_msec() + 2000
+	parent.add_child(item)
+	item.global_position = pos
+	item.original_position = item.position
+	register_item(item, id)
+	if fly and item.is_inside_tree():
+		item.launch(from)
 
 # ============ Utility Methods ============
 

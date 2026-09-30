@@ -71,7 +71,7 @@ const RICH_WEAPON_WEIGHTS = {
 }
 const RICH_COLOR := Color(1.0, 0.8, 0.3)
 ## A health pack heals this much (heroes have 150-320 HP: fewer packs, each one counts)
-const HEALTH_PACK_HEAL: float = 50.0
+const HEALTH_PACK_HEAL: float = 25.0
 ## Rounds in one ammo pickup: about two magazines of the guns that use it (the guide shows them)
 const AMMO_PER_PICKUP = {
 	AmmoItem.AmmoType.PISTOL: 36,

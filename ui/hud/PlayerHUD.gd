@@ -16,6 +16,7 @@ var alert_holder: CenterContainer = null
 var alert_list: VBoxContainer = null  # a few alerts stack (a zone step and its supply drop come together)
 var death_screen: Control = null
 var kill_feed: KillFeed = null      # every elimination, top right
+var consumable_bar: ConsumableBar = null  # health packs / shields and their use progress
 var spectator: Spectator = null     # after we are out: watch the killer / the survivors
 var _death_info: Dictionary = {}    # our own elimination: {killer_id, info} (NetworkManager.player_killed)
 var _killer_slot: Control = null    # the death card's killer part, filled when the kill arrives
@@ -73,6 +74,15 @@ func _ready():
 	ability_bar.offset_top = -100
 	ability_bar.offset_bottom = -22
 	add_child(ability_bar)
+
+	consumable_bar = ConsumableBar.new()
+	consumable_bar.name = "ConsumableBar"
+	consumable_bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	consumable_bar.offset_left = -160
+	consumable_bar.offset_right = 160
+	consumable_bar.offset_top = -196
+	consumable_bar.offset_bottom = -106
+	add_child(consumable_bar)
 
 	ammo_display = AmmoDisplay.new()
 	ammo_display.name = "AmmoDisplay"
@@ -139,6 +149,8 @@ func setup(p_player: Player, hex_grid: HexGrid = null):
 
 	var combat = player.get_component("CombatComponent")
 	var inventory = player.get_component("InventoryComponent")
+	if inventory:
+		consumable_bar.setup(inventory)
 	if combat:
 		ammo_display.setup(combat, inventory)
 	if inventory:
@@ -584,7 +596,7 @@ func _on_player_died():
 	spectator.leave_pressed.connect(_on_leave_pressed)
 	spectator._names = _known_names.duplicate()
 	spectator.start(player, int(_death_info.get("killer_id", 0)))
-	for c in [ability_bar, crosshair, aim_overlay, weapon_slots_ui]:
+	for c in [ability_bar, crosshair, aim_overlay, weapon_slots_ui, consumable_bar]:
 		if c:
 			c.visible = false
 	if ammo_display:

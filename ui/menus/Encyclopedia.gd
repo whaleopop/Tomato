@@ -347,12 +347,14 @@ func _item_entries() -> Array:
 	var entries: Array = []
 	var T = LootItem.ItemType
 	entries.append(_pickup_entry("Health Pack", T.HEALTH, null, _loot_chance(T.HEALTH), [
-		["Effect", tr("Heals %d HP right away") % int(LootContainer.HEALTH_PACK_HEAL)],
+		["Effect", tr("Heals %d HP") % int(LootContainer.HEALTH_PACK_HEAL)],
+		["Use", tr("Health pack: %s, %.0f s (moving slowly, a shot cancels)") % [Keybinds.label("use_heal"), InventoryComponent.USE_TIMES["heal"]]],
 		["Where", "Rare: now and then in any container; the golden drops always have one"],
 	], tr("Picked up automatically when you walk over it, or with %s.") % Keybinds.label("interact")))
 	entries.append(_pickup_entry("Shield", T.SHIELD, null, _loot_chance(T.SHIELD), [
 		["Effect", tr("+%d shield, up to %d") % [30, int(HealthComponent.MAX_SHIELD)]],
 		["How it works", "Takes the damage before your health does"],
+		["Use", tr("Shield: %s, %.1f s (moving slowly, a shot cancels)") % [Keybinds.label("use_shield"), InventoryComponent.USE_TIMES["shield"]]],
 		["Lasts", "Until it is shot away or you are eliminated"],
 	], "Your shield is the blue bar under the health bar."))
 	entries.append(_pickup_entry("Ability Boost", T.ABILITY_BOOST, null, _loot_chance(T.ABILITY_BOOST), [
@@ -608,6 +610,8 @@ func _build_howto() -> Control:
 		[K.call("ability_1"), "Use your ability (hold to see its area, release to cast)"],
 		[K.call("interact"), "Open containers, pick up loot"],
 		[K.call("inventory"), "Inventory"],
+		[K.call("use_heal"), "Use a health pack"],
+		[K.call("use_shield"), "Drink a shield"],
 		[K.call("sprint"), "Sprint (uses stamina)"],
 		[K.call("jump"), "Jump"],
 		[K.call("camera_mode"), "Third-person camera on / off"],

@@ -90,6 +90,7 @@ func generate_map_with_seed(seed_value: int, radius: int = MapGenerator.MATCH_MA
 				var landed: bool = drop.size() > 3 and drop[3]  # came down before we joined
 				var rich: bool = drop.size() > 4 and drop[4]
 				loot_manager.spawn_mirrored_supply_drop(loot_spawner, drop[0], drop[1], drop[2], landed, rich)
+			loot_manager.spawn_pending_drops(self)  # things players threw away before we joined
 		network_manager.game_client.pending_supply_drops = []
 		# Zone steps announced while the map was generating (only the latest one still matters)
 		var zone_events = network_manager.game_client.pending_zone

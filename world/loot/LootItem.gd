@@ -22,6 +22,10 @@ enum ItemType {
 var item_data: ItemData = null
 
 var is_active: bool = true
+## Just dropped by this player (NetworkLootManager.drop_from): they don't pick it back up by walking
+## over it until no_auto_pickup_until (msec); the interact key still works
+var no_auto_pickup_id: int = -1
+var no_auto_pickup_until: int = 0
 var visual: Node3D = null            # the model: bobs and spins
 var halo: MeshInstance3D = null      # glow on the ground in the loot type's color
 var beam: MeshInstance3D = null      # light pillar for the good stuff (weapons, shields, boosts)
@@ -271,6 +275,8 @@ func _on_body_entered(body: Node3D):
 
 	if not body is Player:
 		return
+	if body.entity_id == no_auto_pickup_id and Time.get_ticks_msec() < no_auto_pickup_until:
+		return
 
 	# On a client only our own player may pick things up by walking over them.
 	# Pickups by anyone else are decided by the server and replicated via NetworkLootManager.
@@ -335,10 +341,12 @@ func _apply_effect(player: Player):
 			if ability:
 				ability.boost_cooldowns(item_value)
 		ItemType.SHIELD:
-			var health = player.get_component("HealthComponent")
-			if health and health.has_method("add_shield"):
-				health.add_shield(item_value)
-			print("[LootItem] Shield pickup (value: %f)" % item_value)
+			# Into the bag: drinking it takes time (InventoryComponent.start_use, E)
+			var inventory = player.get_component("InventoryComponent")
+			if inventory:
+				var pack = ShieldPack.new()
+				pack.shield_amount = item_value
+				inventory.add_item(pack)
 		ItemType.HARVEST:
 			MapEvents.apply_harvest(player, int(item_value))
 

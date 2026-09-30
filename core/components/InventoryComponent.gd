@@ -8,6 +8,18 @@ signal item_used(item: ItemData)
 signal inventory_full
 signal weapon_equipped(weapon: RangedWeapon, slot: int)
 signal weapon_slot_changed(slot: int)
+## Using a health pack / shield takes time (like every battle royale): use_started -> the HUD
+## shows the progress; walking is halved (MovementComponent), shooting or casting cancels
+## (CombatComponent / AbilityComponent call cancel_use). Runs on the server and the owner's
+## client alike; only the server's heal / shield counts (the state sync brings them).
+signal use_started(kind: String, seconds: float)
+signal use_finished(kind: String)
+signal use_cancelled(kind: String)
+const USE_TIMES = {"heal": 3.0, "shield": 2.5}
+const USE_MOVE_FACTOR: float = 0.5
+var using: String = ""
+var use_left: float = 0.0
+var _offline_drops: int = 0
 
 var inventory = null
 var max_size: int = 10
@@ -49,6 +61,78 @@ func remove_item(slot: int) -> ItemData:
 		item_removed.emit(item, slot)
 	return item
 
+## How many health packs ("heal") / shields ("shield") are in the bag
+func consumable_count(kind: String) -> int:
+	var n = 0
+	for i in inventory.slots.size():
+		if _kind_of(inventory.get_item(i)) == kind:
+			n += inventory.get_item_count(i)
+	return n
+
+static func _kind_of(item) -> String:
+	if item is HealthPack:
+		return "heal"
+	if item is ShieldPack:
+		return "shield"
+	return ""
+
+func start_use(kind: String) -> bool:
+	if not enabled or not USE_TIMES.has(kind) or using == kind or consumable_count(kind) <= 0:
+		return false
+	var health = entity.get_component("HealthComponent") if entity else null
+	if not health or health.is_dead:
+		return false
+	if kind == "heal" and health.current_health >= health.max_health:
+		return false  # nothing to heal: the pack stays
+	if kind == "shield" and health.shield >= HealthComponent.MAX_SHIELD:
+		return false
+	cancel_use()
+	using = kind
+	use_left = USE_TIMES[kind]
+	use_started.emit(kind, use_left)
+	return true
+
+func cancel_use() -> void:
+	if using == "":
+		return
+	var kind = using
+	using = ""
+	use_left = 0.0
+	use_cancelled.emit(kind)
+
+func use_progress() -> float:
+	return 1.0 - use_left / USE_TIMES[using] if using != "" else 0.0
+
+func update(delta: float):
+	if using == "":
+		return
+	var health = entity.get_component("HealthComponent") if entity else null
+	if not health or health.is_dead:
+		cancel_use()
+		return
+	use_left -= delta
+	if use_left > 0.0:
+		return
+	var kind = using
+	using = ""
+	for i in inventory.slots.size():
+		var item = inventory.get_item(i)
+		if _kind_of(item) != kind:
+			continue
+		if kind == "heal":
+			health.heal(item.heal_amount * float(entity.get_meta("heal_bonus", 1.0)))  # server only
+		elif _is_authority():
+			health.add_shield(item.shield_amount)
+		remove_item(i)
+		item_used.emit(item)
+		break
+	use_finished.emit(kind)
+
+func _is_authority() -> bool:
+	if not entity or not is_instance_valid(entity) or not entity.is_inside_tree():
+		return true
+	return entity.get_tree().get_multiplayer().is_server()
+
 func use_item(slot: int) -> bool:
 	if not enabled:
 		return false
@@ -59,8 +143,8 @@ func use_item(slot: int) -> bool:
 	
 	# Use item based on type
 	var used = false
-	if item is HealthPack:
-		used = _use_health_pack(item)
+	if item is HealthPack or item is ShieldPack:
+		return start_use(_kind_of(item))  # takes time; the item goes when it's done
 	elif item is Perk:
 		used = _use_perk(item)
 	
@@ -217,13 +301,59 @@ func remove_weapon_from_slot(slot: int) -> RangedWeapon:
 		return null
 
 	var weapon = weapon_slots[slot]
+	if weapon == null:
+		return null
 	weapon_slots[slot] = null
 
 	# If removed current weapon, switch to another
 	if slot == current_weapon_slot:
+		var combat = entity.get_component("CombatComponent") if entity else null
+		if combat:
+			combat.cancel_reload()
 		_switch_to_next_weapon()
-
+	# The HUD's slots (and the menu) redraw on this, whichever slot it was
+	weapon_slot_changed.emit(current_weapon_slot)
 	return weapon
+
+## Throw a weapon out of its slot onto the ground (the server spawns it for everyone)
+func drop_weapon(slot: int) -> bool:
+	var weapon = remove_weapon_from_slot(slot)
+	if weapon == null:
+		return false
+	_drop_to_ground(weapon)
+	return true
+
+## Throw one item of a bag slot onto the ground; false if it can't lie on the ground (perks)
+func drop_item(slot: int) -> bool:
+	var item = inventory.get_item(slot)
+	if item == null or NetworkLootManager.describe(item).is_empty():
+		return false
+	if _kind_of(item) != "" and _kind_of(item) == using and consumable_count(using) <= 1:
+		cancel_use()
+	remove_item(slot)
+	_drop_to_ground(item)
+	return true
+
+func _drop_to_ground(item: ItemData) -> void:
+	if not _is_authority():
+		return  # the server drops it and tells us
+	var network_manager = entity.get_node_or_null("/root/NetworkManager") if entity and entity.is_inside_tree() else null
+	if network_manager and network_manager.loot_manager:
+		network_manager.loot_manager.drop_from(entity, item)
+	elif entity and entity.get_parent():
+		# Offline (training ground): nobody to tell, just throw it
+		var ground = NetworkLootManager.make_item(NetworkLootManager.describe(item))
+		var fwd = entity.global_transform.basis.z
+		fwd.y = 0.0
+		fwd = fwd.normalized() if fwd.length_squared() > 0.001 else Vector3.FORWARD
+		_offline_drops += 1
+		fwd = fwd.rotated(Vector3.UP, NetworkLootManager.fan_angle(_offline_drops))
+		ground.no_auto_pickup_id = int(entity.get("entity_id")) if entity.get("entity_id") != null else -1
+		ground.no_auto_pickup_until = Time.get_ticks_msec() + 2000
+		entity.get_parent().add_child(ground)
+		ground.global_position = entity.global_position + fwd * NetworkLootManager.DROP_DISTANCE + Vector3(0, 0.45, 0)
+		ground.original_position = ground.position
+		ground.launch(entity.global_position + Vector3(0, 1.0, 0))
 
 ## Switch to weapon slot (0-4)
 func switch_weapon_slot(slot: int) -> bool:
@@ -273,8 +403,8 @@ func _switch_to_next_weapon():
 			switch_weapon_slot(next_slot)
 			return
 
-	# No weapons left
+	# No weapons left: empty hands (weapon_changed hides the gun model and the ammo display)
 	current_weapon_slot = 0
 	var combat = entity.get_component("CombatComponent") if entity else null
 	if combat:
-		combat.equipped_ranged_weapon = null
+		combat.equip_ranged_weapon(null)

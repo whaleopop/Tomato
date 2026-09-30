@@ -231,17 +231,19 @@ func _on_drop_pressed():
 		var w_slot = -(selected_slot + 100)
 		if inventory_component:
 			_send_to_server({"drop_weapon": w_slot})
-			inventory_component.remove_weapon_from_slot(w_slot)
+			if inventory_component.drop_weapon(w_slot):
+				info_label.text = tr("Weapon dropped")
 			_update_weapon_slots()
-			info_label.text = tr("Weapon dropped")
 		return
 	if selected_slot >= 0 and inventory_component:
 		var inventory = inventory_component.get_inventory()
 		if inventory and selected_slot < inventory.slots.size():
 			_send_to_server({"drop_item": selected_slot})
-			inventory_component.remove_item(selected_slot)
+			if inventory_component.drop_item(selected_slot):
+				info_label.text = tr("Item dropped")
+			else:
+				info_label.text = tr("This can't be dropped")
 			_update_inventory()
-			info_label.text = tr("Item dropped")
 
 func _send_to_server(action: Dictionary):
 	var owner_entity = inventory_component.entity if inventory_component else null

@@ -70,6 +70,9 @@ func can_shoot() -> bool:
 func attack(target_position: Vector3, target_entity = null) -> bool:  # target_entity: Entity
 	if not can_attack():
 		return false
+	var inventory = entity.get_component("InventoryComponent") if entity and entity.has_method("get_component") else null
+	if inventory:
+		inventory.cancel_use()  # shooting stops a heal / shield in progress
 
 	is_attacking = true
 	attack_started.emit()
