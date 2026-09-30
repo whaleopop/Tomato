@@ -17,7 +17,7 @@ const FLIGHT_TIME: float = 1.7
 const CLOSEUP_TIME: float = 1.9
 const OUTRO_TIME: float = 1.3
 const MAX_DURATION: float = 14.0
-const GAME_CAMERA_OFFSET := Vector3(0, 8.1, 2.6)  # where CameraController sits at its fixed (closest) zoom
+const GAME_CAMERA_OFFSET := Vector3(0, 8.8, 1.2)  # where CameraController sits (closest zoom, DEFAULT_PITCH)
 
 var current_phase: Phase = Phase.RIDE
 var elapsed_time: float = 0.0

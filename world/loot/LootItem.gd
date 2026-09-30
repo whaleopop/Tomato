@@ -89,13 +89,15 @@ func _update_interact_prompt():
 	if dist <= INTERACT_RANGE:
 		if not interact_prompt:
 			_create_interact_prompt()
+		if not interact_prompt.visible:
+			interact_prompt.text = "[%s] %s" % [Keybinds.label("interact"), tr(item_name)]  # the current key
 		interact_prompt.visible = true
 	elif interact_prompt:
 		interact_prompt.visible = false
 
 func _create_interact_prompt():
 	interact_prompt = Label3D.new()
-	interact_prompt.text = "[X] %s" % tr(item_name)
+	interact_prompt.text = "[%s] %s" % [Keybinds.label("interact"), tr(item_name)]
 	interact_prompt.position = Vector3(0, 0.8, 0)
 	interact_prompt.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	interact_prompt.font_size = 36

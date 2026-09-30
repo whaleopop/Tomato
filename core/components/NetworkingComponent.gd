@@ -211,8 +211,12 @@ func _apply_component_sync_data(data: Dictionary):
 	if status and (data.has("fx") or data.has("health")):
 		status.from_sync(data.get("fx", {}), _is_local())
 
-	# Movement (the local player's movement is predicted locally)
+	# Movement (the local player's movement is predicted locally; stamina is checked against the server's)
 	if _is_local():
+		if data.has("stamina"):
+			var movement = entity.get_component("MovementComponent")
+			if movement:
+				movement.sync_stamina(float(data["stamina"][0]), bool(data["stamina"][1]))
 		return
 	if data.has("velocity"):
 		var movement = entity.get_component("MovementComponent")

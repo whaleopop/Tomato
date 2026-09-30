@@ -116,23 +116,21 @@ func _create_container(type: LootContainer.ContainerType) -> LootContainer:
 	var container = LootContainer.new()
 	container.container_type = type
 
-	# Adjust properties based on type
+	# Adjust properties based on type. loot_count = rolls on the container's table, on top of its
+	# sure items (LootContainer.GUARANTEED) and the ammo that comes with every gun
 	match type:
 		LootContainer.ContainerType.CRATE:
 			container.health = 30.0
 			container.loot_count = 1
 		LootContainer.ContainerType.CHEST:
 			container.health = 50.0
-			container.loot_count = 2
-			container.guaranteed_health = true
+			container.loot_count = 1
 		LootContainer.ContainerType.BARREL:
 			container.health = 20.0
 			container.loot_count = 1
-			container.guaranteed_health = false
 		LootContainer.ContainerType.SUPPLY_DROP:
 			container.health = 100.0
-			container.loot_count = 4
-			container.guaranteed_health = true
+			container.loot_count = 1
 
 	return container
 
@@ -192,7 +190,7 @@ func spawn_supply_drop_at(ground_pos: Vector3, loot_seed: int, landed: bool = fa
 	container.loot_seed = loot_seed
 	if rich:
 		container.rich = true
-		container.loot_count = 5
+		container.loot_count = 1  # the rich set (LootContainer._spawn_loot) comes on top
 	container.position = ground_pos if landed else ground_pos + Vector3(0, 20.0, 0)  # Start high
 	add_child(container)
 	spawned_containers.append(container)

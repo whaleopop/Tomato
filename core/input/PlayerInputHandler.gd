@@ -109,6 +109,13 @@ func _update_aim_direction():
 	if camera is CameraController and camera.third_person:
 		_update_aim_third_person(camera)
 		return
+	if camera is CameraController and camera.locked_active():
+		# Locked view: the hero faces where the camera looks, the aim is the point ahead
+		var fwd = camera.tps_forward()
+		player.rotation.y = atan2(fwd.x, fwd.z)
+		current_aim_position = camera.locked_aim_point()
+		current_aim_position.y = player.global_position.y
+		return
 
 	var mouse_pos = get_viewport().get_mouse_position()
 	var ray_origin = camera.project_ray_origin(mouse_pos)

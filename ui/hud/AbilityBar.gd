@@ -29,19 +29,11 @@ func _rebuild():
 		var slot = AbilitySlot.new()
 		slot.ability = ability_component.active_abilities[i]
 		slot.component = ability_component
-		slot.key_text = _key_for_action("ability_%d" % (i + 1))
+		slot.key_action = "ability_%d" % (i + 1)
+		slot.key_text = Keybinds.label(slot.key_action)
 		slot.custom_minimum_size = SLOT_SIZE
 		add_child(slot)
 		slots.append(slot)
-
-func _key_for_action(action: String) -> String:
-	if not InputMap.has_action(action):
-		return "?"
-	for event in InputMap.action_get_events(action):
-		if event is InputEventKey:
-			var code = event.physical_keycode if event.physical_keycode != 0 else event.keycode
-			return OS.get_keycode_string(code)
-	return "?"
 
 func _on_cooldown_finished(ability: ActiveAbility):
 	for slot in slots:
@@ -53,6 +45,7 @@ class AbilitySlot extends Control:
 	var ability: ActiveAbility = null
 	var component: AbilityComponent = null
 	var key_text: String = ""
+	var key_action: String = ""  # rebinding in the pause menu shows up here (Keybinds)
 	var _flash: float = 0.0
 	var _pulse: float = 0.0
 
@@ -69,6 +62,8 @@ class AbilitySlot extends Control:
 		queue_redraw()
 
 	func _draw():
+		if key_action != "":
+			key_text = Keybinds.label(key_action)
 		var rect = Rect2(Vector2.ZERO, size)
 		var remaining: float = component.get_ability_cooldown(ability) if component and ability else 0.0
 		var is_ready_now = remaining <= 0.0

@@ -65,8 +65,43 @@ func _initialize_components():
 ## Falling off the map (destroyed or edge tiles) eliminates you
 const KILL_HEIGHT: float = -15.0
 
+## Smooth motion at any frame rate: the body moves on the 60 Hz physics tick, the screen draws more
+## often (VSync off), so the model used to hop. The visuals ("Model", "WeaponVisual", the capsule)
+## are drawn between the last two physics positions (fixed-timestep interpolation, what Godot's
+## physics_interpolation does - done here only for heroes so nothing else changes); the camera
+## follows visual_position(). A jump over TELEPORT_DISTANCE (spawn, shove) is not smoothed.
+const VISUAL_NODES = ["Model", "WeaponVisual", "PlayerMesh"]
+const TELEPORT_DISTANCE: float = 3.0
+var _phys_prev: Vector3 = Vector3.ZERO
+var _phys_curr: Vector3 = Vector3.ZERO
+var _visual_base: Dictionary = {}   # node name -> its rest local position
+
+func visual_position() -> Vector3:
+	if not global_position.is_equal_approx(_phys_curr):
+		return global_position  # moved outside the physics tick (spawn, a tween): nothing to blend
+	return _phys_prev.lerp(_phys_curr, Engine.get_physics_interpolation_fraction())
+
+func _record_physics_position() -> void:
+	_phys_prev = _phys_curr
+	_phys_curr = global_position
+	if _phys_prev.distance_to(_phys_curr) > TELEPORT_DISTANCE:
+		_phys_prev = _phys_curr
+
+func _process(_delta: float) -> void:
+	var offset = visual_position() - global_position
+	var local = global_basis.inverse() * offset if offset.length_squared() > 0.0 else Vector3.ZERO
+	for n in VISUAL_NODES:
+		var node = get_node_or_null(n) as Node3D
+		if not node:
+			continue
+		var key = node.get_instance_id()
+		if not _visual_base.has(key):
+			_visual_base[key] = node.position
+		node.position = _visual_base[key] + local
+
 func _physics_process(delta: float):
 	super._physics_process(delta)
+	_record_physics_position()
 	if is_local_player:
 		# Tree canopies open up around you (tree_canopy.gdshader)
 		RenderingServer.global_shader_parameter_set("hero_position", global_position)

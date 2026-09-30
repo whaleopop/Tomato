@@ -32,18 +32,15 @@ var zoom_smooth: float = 8.0
 # Rotation settings
 var camera_angle: float = 0.0      # Horizontal rotation around target (degrees)
 var target_angle: float = 0.0      # Target angle for smooth rotation
-var camera_pitch: float = -50.0    # Vertical angle (degrees)
+var camera_pitch: float = DEFAULT_PITCH  # Vertical angle (degrees)
+## Top-down: the camera looks at the hero almost straight down and just follows, it never turns
+## on its own (every aim direction looks the same from up there)
+const DEFAULT_PITCH: float = -72.0
 var rotation_speed: float = 90.0   # Degrees per second with Q/E
 var mouse_rotation_speed: float = 0.4
 var rotation_smooth: float = 10.0
 var min_pitch: float = -80.0
 var max_pitch: float = -25.0
-
-# Edge turn: the cursor near the left / right edge turns the view (and the hero, who faces
-# the cursor, turns with it) - no Q / E needed. The rate grows towards the edge.
-var edge_turn_enabled: bool = true
-const EDGE_TURN_START: float = 0.72      # fraction of the half screen width where turning starts
-const EDGE_TURN_SPEED: float = 130.0     # degrees per second at the very edge
 
 # Mouse rotation
 var is_rotating: bool = false
@@ -66,6 +63,17 @@ const TPS_SENSITIVITY: float = 0.14      # degrees per pixel
 const TPS_FOV: float = 70.0
 const TPS_AIM_FOV: float = 55.0
 var third_person: bool = false
+
+## Locked top-down (GameSettings.camera_locked, on by default): the view is fixed behind the hero
+## and turns with them. The mouse is captured: left / right turns the hero and the camera together
+## (LOCKED_SENSITIVITY), up / down moves the crosshair nearer / further ahead (aim_distance);
+## W always runs up the screen. Off: the old free cursor (the hero faces it, the view stays).
+var locked: bool = true
+const LOCKED_SENSITIVITY: float = 0.15   # degrees per pixel of mouse travel
+const AIM_DISTANCE_MIN: float = 1.5
+const AIM_ON_SCREEN: float = 7.0         # how far ahead of the view's middle the crosshair may go
+const AIM_DISTANCE_PER_PX: float = 0.02
+var aim_distance: float = 5.0
 var tps_pitch: float = -12.0             # degrees, negative looks down
 var tps_distance: float = TPS_DISTANCE
 var _tps_aiming: bool = false
@@ -76,6 +84,7 @@ func _ready():
 	target_angle = camera_angle
 	_top_fov = fov
 	set_third_person(GameSettings.third_person, false)
+	locked = GameSettings.camera_locked
 
 func _process(delta: float):
 	if Input.is_action_just_pressed("camera_mode") and not _menu_open():
@@ -85,11 +94,30 @@ func _process(delta: float):
 		if target:
 			_update_third_person(delta)
 		return
+	if locked_active():
+		_update_mouse_capture()
+	else:
+		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		_update_cursor_hidden()
 	_handle_input(delta)
 	_update_smooth_values(delta)
 
 	if target:
 		_update_camera_position(delta)
+
+## Top-down: the OS cursor is hidden while you play (the HUD draws the crosshair) and back for
+## menus, the death / spectator screens and when the window loses focus
+func _update_cursor_hidden():
+	var want = target != null and is_instance_valid(target) and ("is_local_player" in target) and target.is_local_player 		and not _menu_open() and _focused()
+	if want and target.has_method("get_component"):
+		var health = target.get_component("HealthComponent")
+		want = health == null or not health.is_dead
+	var mode = Input.get_mouse_mode()
+	if want and mode == Input.MOUSE_MODE_VISIBLE:
+		Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
+	elif not want and mode == Input.MOUSE_MODE_HIDDEN:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 ## Switch the view; `save` remembers it for the next match
 func set_third_person(on: bool, save: bool = true):
@@ -152,12 +180,49 @@ func _update_third_person(delta: float):
 	global_position = global_position.lerp(desired, clamp(20.0 * delta, 0.0, 1.0))
 	look_at(global_position - back, Vector3.UP)
 
-## Where the player aims on screen: the mouse, or the screen center in third person
+## Where the player aims on screen: the mouse, the screen center in third person, the point
+## ahead of the hero in the locked top-down view
 static func aim_screen_point(viewport: Viewport) -> Vector2:
 	var cam = viewport.get_camera_3d()
 	if cam is CameraController and cam.third_person:
 		return viewport.get_visible_rect().size / 2.0
+	if cam is CameraController and cam.locked_active():
+		var p = cam.locked_aim_point()
+		if not cam.is_position_behind(p):
+			return cam.unproject_position(p)
 	return viewport.get_mouse_position()
+
+## Our own living hero in the top-down view with the locked camera, no menu open
+func locked_active() -> bool:
+	if not locked or third_person or target == null or not is_instance_valid(target):
+		return false
+	if not ("is_local_player" in target) or not target.is_local_player:
+		return false  # spectating: free cursor
+	if target.has_method("get_component"):
+		var health = target.get_component("HealthComponent")
+		if health and health.is_dead:
+			return false
+	return true
+
+## The crosshair's spot on the ground: aim_distance ahead of the hero
+func locked_aim_point() -> Vector3:
+	var hero = target.visual_position() if target.has_method("visual_position") else target.global_position
+	return hero + tps_forward() * aim_distance
+
+## How far ahead the crosshair can go: the gun's range, but no further than the screen shows
+## with the view run ahead as far as that gun lets it (sniper ~17 m, pistol ~9.6 m, shotgun ~8.5 m)
+func aim_distance_max() -> float:
+	var limit = AIM_ON_SCREEN + _look_ahead_reach()
+	if target and target.has_method("get_component"):
+		var combat = target.get_component("CombatComponent")
+		if combat and combat.equipped_ranged_weapon:
+			limit = min(limit, combat.equipped_ranged_weapon.range)
+	return max(limit, AIM_DISTANCE_MIN + 0.5)
+
+func set_locked(on: bool) -> void:
+	locked = on
+	if not on and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 ## Horizontal direction the third-person camera looks in (the hero turns to it)
 func tps_forward() -> Vector3:
@@ -165,13 +230,6 @@ func tps_forward() -> Vector3:
 	return Vector3(-sin(yaw), 0, -cos(yaw))
 
 func _handle_input(delta: float):
-	# Keyboard rotation (Q/E)
-	if Input.is_action_pressed("camera_left"):
-		target_angle += rotation_speed * delta
-	if Input.is_action_pressed("camera_right"):
-		target_angle -= rotation_speed * delta
-
-	_edge_turn(delta)
 
 
 	# Camera reset (C)
@@ -204,22 +262,8 @@ func _handle_input(delta: float):
 			)
 			camera_offset += rotated * edge_scroll_speed * delta
 
-func _edge_turn(delta: float):
-	if not edge_turn_enabled or is_rotating or not target or _menu_open():
-		return
-	var viewport = get_viewport()
-	if not viewport or not get_window().has_focus():
-		return
-	var rect = viewport.get_visible_rect()
-	var mouse = viewport.get_mouse_position()
-	if not rect.has_point(mouse):
-		return  # the cursor left the window: don't spin
-	var x = (mouse.x - rect.size.x / 2.0) / (rect.size.x / 2.0)  # -1 left edge .. 1 right edge
-	var over = (abs(x) - EDGE_TURN_START) / (1.0 - EDGE_TURN_START)
-	if over <= 0.0:
-		return
-	# Cursor on the right: the view turns right (the world swings left under it)
-	target_angle -= sign(x) * EDGE_TURN_SPEED * over * over * delta
+func _focused() -> bool:
+	return get_window().has_focus()
 
 func _update_smooth_values(delta: float):
 	# Smooth zoom
@@ -229,55 +273,55 @@ func _update_smooth_values(delta: float):
 	camera_angle = lerp_angle(deg_to_rad(camera_angle), deg_to_rad(target_angle), rotation_smooth * delta)
 	camera_angle = rad_to_deg(camera_angle)
 
+## A rigid rig, the way top-down shooters do it (Enter the Gungeon, Nuclear Throne): one focus
+## point = the hero (drawn position, Player.visual_position) + a look-ahead towards the cursor;
+## the camera sits at a fixed offset from the focus and looks at it, so it never tilts or wobbles
+## on its own. The hero is followed tightly (FOCUS_FOLLOW), only the look-ahead eases in/out
+## (LOOK_AHEAD_EASE) - both frame-rate independent (exponential decay).
+const FOCUS_FOLLOW: float = 18.0        # how tightly the focus sticks to the hero (1/s)
+const LOOK_AHEAD_EASE: float = 4.0      # how quickly the look-ahead follows the cursor (1/s)
+const LOOK_AHEAD_DEADZONE: float = 0.22 # share of the half screen around the middle that doesn't push
+var _focus: Vector3 = Vector3.ZERO
+var _focus_ready: bool = false
+
 func _update_camera_position(delta: float):
-	var target_pos = target.global_position + camera_offset
+	var hero = target.visual_position() if target.has_method("visual_position") else target.global_position
+	hero += camera_offset
 
-	# Look-ahead: shift camera toward mouse/aim position (only on our own hero: not while spectating)
+	# Look-ahead only on our own hero (not while spectating)
 	var own = not ("is_local_player" in target) or target.is_local_player
-	if not own:
-		current_look_ahead = Vector3.ZERO
-	if look_ahead_enabled and own:
-		var aim_offset = _calculate_look_ahead_offset()
-		current_look_ahead = current_look_ahead.lerp(aim_offset, look_ahead_speed * delta)
-		target_pos += current_look_ahead
+	var want_ahead = Vector3.ZERO
+	if locked_active():
+		# The further you aim, the further the view runs ahead - up to the gun's reach
+		# (_look_ahead_reach: long guns see further), like the free-cursor look-ahead
+		aim_distance = clamp(aim_distance, AIM_DISTANCE_MIN, aim_distance_max())
+		var share = inverse_lerp(AIM_DISTANCE_MIN, aim_distance_max(), aim_distance)
+		want_ahead = tps_forward() * _look_ahead_reach() * clamp(share, 0.0, 1.0)
+	elif look_ahead_enabled and own:
+		want_ahead = _calculate_look_ahead_offset()
+	current_look_ahead = current_look_ahead.lerp(want_ahead, 1.0 - exp(-LOOK_AHEAD_EASE * delta))
+	if locked_active():
+		# The crosshair never runs ahead of what the (still catching up) view shows; the view
+		# then keeps easing out until it reaches the gun's full look-ahead
+		var shown = AIM_ON_SCREEN + max(0.0, current_look_ahead.dot(tps_forward()))
+		aim_distance = clamp(aim_distance, AIM_DISTANCE_MIN, max(AIM_DISTANCE_MIN, min(aim_distance_max(), shown)))
 
-	# Follow player rotation if enabled (for shooter games)
-	if follow_player_rotation and target:
-		# Get player's facing direction and convert to angle
-		var player_forward = -target.global_transform.basis.z
-		var player_angle = atan2(player_forward.x, player_forward.z)
-		# Camera should be BEHIND player, so add PI
-		var desired_camera_angle = rad_to_deg(player_angle) + 180.0
-		# Smoothly interpolate camera angle
-		target_angle = lerp_angle(deg_to_rad(target_angle), deg_to_rad(desired_camera_angle), 3.0 * delta)
-		target_angle = rad_to_deg(target_angle)
+	if not _focus_ready or _focus.distance_to(hero) > 12.0:
+		_focus = hero  # first frame, respawn, switching whom we watch: no long glide across the map
+		_focus_ready = true
+	else:
+		_focus = _focus.lerp(hero, 1.0 - exp(-FOCUS_FOLLOW * delta))
 
-	# Calculate camera position based on zoom and rotation
-	var current_distance = follow_distance * zoom_level
-	var current_height = follow_height * zoom_level
-
-	# Convert angle to radians
 	var angle_rad = deg_to_rad(camera_angle)
 	var pitch_rad = deg_to_rad(camera_pitch)
+	var dist = follow_distance * zoom_level
+	var horizontal_dist = dist * cos(pitch_rad)
+	var vertical_dist = dist * -sin(pitch_rad) + follow_height * zoom_level
+	var offset = Vector3(sin(angle_rad) * horizontal_dist, vertical_dist, cos(angle_rad) * horizontal_dist)
 
-	# Calculate offset based on rotation
-	var horizontal_dist = current_distance * cos(pitch_rad)
-	var vertical_dist = current_distance * -sin(pitch_rad) + current_height
-
-	var offset = Vector3(
-		sin(angle_rad) * horizontal_dist,
-		vertical_dist,
-		cos(angle_rad) * horizontal_dist
-	)
-
-	var desired_pos = target_pos + offset
-
-	# Smooth camera movement
-	global_position = global_position.lerp(desired_pos, follow_speed * delta)
-
-	# Look at target (player + look ahead offset)
-	var look_target = target.global_position + current_look_ahead + Vector3(0, look_offset, 0)
-	look_at(look_target, Vector3.UP)
+	var look_at_point = _focus + current_look_ahead + Vector3(0, look_offset, 0)
+	global_position = look_at_point + offset - Vector3(0, look_offset, 0)
+	look_at(look_at_point, Vector3.UP)
 
 ## Calculate offset toward mouse cursor for look-ahead
 ## How far the view may run ahead towards the cursor: long guns see further (their fog-of-war
@@ -304,9 +348,13 @@ func _calculate_look_ahead_offset() -> Vector3:
 
 	# Calculate normalized offset from screen center (-1 to 1)
 	var screen_center = screen_size / 2.0
-	var normalized_offset = (mouse_pos - screen_center) / screen_center
-	if normalized_offset.length() > 1.0:
-		normalized_offset = normalized_offset.normalized()
+	# Relative to the smaller half-size, so the push is the same up / down and sideways
+	var normalized_offset = (mouse_pos - screen_center) / min(screen_center.x, screen_center.y)
+	var len = normalized_offset.length()
+	# A dead zone round the middle (small aim moves don't slide the view), then a soft ramp to 1
+	var push = clamp((len - LOOK_AHEAD_DEADZONE) / (1.0 - LOOK_AHEAD_DEADZONE), 0.0, 1.0)
+	push = push * push * (3.0 - 2.0 * push)  # smoothstep
+	normalized_offset = normalized_offset / max(len, 0.001) * push
 	var reach = _look_ahead_reach()
 
 	# Convert to world offset (X and Z)
@@ -321,6 +369,11 @@ func _calculate_look_ahead_offset() -> Vector3:
 	return world_offset
 
 func _input(event: InputEvent):
+	if not third_person and locked_active() and event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		camera_angle -= event.relative.x * LOCKED_SENSITIVITY
+		target_angle = camera_angle  # no easing: the hero and the view turn at once
+		aim_distance = clamp(aim_distance - event.relative.y * AIM_DISTANCE_PER_PX, AIM_DISTANCE_MIN, aim_distance_max())
+		return
 	if third_person:
 		if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 			var k = TPS_SENSITIVITY * (0.6 if _tps_aiming else 1.0)
@@ -330,17 +383,18 @@ func _input(event: InputEvent):
 	# No zooming and no mouse-button turning: the view turns with Q / E and the cursor at the screen edge
 
 func _exit_tree():
-	if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+	if Input.get_mouse_mode() in [Input.MOUSE_MODE_CAPTURED, Input.MOUSE_MODE_HIDDEN]:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)  # back to the menus with a free mouse
 
 func set_target(p_target: Node3D):
 	target = p_target
 	camera_offset = Vector3.ZERO
+	_focus_ready = false  # jump to the new target, don't glide there
 	print("[CameraController] Target set to: %s" % (p_target.name if p_target else "null"))
 
 func reset_rotation():
 	target_angle = 0.0
-	camera_pitch = -50.0
+	camera_pitch = DEFAULT_PITCH
 	target_zoom = min_zoom
 	camera_offset = Vector3.ZERO
 

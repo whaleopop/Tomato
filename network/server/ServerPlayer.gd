@@ -262,6 +262,7 @@ func get_sync_data() -> Dictionary:
 	if movement:
 		data["velocity"] = movement.velocity
 		data["is_moving"] = movement.is_moving
+		data["stamina"] = [snappedf(movement.stamina, 0.1), movement.exhausted]
 
 	# Add combat data for weapon sync
 	var combat = player_entity.get_component("CombatComponent")

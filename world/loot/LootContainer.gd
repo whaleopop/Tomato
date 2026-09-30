@@ -19,7 +19,6 @@ enum ContainerType {
 @export var container_type: ContainerType = ContainerType.CRATE
 @export var health: float = 50.0
 @export var loot_count: int = 2  # Number of items to drop
-@export var guaranteed_health: bool = true  # Always drop at least one health item
 
 const INTERACT_RANGE: float = 2.5
 const INTERACT_COLLISION_LAYER: int = 8  # Layer 4 for interactive objects
@@ -44,6 +43,7 @@ var rich: bool = false
 var _lid_rest: Transform3D
 var _glint: GPUParticles3D = null
 var _sway: Tween = null
+var _kit_ammo: Array = []  # ammo types owed to the guns rolled in this container
 
 ## Which weapon a WEAPON roll gives (the guide shows these as rarity too)
 const WEAPON_WEIGHTS = {
@@ -70,20 +70,88 @@ const RICH_WEAPON_WEIGHTS = {
 	RangedWeapon.WeaponType.DOUBLE_BARREL: 10,
 }
 const RICH_COLOR := Color(1.0, 0.8, 0.3)
-## Rounds in one ammo pickup (the guide shows them too)
-const AMMO_PER_PICKUP = {AmmoItem.AmmoType.GRENADE: 6}
-
-# Possible loot weights (the order matters: the seeded roll walks it)
-const DEFAULT_LOOT_WEIGHTS = {
-	LootItem.ItemType.HEALTH: 40,
-	LootItem.ItemType.AMMO: 30,
-	LootItem.ItemType.WEAPON: 10,
-	LootItem.ItemType.ABILITY_BOOST: 15,
-	LootItem.ItemType.SHIELD: 5
+## A health pack heals this much (heroes have 150-320 HP: fewer packs, each one counts)
+const HEALTH_PACK_HEAL: float = 50.0
+## Rounds in one ammo pickup: about two magazines of the guns that use it (the guide shows them)
+const AMMO_PER_PICKUP = {
+	AmmoItem.AmmoType.PISTOL: 36,
+	AmmoItem.AmmoType.SHOTGUN: 12,
+	AmmoItem.AmmoType.SNIPER: 10,
+	AmmoItem.AmmoType.RIFLE: 60,
+	AmmoItem.AmmoType.FUEL: 100,
+	AmmoItem.AmmoType.GRENADE: 6,
 }
-var loot_weights: Dictionary = DEFAULT_LOOT_WEIGHTS.duplicate()
+
+## The loot, battle-royale style: guns and the rounds for them first, heals and the rest around
+## them. A gun always drops with a pack of its own ammo (never a gun you can't shoot); a loose ammo
+## pack is of a type as common as the guns that use it (ammo_weights: plenty of pistol rounds, few
+## grenades). Each container: its GUARANTEED items, then loot_count rolls on its table.
+## (The order of each table matters: the seeded roll walks it.)
+const LOOT_TABLES = {
+	ContainerType.CRATE: {       # everywhere, one item: often ammo, sometimes a gun
+		LootItem.ItemType.AMMO: 48,
+		LootItem.ItemType.WEAPON: 27,
+		LootItem.ItemType.SHIELD: 11,
+		LootItem.ItemType.ABILITY_BOOST: 8,
+		LootItem.ItemType.HEALTH: 6,
+	},
+	ContainerType.BARREL: {      # small: ammo, now and then a shield / heal, never a gun
+		LootItem.ItemType.AMMO: 72,
+		LootItem.ItemType.SHIELD: 12,
+		LootItem.ItemType.ABILITY_BOOST: 8,
+		LootItem.ItemType.HEALTH: 8,
+	},
+	ContainerType.CHEST: {       # landmarks: a gun for sure, then one of these
+		LootItem.ItemType.AMMO: 52,
+		LootItem.ItemType.SHIELD: 26,
+		LootItem.ItemType.ABILITY_BOOST: 14,
+		LootItem.ItemType.HEALTH: 8,
+	},
+	ContainerType.SUPPLY_DROP: { # a gun and a shield for sure, then one of these
+		LootItem.ItemType.AMMO: 55,
+		LootItem.ItemType.ABILITY_BOOST: 30,
+		LootItem.ItemType.HEALTH: 15,
+	},
+}
+## Heals are rare on purpose: you get health back by playing safe (meadows, passives), not by
+## hoarding packs. Only the rich drops bring one for sure.
+const GUARANTEED = {
+	ContainerType.CRATE: [],
+	ContainerType.BARREL: [],
+	ContainerType.CHEST: [LootItem.ItemType.WEAPON],
+	ContainerType.SUPPLY_DROP: [LootItem.ItemType.WEAPON, LootItem.ItemType.SHIELD],
+}
+## What the guide quotes as "% of the loot" (a crate's roll)
+const DEFAULT_LOOT_WEIGHTS = {
+	LootItem.ItemType.AMMO: 48,
+	LootItem.ItemType.WEAPON: 27,
+	LootItem.ItemType.SHIELD: 11,
+	LootItem.ItemType.ABILITY_BOOST: 8,
+	LootItem.ItemType.HEALTH: 6,
+}
+var loot_weights: Dictionary = {}  # set from LOOT_TABLES in _ready (a test may override it)
+
+## For the guide and the trailer: [fewest items, most items, the sure things] of a container
+## (the sure things + their ammo + one roll, which may be a gun with its own pack)
+static func loot_summary(type: int) -> Array:
+	var sure: Array = GUARANTEED.get(type, [])
+	var fewest = sure.size() + sure.count(LootItem.ItemType.WEAPON) + 1
+	var most = fewest + (1 if LOOT_TABLES.get(type, {}).has(LootItem.ItemType.WEAPON) else 0)
+	return [fewest, most, sure]
+
+## A loose ammo pack's type: as common as the guns that shoot it (WEAPON_WEIGHTS per ammo type)
+static func ammo_weights() -> Dictionary:
+	var out = {}
+	for type in AmmoItem.AmmoType.values():
+		out[type] = 0
+	for weapon_type in WEAPON_WEIGHTS:
+		var gun = RangedWeapon.create_weapon(weapon_type)
+		out[gun.ammo_type] += WEAPON_WEIGHTS[weapon_type]
+	return out
 
 func _ready():
+	if loot_weights.is_empty():
+		loot_weights = LOOT_TABLES.get(container_type, DEFAULT_LOOT_WEIGHTS)
 	add_to_group("loot_containers")
 	_create_visual()
 	_create_collision()
@@ -221,13 +289,16 @@ func _update_interact_prompt():
 	if dist <= INTERACT_RANGE:
 		if not interact_prompt:
 			_create_interact_prompt()
+		if not interact_prompt.visible:
+			interact_prompt.text = "[%s] %s" % [Keybinds.label("interact"), tr("Open")]  # the current key
 		interact_prompt.visible = true
 	elif interact_prompt:
 		interact_prompt.visible = false
 
 func _create_interact_prompt():
 	interact_prompt = Label3D.new()
-	interact_prompt.text = "[X] Open"
+	interact_prompt.text = "[%s] %s" % [Keybinds.label("interact"), tr("Open")]
+	interact_prompt.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # translated above
 	interact_prompt.position = Vector3(0, _body_size().y + 0.55, 0)
 	interact_prompt.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	interact_prompt.font_size = 48
@@ -403,20 +474,21 @@ func _spawn_loot() -> Array:
 	loot_rng.seed = loot_seed
 	var items_to_spawn: Array[LootItem.ItemType] = []
 
-	# Guarantee health item if enabled
+	# The sure things, then the rolls on this container's table
 	if rich:
 		items_to_spawn.append_array([LootItem.ItemType.WEAPON, LootItem.ItemType.SHIELD, LootItem.ItemType.ABILITY_BOOST, LootItem.ItemType.HEALTH])
-	elif guaranteed_health:
-		items_to_spawn.append(LootItem.ItemType.HEALTH)
-
-	# Roll for remaining items
-	var remaining = loot_count - items_to_spawn.size()
-	for i in range(remaining):
-		var item_type = _roll_loot_type()
-		items_to_spawn.append(item_type)
+	else:
+		items_to_spawn.append_array(GUARANTEED.get(container_type, []))
+	for i in range(loot_count):
+		items_to_spawn.append(_roll_loot_type())
+	# Every gun brings a pack of its own ammo (two in the rich drops): _spawn_loot_item makes it
+	var guns = items_to_spawn.count(LootItem.ItemType.WEAPON)
+	for i in guns * (2 if rich else 1):
+		items_to_spawn.append(LootItem.ItemType.AMMO)
 
 	# Items land around the container, on whatever tile is there
 	var spawned: Array = []
+	_kit_ammo.clear()
 	for i in range(items_to_spawn.size()):
 		var angle = (TAU / items_to_spawn.size()) * i + loot_rng.randf() * 0.5
 		var distance = 1.0 + loot_rng.randf() * 0.5
@@ -462,18 +534,15 @@ func _spawn_loot_item(item_type: LootItem.ItemType, spawn_pos: Vector3) -> LootI
 	match item_type:
 		LootItem.ItemType.HEALTH:
 			item.item_name = "Health Pack"
-			item.item_value = 25.0
+			item.item_value = HEALTH_PACK_HEAL
 		LootItem.ItemType.AMMO:
-			# Random ammo type
-			var ammo_types = [
-				AmmoItem.AmmoType.PISTOL,
-				AmmoItem.AmmoType.SHOTGUN,
-				AmmoItem.AmmoType.SNIPER,
-				AmmoItem.AmmoType.RIFLE,
-				AmmoItem.AmmoType.FUEL,
-				AmmoItem.AmmoType.GRENADE,
-			]
-			var ammo_type = ammo_types[loot_rng.randi() % ammo_types.size()]
+			# The pack for a gun from this container first, else as common as its guns
+			var ammo_type: int
+			if not _kit_ammo.is_empty():
+				ammo_type = _kit_ammo.pop_front()
+			else:
+				var aw = ammo_weights()
+				ammo_type = _weighted_random(aw.keys(), aw.values())
 			item.item_name = AmmoItem.get_ammo_type_name(ammo_type)
 			item.item_value = float(ammo_type)  # Store type as value
 			item.item_data = AmmoItem.new(ammo_type, AMMO_PER_PICKUP.get(ammo_type, 30))
@@ -484,6 +553,8 @@ func _spawn_loot_item(item_type: LootItem.ItemType, spawn_pos: Vector3) -> LootI
 			var weapon = RangedWeapon.create_weapon(weapon_type)
 			item.item_name = weapon.item_name
 			item.item_data = weapon
+			for n in (2 if rich else 1):
+				_kit_ammo.append(weapon.ammo_type)  # its packs come right after
 		LootItem.ItemType.ABILITY_BOOST:
 			item.item_name = "Ability Boost"
 			item.item_value = 1.0  # recharges the ability at once (AbilityComponent.boost_cooldowns)

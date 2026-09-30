@@ -477,10 +477,10 @@ func _reel_loot() -> void:
 		mark("container_" + c[1].to_lower())
 		cam_cut(p + Vector3(2.6, 1.6, 3.4), p + Vector3(0, 0.4, 0))
 		cam_to(p + Vector3(1.6, 2.4, 4.4), p + Vector3(0, 0.3, 0), 3.6)
-		var info = tr("%d items") % container.loot_count if container.loot_count > 1 else tr("1 item")
-		var lines = [info]
-		if container.guaranteed_health:
-			lines.append(tr("One of them is a health pack"))
+		var summary = LootContainer.loot_summary(c[0])
+		var lines = [tr("%d items") % summary[1] if summary[1] > 1 else tr("1 item")]
+		if summary[2].has(LootItem.ItemType.WEAPON):
+			lines.append(tr("Always a gun with a pack of its ammo"))
 		lower_third(tr(c[1]), lines, [], Color(0.95, 0.75, 0.45), 3.6)
 		await wait(0.9)
 		container.interact(null)

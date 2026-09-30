@@ -6,6 +6,10 @@ signal closed
 signal language_changed  # formatted texts are built once: the owner may want to rebuild
 
 var _volume_value: Label
+var _main_box: VBoxContainer = null
+var _keys_box: VBoxContainer = null       # Controls: one row per Keybinds.ACTIONS entry
+var _key_buttons: Dictionary = {}         # action -> Button
+var _listening: String = ""               # the action waiting for a key
 
 func _ready():
 	padding = 28
@@ -14,6 +18,7 @@ func _ready():
 	var box = VBoxContainer.new()
 	box.add_theme_constant_override("separation", UITheme.SPACING_MEDIUM)
 	add_child(box)
+	_main_box = box
 
 	UITheme.create_title("SETTINGS", box)
 	UITheme.create_separator(box)
@@ -56,10 +61,124 @@ func _ready():
 		GameSettings.save()
 		language_changed.emit())
 
+	# Controls: rebind the keys
+	UITheme.create_caption("Controls", box)
+	var lock = UITheme.create_checkbox("Camera turns with the hero (mouse turns)", GameSettings.camera_locked, box)
+	lock.toggled.connect(func(on):
+		GameSettings.camera_locked = on
+		GameSettings.save()
+		var cam = get_viewport().get_camera_3d()
+		if cam is CameraController:
+			cam.set_locked(on))
+	var controls = UITheme.create_button("CHANGE CONTROLS", box, Vector2(0, 46))
+	controls.pressed.connect(_show_keys)
+
 	UITheme.create_spacer(false, box).custom_minimum_size.y = 8
 
 	var back = UITheme.create_primary_button("DONE", box, Vector2(0, 52))
 	back.pressed.connect(close)
+
+# ---------------------------------------------------------------- controls
+
+func _show_keys():
+	if _keys_box == null:
+		_build_keys()
+	_main_box.visible = false
+	_keys_box.visible = true
+	_refresh_keys()
+
+func _hide_keys():
+	_stop_listening()
+	GameSettings.save()
+	_keys_box.visible = false
+	_main_box.visible = true
+
+func _build_keys():
+	_keys_box = VBoxContainer.new()
+	_keys_box.add_theme_constant_override("separation", UITheme.SPACING_MEDIUM)
+	add_child(_keys_box)
+	UITheme.create_title("CONTROLS", _keys_box)
+	var hint = UITheme.create_label("Click a key, then press the new one (Esc cancels)", _keys_box, UITheme.FONT_SMALL)
+	hint.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	UITheme.create_separator(_keys_box)
+
+	var scroll = ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, 420)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_keys_box.add_child(scroll)
+	var grid = GridContainer.new()
+	grid.columns = 2
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 16)
+	grid.add_theme_constant_override("v_separation", 6)
+	scroll.add_child(grid)
+	for entry in Keybinds.ACTIONS:
+		var action: String = entry[0]
+		if not InputMap.has_action(action):
+			continue
+		var name_label = UITheme.create_label(entry[1], grid, UITheme.FONT_SMALL)
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		var button = UITheme.create_button("", grid, Vector2(140, 40))
+		button.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # key names as they are
+		button.focus_mode = Control.FOCUS_NONE
+		button.pressed.connect(_listen.bind(action))
+		_key_buttons[action] = button
+
+	var row = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	_keys_box.add_child(row)
+	var reset = UITheme.create_button("RESET TO DEFAULTS", row, Vector2(0, 48))
+	reset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	reset.pressed.connect(func():
+		_stop_listening()
+		Keybinds.reset_all()
+		GameSettings.save()
+		_refresh_keys())
+	var done = UITheme.create_primary_button("BACK", row, Vector2(140, 48))
+	done.pressed.connect(_hide_keys)
+
+func _refresh_keys():
+	for action in _key_buttons:
+		var b: Button = _key_buttons[action]
+		b.text = Keybinds.label(action)
+		UITheme.style_selectable(b, false)
+
+func _listen(action: String):
+	_stop_listening()
+	_listening = action
+	var b: Button = _key_buttons[action]
+	b.text = tr("Press a key...")
+	UITheme.style_selectable(b, true)
+
+func _stop_listening():
+	if _listening != "":
+		_listening = ""
+		_refresh_keys()
+
+## The next key or mouse button goes to the action being changed (before the game or the pause
+## menu can see it)
+func _input(event: InputEvent):
+	if _listening == "" or not is_visible_in_tree():
+		return
+	if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
+		_stop_listening()
+		get_viewport().set_input_as_handled()
+		return
+	if not Keybinds.accepts(event):
+		return
+	# A click on one of the key buttons picks that row instead (no accidental "LMB")
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		for b in _key_buttons.values():
+			if b.get_global_rect().has_point(event.position):
+				_stop_listening()
+				return
+	Keybinds.bind(_listening, Keybinds.clean(event))
+	_listening = ""
+	GameSettings.save()
+	_refresh_keys()
+	get_viewport().set_input_as_handled()
 
 func _on_volume_changed(value: float):
 	GameSettings.master_volume = value

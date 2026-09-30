@@ -15,10 +15,13 @@ static var player_name: String = ""
 static var last_server_ip: String = "127.0.0.1"
 static var last_server_port: int = 7777
 static var third_person: bool = false  # CameraController's view (V)
+static var camera_locked: bool = true  # top-down view turns with the hero (CameraController.locked)
 
 static func load_and_apply():
 	var cfg = ConfigFile.new()
+	Keybinds.capture_defaults()  # before any saved rebinding touches the input map
 	if cfg.load(PATH) == OK:
+		Keybinds.load_from(cfg)
 		master_volume = cfg.get_value("audio", "master_volume", master_volume)
 		fullscreen = cfg.get_value("video", "fullscreen", fullscreen)
 		vsync = cfg.get_value("video", "vsync", vsync)
@@ -29,6 +32,7 @@ static func load_and_apply():
 		last_server_ip = cfg.get_value("network", "last_ip", last_server_ip)
 		last_server_port = cfg.get_value("network", "last_port", last_server_port)
 		third_person = cfg.get_value("video", "third_person", third_person)
+		camera_locked = cfg.get_value("controls", "camera_locked", camera_locked)
 	Locale.setup(language)
 	apply()
 
@@ -50,8 +54,10 @@ static func save():
 	cfg.set_value("video", "fullscreen", fullscreen)
 	cfg.set_value("video", "vsync", vsync)
 	cfg.set_value("video", "third_person", third_person)
+	cfg.set_value("controls", "camera_locked", camera_locked)
 	cfg.set_value("interface", "language", language)
 	cfg.set_value("player", "name", player_name)
 	cfg.set_value("network", "last_ip", last_server_ip)
 	cfg.set_value("network", "last_port", last_server_port)
+	Keybinds.save_to(cfg)
 	cfg.save(PATH)

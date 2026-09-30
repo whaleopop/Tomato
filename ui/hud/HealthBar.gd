@@ -8,6 +8,9 @@ var name_label: Label = null
 var damage_bar: ProgressBar = null  # Trailing "recent damage" bar
 var shield_bar: ProgressBar = null  # Blue strip under the HP bar while a shield is up
 var shield_label: Label = null
+var stamina_bar: ProgressBar = null  # yellow strip: sprint stamina (MovementComponent), hidden when full
+const STAMINA_COLOR = Color(1.0, 0.82, 0.3)
+var _stamina_red: bool = false
 
 var health_component: HealthComponent = null
 var _shown_percent: float = 1.0
@@ -50,6 +53,24 @@ func _ready():
 	shield_bar.custom_minimum_size = Vector2(0, 6)
 	shield_bar.visible = false
 
+	stamina_bar = UITheme.create_progress_bar(MovementComponent.STAMINA_MAX, MovementComponent.STAMINA_MAX, STAMINA_COLOR, box)
+	stamina_bar.custom_minimum_size = Vector2(0, 6)
+	stamina_bar.modulate.a = 0.0
+
+func _update_stamina(delta: float):
+	if not stamina_bar or not health_component or not is_instance_valid(health_component.entity):
+		return
+	var movement = health_component.entity.get_component("MovementComponent")
+	if not movement:
+		return
+	stamina_bar.value = movement.stamina
+	# Out of breath: red until sprinting comes back
+	if movement.exhausted != _stamina_red:
+		_stamina_red = movement.exhausted
+		UITheme.set_bar_color(stamina_bar, UITheme.ACCENT_DANGER if _stamina_red else STAMINA_COLOR)
+	var want = 0.0 if movement.stamina >= MovementComponent.STAMINA_MAX - 0.01 else 1.0
+	stamina_bar.modulate.a = move_toward(stamina_bar.modulate.a, want, delta * 3.0)
+
 func setup(p_health_component: HealthComponent):
 	health_component = p_health_component
 	if health_component:
@@ -65,6 +86,7 @@ func setup(p_health_component: HealthComponent):
 			name_label.text = "You"
 
 func _process(delta: float):
+	_update_stamina(delta)
 	if damage_bar and health_bar:
 		damage_bar.value = move_toward(damage_bar.value, health_bar.value, delta * 0.6)
 

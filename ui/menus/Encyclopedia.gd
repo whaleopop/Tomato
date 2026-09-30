@@ -347,9 +347,9 @@ func _item_entries() -> Array:
 	var entries: Array = []
 	var T = LootItem.ItemType
 	entries.append(_pickup_entry("Health Pack", T.HEALTH, null, _loot_chance(T.HEALTH), [
-		["Effect", tr("Heals %d HP right away") % 25],
-		["Where", "In any container; chests and supply drops always have one"],
-	], "Picked up automatically when you walk over it, or with E."))
+		["Effect", tr("Heals %d HP right away") % int(LootContainer.HEALTH_PACK_HEAL)],
+		["Where", "Rare: now and then in any container; the golden drops always have one"],
+	], tr("Picked up automatically when you walk over it, or with %s.") % Keybinds.label("interact")))
 	entries.append(_pickup_entry("Shield", T.SHIELD, null, _loot_chance(T.SHIELD), [
 		["Effect", tr("+%d shield, up to %d") % [30, int(HealthComponent.MAX_SHIELD)]],
 		["How it works", "Takes the damage before your health does"],
@@ -358,30 +358,33 @@ func _item_entries() -> Array:
 	entries.append(_pickup_entry("Ability Boost", T.ABILITY_BOOST, null, _loot_chance(T.ABILITY_BOOST), [
 		["Effect", "Your ability is ready again at once"],
 	], "Grab it right after using your ability."))
-	entries.append(_pickup_entry("Ammo", T.AMMO, AmmoItem.new(AmmoItem.AmmoType.PISTOL, 30), _loot_chance(T.AMMO), [
-		["Effect", tr("+%d rounds of a random type") % 30],
-		["Pistol Ammo", "Pistol"],
-		["Shotgun Shells", "Shotgun"],
-		["Rifle Ammo", "Assault Rifle"],
-		["Sniper Rounds", "Sniper Rifle"],
-		["Fuel", "Flamethrower"],
-		["Grenades", "Grenade Launcher"],
-	], "Reload with R. Ammo for weapons you don't carry waits in the inventory (I)."))
+	var A = AmmoItem.AmmoType
+	var P = LootContainer.AMMO_PER_PICKUP
+	entries.append(_pickup_entry("Ammo", T.AMMO, AmmoItem.new(A.PISTOL, P[A.PISTOL]), _loot_chance(T.AMMO), [
+		["With every gun", "A pack of its own ammo"],
+		["Pistol Ammo", tr("+%d  ·  Pistol, SMG, Hand Cannon, Jam Blaster") % P[A.PISTOL]],
+		["Shotgun Shells", tr("+%d  ·  Shotgun, Double Barrel") % P[A.SHOTGUN]],
+		["Rifle Ammo", tr("+%d  ·  Assault Rifle, Minigun") % P[A.RIFLE]],
+		["Sniper Rounds", tr("+%d  ·  Sniper Rifle, Marksman Rifle") % P[A.SNIPER]],
+		["Fuel", tr("+%d  ·  Flamethrower") % P[A.FUEL]],
+		["Grenades", tr("+%d  ·  Grenade Launcher") % P[A.GRENADE]],
+	], "Loose packs come in the types of the common guns. Ammo for weapons you don't carry waits in the inventory (I)."))
 	var weapon_entry = _pickup_entry("Weapon", T.WEAPON, RangedWeapon.create_weapon(RangedWeapon.WeaponType.RIFLE), _loot_chance(T.WEAPON), [
-		["Effect", "One of the five guns, see the Weapons tab"],
+		["Effect", "One of the twelve guns, see the Weapons tab"],
+		["Where", "Every chest and supply drop, often in crates - always with a pack of its ammo"],
 		["Slots", "Up to five weapons, switch with 1 – 5"],
 	], "")
 	entries.append(weapon_entry)
 
 	var containers = [
-		[LootContainer.ContainerType.CRATE, "Crate", 1, false],
-		[LootContainer.ContainerType.BARREL, "Barrel", 1, false],
-		[LootContainer.ContainerType.CHEST, "Chest", 2, true],
-		[LootContainer.ContainerType.SUPPLY_DROP, "Supply Drop", 4, true],
+		[LootContainer.ContainerType.CRATE, "Crate"],
+		[LootContainer.ContainerType.BARREL, "Barrel"],
+		[LootContainer.ContainerType.CHEST, "Chest"],
+		[LootContainer.ContainerType.SUPPLY_DROP, "Supply Drop"],
 	]
 	var first = true
 	for c in containers:
-		var entry = _container_entry(c[0], c[1], c[2], c[3])
+		var entry = _container_entry(c[0], c[1])
 		if first:
 			entry["section"] = "Containers"
 			first = false
@@ -409,26 +412,43 @@ func _pickup_info(box: VBoxContainer, facts: Array, note: String):
 	if note != "":
 		_note(box, note)
 
-func _container_entry(type: int, title: String, items: int, health_pack: bool) -> Dictionary:
+func _container_entry(type: int, title: String) -> Dictionary:
+	var summary = LootContainer.loot_summary(type)
 	var color = Color(0.95, 0.75, 0.45) if type != LootContainer.ContainerType.SUPPLY_DROP else UITheme.ACCENT_PRIMARY
 	return {
 		"title": title,
-		"subtitle": _items_text(items),
+		"subtitle": _items_text(summary[0], summary[1]),
 		"color": color,
 		"show": _show_container.bind(type, color),
-		"info": _container_info.bind(type, items, health_pack),
+		"info": _container_info.bind(type, summary),
 	}
 
-func _items_text(items: int) -> String:
-	return tr("%d items") % items if items > 1 else tr("1 item")
+func _items_text(fewest: int, most: int) -> String:
+	if most > fewest:
+		return tr("%d – %d items") % [fewest, most]
+	return tr("%d items") % fewest if fewest > 1 else tr("1 item")
 
 func _show_container(type: int, color: Color):
 	_showcase.show_model(LootVisuals.container_model(type), color, 1.1, true, 0.0)
 
-func _container_info(box: VBoxContainer, type: int, items: int, health_pack: bool):
-	_fact(box, "Inside", _items_text(items))
-	if health_pack:
-		_fact(box, "Always", "One of them is a health pack")
+func _container_info(box: VBoxContainer, type: int, summary: Array):
+	_fact(box, "Inside", _items_text(summary[0], summary[1]))
+	var sure: Array = summary[2]
+	if sure.has(LootItem.ItemType.WEAPON):
+		_fact(box, "Always", "A gun with a pack of its ammo")
+	if sure.has(LootItem.ItemType.SHIELD):
+		_fact(box, "Also", "A shield")
+	var table: Dictionary = LootContainer.LOOT_TABLES.get(type, {})
+	if not table.is_empty():
+		var total = 0
+		for w in table.values():
+			total += w
+		var names = {LootItem.ItemType.AMMO: "Ammo", LootItem.ItemType.WEAPON: "Weapon", LootItem.ItemType.HEALTH: "Health Pack",
+			LootItem.ItemType.SHIELD: "Shield", LootItem.ItemType.ABILITY_BOOST: "Ability Boost"}
+		var parts: Array = []
+		for t in table:
+			parts.append("%s %d%%" % [tr(names[t]), int(round(100.0 * table[t] / total))])
+		_fact(box, "Plus one of", ", ".join(parts))
 	if type == LootContainer.ContainerType.SUPPLY_DROP:
 		_fact(box, "When", "Falls from the sky every minute of the match")
 		_note(box, "Watch for the parachute: everyone else sees it too.")
@@ -577,20 +597,20 @@ func _build_howto() -> Control:
 	cbox.add_theme_constant_override("separation", 8)
 	controls.add_child(cbox)
 	UITheme.create_caption("Controls", cbox)
+	# The keys as they are bound now (Settings -> Controls, Keybinds)
+	var K = func(action): return Keybinds.label(action)
 	var keys = [
-		["W A S D", "Move"],
-		["Mouse", "Aim"],
-		["LMB", "Shoot (hold for automatic fire)"],
-		["R", "Reload"],
-		["1 – 5", "Switch weapon"],
-		["F", "Use your ability (hold to see its area, release to cast)"],
-		["X", "Open containers, pick up loot"],
-		["I", "Inventory"],
-		["Shift", "Sprint"],
-		["Space", "Jump"],
-		["Q / E", "Rotate the camera"],
-		["Mouse at the edge", "The camera turns after the cursor"],
-		["V", "Third-person camera on / off"],
+		["%s %s %s %s" % [K.call("move_up"), K.call("move_left"), K.call("move_down"), K.call("move_right")], "Move"],
+		["Mouse", "Mouse: turn the hero and the camera, up / down - aim nearer / further" if GameSettings.camera_locked else "Aim"],
+		[K.call("attack"), "Shoot (hold for automatic fire)"],
+		[K.call("reload"), "Reload"],
+		["%s – %s" % [K.call("weapon_slot_1"), K.call("weapon_slot_5")], "Switch weapon"],
+		[K.call("ability_1"), "Use your ability (hold to see its area, release to cast)"],
+		[K.call("interact"), "Open containers, pick up loot"],
+		[K.call("inventory"), "Inventory"],
+		[K.call("sprint"), "Sprint (uses stamina)"],
+		[K.call("jump"), "Jump"],
+		[K.call("camera_mode"), "Third-person camera on / off"],
 		["RMB", "Aim over the shoulder (third person)"],
 		["Esc", "Pause"],
 	]

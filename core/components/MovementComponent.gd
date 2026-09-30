@@ -38,6 +38,19 @@ var _dash_time: float = 0.0
 var terrain_multiplier: float = 1.0
 var terrain_biome: int = -1  # the tile under the feet (BiomeRules: grip here, effects in StatusComponent)
 
+## Stamina: sprinting (Shift while moving) drains it, it comes back after a short rest. Run dry
+## and you can't sprint until it is back to STAMINA_RESTART. Simulated the same way on the server
+## and the owning client (the same inputs); the server's value comes back in the player state
+## ("stamina") and corrects the client when they drift apart.
+const STAMINA_MAX: float = 100.0
+const STAMINA_DRAIN: float = 22.0       # per second of sprinting: ~4.5 s from full
+const STAMINA_REGEN: float = 20.0       # per second once resting
+const STAMINA_REGEN_DELAY: float = 0.8  # seconds after the last sprint before it refills
+const STAMINA_RESTART: float = 30.0     # after running dry, sprinting comes back at this much
+var stamina: float = STAMINA_MAX
+var exhausted: bool = false
+var _stamina_rest: float = 0.0
+
 func _init(p_entity = null):  # p_entity: Entity
 	entity = p_entity
 
@@ -114,7 +127,8 @@ func _update_character_body(delta: float):
 	# Calculate horizontal movement
 	if is_grounded:
 		_update_terrain(body)
-	var current_speed = speed * (SPRINT_MULTIPLIER if is_sprinting else 1.0) * terrain_multiplier
+	var running = _update_stamina(delta)
+	var current_speed = speed * (SPRINT_MULTIPLIER if running else 1.0) * terrain_multiplier
 	if status:
 		current_speed *= status.movement_factor()
 	# Heavy guns slow you down while in hand (RangedWeapon.move_factor: the minigun)
@@ -226,6 +240,28 @@ func _update_simple(delta: float):
 	entity.global_position += velocity * delta
 
 	# Rotation handled by PlayerInputHandler (looks at mouse cursor)
+
+## Spends / refills stamina; true while actually sprinting (held, moving, not out of breath)
+func _update_stamina(delta: float) -> bool:
+	var running = is_sprinting and not exhausted and stamina > 0.0 and move_direction.length_squared() > 0.01
+	if running:
+		stamina = max(0.0, stamina - STAMINA_DRAIN * delta)
+		_stamina_rest = 0.0
+		if stamina <= 0.0:
+			exhausted = true
+	else:
+		_stamina_rest += delta
+		if _stamina_rest >= STAMINA_REGEN_DELAY:
+			stamina = min(STAMINA_MAX, stamina + STAMINA_REGEN * delta)
+		if exhausted and stamina >= STAMINA_RESTART:
+			exhausted = false
+	return running
+
+## The server's stamina for our own predicted hero: taken when we drifted apart noticeably
+func sync_stamina(value: float, p_exhausted: bool) -> void:
+	if abs(value - stamina) > 12.0 or p_exhausted != exhausted:
+		stamina = value
+		exhausted = p_exhausted
 
 func get_velocity() -> Vector3:
 	return Vector3(velocity.x, vertical_velocity, velocity.z)
