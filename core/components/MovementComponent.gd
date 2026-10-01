@@ -249,7 +249,7 @@ func _update_simple(delta: float):
 func _update_stamina(delta: float) -> bool:
 	var running = is_sprinting and not exhausted and stamina > 0.0 and move_direction.length_squared() > 0.01
 	if running:
-		stamina = max(0.0, stamina - STAMINA_DRAIN * delta)
+		stamina = max(0.0, stamina - STAMINA_DRAIN * delta * (float(entity.get_meta("stamina_factor", 1.0)) if entity else 1.0))
 		_stamina_rest = 0.0
 		if stamina <= 0.0:
 			exhausted = true

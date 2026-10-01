@@ -79,7 +79,10 @@ func set_player_character(player_id: int, character_name: String):
 func get_player_character(player_id: int) -> String:
 	return players_characters.get(player_id, "")
 
-var players_cosmetics: Dictionary = {}  # player_id -> {"skin", "hat", "weapon"}
+var game_mode: String = "br"  # set by GameServer from the host's choice
+## Where the mode puts a player instead of the landing spot (CTF: the team base), else ZERO
+var mode_spawn: Callable = Callable()
+var players_cosmetics: Dictionary = {}  # player_id -> {"skin", "hat", "weapon", "weapons", "level", "mastery"}
 
 ## Only known ids get through (it is just looks, but keep the data tidy)
 func set_player_cosmetics(player_id: int, wear: Dictionary) -> void:
@@ -88,6 +91,17 @@ func set_player_cosmetics(player_id: int, wear: Dictionary) -> void:
 		var id = String(wear.get(key, ""))
 		if id != "" and Cosmetics.price_of(id) >= 0:
 			clean[key] = id
+	# Per-gun finishes (mastery camos) and the hero's mastery level / rank (cards, Mastery.gd)
+	var guns := {}
+	var own = wear.get("weapons", {})
+	if own is Dictionary:
+		for t in own:
+			var fid = String(own[t])
+			if str(t).is_valid_int() and Cosmetics.price_of(fid) >= 0:
+				guns[str(int(str(t)))] = fid
+	clean["weapons"] = guns
+	clean["level"] = clampi(int(wear.get("level", 1)), 1, Mastery.MAX_LEVEL)
+	clean["mastery"] = clampi(int(wear.get("mastery", -1)), -1, Mastery.TIERS.size() - 1)
 	players_cosmetics[player_id] = clean
 
 func get_player_cosmetics(player_id: int) -> Dictionary:
@@ -241,6 +255,10 @@ func _start_match():
 	print("[LobbyManager] Match started!")
 
 func get_spawn_position(player_id: int, hex_grid: HexGrid) -> Vector3:
+	if mode_spawn.is_valid():
+		var forced: Vector3 = mode_spawn.call(player_id)
+		if forced != Vector3.ZERO:
+			return forced
 	if not players_spawn.has(player_id):
 		return Vector3.ZERO
 
@@ -279,6 +297,7 @@ func get_lobby_state() -> Dictionary:
 		"players_names": players_names.duplicate(),
 		"players_characters": players_characters.duplicate(),  # portraits in the lobby list
 		"players_cosmetics": players_cosmetics.duplicate(),
+		"mode": game_mode,  # GameModes id (clients set GameManager.game_mode from it)
 		"reserved_spawns": reserved_spawns.keys(),
 		"reserved_by": reserved_spawns.duplicate(),
 		"countdown": ceili(countdown_timer) if state == LobbyState.COUNTDOWN else 0

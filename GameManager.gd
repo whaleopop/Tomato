@@ -5,6 +5,7 @@ var selected_character: CharacterData = null  # Character selected in CharacterS
 var map_seed: int = 0  # Map seed for generation
 var last_error: String = ""  # Shown by the main menu after a failed/lost connection
 var training_mode: bool = false  # the game scene builds the training ground (TrainingGround)
+var game_mode: String = "br"   # GameModes id: the host picks it, clients get it in the lobby state
 
 # Cutscene data - set by SpawnSelectController / NetworkLobby before cutscene
 var cutscene_spawn_positions: Dictionary = {}  # player_id -> Vector3

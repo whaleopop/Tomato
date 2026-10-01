@@ -53,12 +53,22 @@ func add_kill(victim_id: int, killer_id: int, info: Dictionary):
 		var mark = UITheme.create_label("%s  ›" % tr(gun, "short") if gun != "" else "›", line, UITheme.FONT_TINY)
 		mark.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 		mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	elif info.has("npc"):
+		# A weed got them
+		var weed = String(info["npc"])
+		var wl = UITheme.create_label(weed, line, UITheme.FONT_SMALL)
+		wl.add_theme_font_override("font", UITheme.font_black())
+		wl.add_theme_color_override("font_color", Weed.KINDS.get(weed, {}).get("color", Color.WHITE).lightened(0.2))
+		wl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var arrow = UITheme.create_label("›", line, UITheme.FONT_TINY)
+		arrow.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
+		arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	else:
 		var skull = UITheme.create_label("☠", line, UITheme.FONT_SMALL)
 		skull.add_theme_color_override("font_color", UITheme.ACCENT_WARNING)
 		skull.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_name(line, String(info.get("victim_name", "")), String(info.get("victim_hero", "")), victim_id == my_id)
-	if killer_id == 0:
+	if killer_id == 0 and not info.has("npc"):
 		var how = UITheme.create_label("fell to the island", line, UITheme.FONT_TINY)
 		how.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 		how.mouse_filter = Control.MOUSE_FILTER_IGNORE

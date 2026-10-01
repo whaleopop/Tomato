@@ -42,6 +42,18 @@ func update(delta: float):
 		if reload_timer <= 0:
 			_complete_reload()
 
+## The gun's reach and the time between its shots for this hero (Weed Swarm perks: metas
+## "range_factor" / "fire_rate_factor", SwarmPerks)
+func reach() -> float:
+	if not equipped_ranged_weapon:
+		return attack_range
+	return equipped_ranged_weapon.range * (float(entity.get_meta("range_factor", 1.0)) if entity else 1.0)
+
+func shot_interval() -> float:
+	if not equipped_ranged_weapon:
+		return 0.5
+	return equipped_ranged_weapon.fire_rate * (float(entity.get_meta("fire_rate_factor", 1.0)) if entity else 1.0)
+
 func can_attack() -> bool:
 	return enabled and attack_cooldown <= 0.0 and not is_attacking and not is_reloading and not _stunned()
 
@@ -67,12 +79,24 @@ func can_shoot() -> bool:
 	return current_weapon != null and current_weapon.weapon_type == "ranged"
 
 ## Perform attack - uses hitscan for ranged weapons
+## When this hero last pulled the trigger: damage soon after counts for the gun's mastery
+## (ServerPlayer.credited_weapon), not for an ability
+var last_shot_msec: int = -100000
+const WEAPON_CREDIT_MSEC: int = 3500  # grenades fly, fire burns for a while
+
+## The gun type the damage dealt right now is credited to, -1 = not a gun (an ability, thorns...)
+func credited_weapon() -> int:
+	if equipped_ranged_weapon and Time.get_ticks_msec() - last_shot_msec < WEAPON_CREDIT_MSEC:
+		return int(equipped_ranged_weapon.weapon_type)
+	return -1
+
 func attack(target_position: Vector3, target_entity = null) -> bool:  # target_entity: Entity
 	if not can_attack():
 		return false
 	var inventory = entity.get_component("InventoryComponent") if entity and entity.has_method("get_component") else null
 	if inventory:
 		inventory.cancel_use()  # shooting stops a heal / shield in progress
+	last_shot_msec = Time.get_ticks_msec()
 
 	is_attacking = true
 	attack_started.emit()
@@ -159,8 +183,8 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 		mode = equipped_ranged_weapon.fire_mode
 		style = equipped_ranged_weapon.effect_style
 		damage = equipped_ranged_weapon.damage * get_damage_multiplier()
-		attack_range = equipped_ranged_weapon.range
-		attack_cooldown = equipped_ranged_weapon.fire_rate
+		attack_range = reach()
+		attack_cooldown = shot_interval()
 	elif current_weapon:
 		var legacy = current_weapon.weapon_name.to_lower()
 		if legacy.contains("shotgun"):
@@ -536,8 +560,8 @@ func start_reload() -> void:
 	if is_reloading or not equipped_ranged_weapon:
 		return
 
-	# Get inventory component for reserve ammo
-	var inventory = entity.get_component("InventoryComponent") if entity else null
+	# Get inventory component for reserve ammo (Weed Swarm: the reserve never runs out)
+	var inventory = entity.get_component("InventoryComponent") if entity and not entity.has_meta("endless_ammo") else null
 	var reserve_ammo = 999  # Default if no inventory
 
 	if inventory:
@@ -552,7 +576,7 @@ func start_reload() -> void:
 			equipped_ranged_weapon.is_reloading = false
 			return
 		is_reloading = true
-		reload_timer = equipped_ranged_weapon.reload_time
+		reload_timer = equipped_ranged_weapon.reload_time * float(entity.get_meta("reload_factor", 1.0))
 		_reload_amount = ammo_to_reload
 		_reload_weapon = equipped_ranged_weapon
 		reload_started.emit()
@@ -577,7 +601,7 @@ func cancel_reload() -> void:
 	reload_timer = 0.0
 	if _reload_weapon:
 		_reload_weapon.is_reloading = false
-		var inventory = entity.get_component("InventoryComponent") if entity else null
+		var inventory = entity.get_component("InventoryComponent") if entity and not entity.has_meta("endless_ammo") else null
 		if inventory and _reload_amount > 0:
 			inventory.add_item(AmmoItem.new(_reload_weapon.ammo_type, _reload_amount))
 	_reload_amount = 0

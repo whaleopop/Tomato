@@ -23,7 +23,9 @@ var players_list: VBoxContainer = null
 var players_count: Label = null
 var status_label: Label = null
 var map_spinner: Control = null
-var _hover_card: ParallaxCard = null  # the hero card of the player row under the mouse
+var _hover_card: ParallaxCard = null
+var _mode_holder: HBoxContainer = null
+var _mode_shown: String = ""  # the hero card of the player row under the mouse
 
 # State
 var selected_spawn: Vector2i = INVALID
@@ -60,6 +62,12 @@ func _create_ui():
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	status_label = UITheme.create_label("Click a free hex, then press READY", title_box, UITheme.FONT_SMALL)
 	status_label.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	# The match mode the host picked (GameModes; clients learn it with the lobby state)
+	UITheme.create_spacer(true, header).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mode_holder = HBoxContainer.new()
+	_mode_holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	header.add_child(_mode_holder)
+	_refresh_mode()
 
 	# ---- Body
 	var body = HBoxContainer.new()
@@ -310,7 +318,21 @@ func update_reserved_spawns(new_reserved: Array):
 		for view in _views():
 			view.set_reserved(filtered)
 
+func _refresh_mode():
+	var mode = GameModes.current()
+	if mode == _mode_shown or not _mode_holder:
+		return
+	_mode_shown = mode
+	for c in _mode_holder.get_children():
+		c.queue_free()
+	var info = GameModes.info(mode)
+	var pill = UITheme.create_pill(info.name, info.color, _mode_holder)
+	pill.tooltip_text = tr(info.short)
+	if mode == GameModes.CTF:
+		show_status("Teams start at their base: the spot you pick is ignored")
+
 func update_players_list(players_data: Dictionary):
+	_refresh_mode()
 	_hide_hero_card()
 	for child in players_list.get_children():
 		child.queue_free()
@@ -409,6 +431,7 @@ func _show_hero_card(row: Control, hero: CharacterData, wear: Dictionary, player
 	card.accent = hero.color
 	card.badge = player_name
 	card.live = ["hero", [hero.character_name, skin, hat]]
+	card.show_wear_mastery(wear)
 	card.always_live = true
 	card.z_index = 20
 	add_child(card)

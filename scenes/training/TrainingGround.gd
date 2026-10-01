@@ -29,6 +29,7 @@ func build(selected: CharacterData) -> Player:
 	_build_racks()
 	_build_targets()
 	_build_dummies()
+	_build_weeds()
 	player = Player.new()
 	player.name = "TrainingPlayer"
 	player.is_local_player = true
@@ -146,6 +147,7 @@ func _build_dummies():
 		var dummy = Player.new()
 		dummy.name = "Dummy_%d" % i
 		dummy.entity_id = 9000 + i
+		dummy.set_meta("training_dummy", true)  # weeds leave them alone
 		add_child(dummy)
 		dummy.setup_character(roster[(i * 4 + 5) % roster.size()])
 		var pos = spots[i] if i < spots.size() else start + Vector3(-6.0, 0, -13.0)
@@ -161,6 +163,26 @@ func _build_dummies():
 		dummies.append(dummy)
 		if i == spots.size():
 			_walker = dummy
+
+## Three weeds far up the field to try your guns on (they fight back); a felled one grows again
+const WEED_SPOTS = [["Dandelion", Vector2i(-4, -3)], ["Hogweed", Vector2i(0, -6)], ["Nettle", Vector2i(4, -6)]]
+var _weed_id: int = 100
+
+func _build_weeds():
+	for w in WEED_SPOTS:
+		_grow_weed(w[0], w[1])
+
+func _grow_weed(kind: String, c: Vector2i):
+	var weed = Weed.new()
+	_weed_id += 1
+	weed.npc_id = _weed_id
+	weed.kind = kind
+	weed.authority = true
+	weed.position = _top(c) + Vector3(0, 0.2, 0)
+	add_child(weed)
+	weed.tree_exited.connect(func():
+		if is_inside_tree():
+			get_tree().create_timer(8.0).timeout.connect(func(): if is_inside_tree(): _grow_weed(kind, c)))
 
 func _on_dummy_hit(amount: float, _source, dummy: Node3D) -> void:
 	_last_hit[dummy] = Time.get_ticks_msec()
@@ -214,7 +236,7 @@ func add_hud(ui_layer: Node) -> void:
 	card.add_child(box)
 	var title = UITheme.create_heading("TRAINING GROUND", box)
 	title.add_theme_color_override("font_color", UITheme.ACCENT_PRIMARY.lightened(0.3))
-	for line in ["Guns are on the racks behind you", "Dummies heal up after a moment",
+	for line in ["Guns are on the racks behind you", "Dummies heal up after a moment", "Weeds up the field fight back",
 			"Tab  -  choose the hero", "[ and ]  -  next / previous hero", "Esc  -  back to the menu"]:
 		UITheme.create_label(line, box, UITheme.FONT_TINY)
 	_meter = UITheme.create_label("", box, UITheme.FONT_SMALL)

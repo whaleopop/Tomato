@@ -123,6 +123,42 @@ func _item_color(item) -> Color:
 		return UITheme.ACCENT_INFO
 	return UITheme.ACCENT_PRIMARY
 
+## The item's own picture (ItemRenderer) in the slot, its name under it and the count in the corner;
+## the name alone until the picture is there (perks have none)
+func _add_icon(button: Button, it: ItemData, title: String, count: int = 1) -> void:
+	for c in button.get_children():
+		c.queue_free()
+	button.text = ""
+	var box = VBoxContainer.new()
+	box.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	box.offset_left = 5
+	box.offset_right = -5
+	box.offset_top = 5
+	box.offset_bottom = -3
+	box.add_theme_constant_override("separation", 0)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(box)
+	var pic = TextureRect.new()
+	pic.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(pic)
+	var name_label = UITheme.create_label(title, box, 10)
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.clip_text = true
+	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_label.add_theme_font_override("font", UITheme.font_black())
+	if count > 1:
+		var n = UITheme.create_label("×%d" % count, button, 12)
+		n.add_theme_font_override("font", UITheme.font_black())
+		n.position = Vector2(SLOT_SIZE.x - 30, 3)
+		n.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ItemRenderer.get_instance(get_tree()).icon_for(it, func(tex):
+		if is_instance_valid(pic):
+			pic.texture = tex)
+
 func _create_slot_button(slot, index: int) -> Button:
 	var button = Button.new()
 	button.custom_minimum_size = SLOT_SIZE
@@ -131,12 +167,7 @@ func _create_slot_button(slot, index: int) -> Button:
 	button.add_theme_font_size_override("font_size", 12)
 
 	if slot.item:
-		var item_name: String = tr(slot.item.item_name)
-		if item_name.length() > 9:
-			item_name = item_name.substr(0, 8) + "…"
-		button.text = item_name
-		if slot.count > 1:
-			button.text += "\n×%d" % slot.count
+		_add_icon(button, slot.item, tr(slot.item.item_name), slot.count)
 		var color = _item_color(slot.item)
 		button.add_theme_stylebox_override("normal", UITheme.glass_box(Color(color, 0.10), Color(color, 0.45), 16, 6, 6))
 		button.add_theme_stylebox_override("hover", UITheme.glow_box(Color(color, 0.22), 0.3, 16, 10))
@@ -195,9 +226,10 @@ func _update_weapon_slots() -> void:
 				btn.add_theme_stylebox_override("normal", UITheme.glow_box(Color(UITheme.ACCENT_PRIMARY, 0.28), 0.4, 16, 10))
 			else:
 				btn.add_theme_stylebox_override("normal", UITheme.glass_box(Color(color, 0.12), Color(color, 0.5), 16, 6, 6))
-			var short = tr(weapon.item_name, "short")
-			btn.text = "%d  %s" % [i + 1, short]
+			_add_icon(btn, weapon, "%d  %s" % [i + 1, tr(weapon.item_name, "short")])
 		else:
+			for c in btn.get_children():
+				c.queue_free()
 			btn.add_theme_stylebox_override("normal", UITheme.glass_box(Color(1, 1, 1, 0.03), Color(1, 1, 1, 0.07), 16, 6, 6))
 			btn.text = str(i + 1)
 

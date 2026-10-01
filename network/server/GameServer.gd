@@ -19,6 +19,8 @@ var network_lobby: NetworkLobby = null
 var is_running: bool = false
 var game_started: bool = false
 var match_over: bool = false
+## The match mode's rules (GameModes / network/server/modes): made from GameManager.game_mode
+var rules: ModeRules = null
 var _participants: Dictionary = {}  # player_id -> true: everyone in the match when it started
 var _end_check_timer: float = 0.0
 const END_CHECK_INTERVAL: float = 0.5
@@ -48,6 +50,13 @@ func _ready():
 		network_lobby = network_manager.get_network_lobby()
 		if network_lobby:
 			network_lobby.setup_server(lobby_manager)
+
+	var gm = get_node_or_null("/root/GameManager")
+	rules = ModeRules.make(String(gm.game_mode) if gm else GameModes.BR)
+	rules.server = self
+	add_child(rules)
+	lobby_manager.game_mode = rules.mode
+	lobby_manager.mode_spawn = func(id): return rules.start_position(id) if server_world.is_map_ready else Vector3.ZERO
 
 	server_world.player_spawned.connect(_on_player_spawned)
 	server_world.map_ready.connect(_on_map_ready)
@@ -111,6 +120,7 @@ func stop_server():
 
 func _on_map_ready():
 	lobby_manager.setup_available_spawns(server_world.hex_grid)
+	rules.on_map_ready()
 	# Clients that connected while the map was still generating
 	for player_id in multiplayer.get_peers():
 		_send_map_to_peer(player_id)
@@ -211,7 +221,8 @@ func _on_match_started():
 		var token = lobby_manager.get_player_token(player_id)
 		if token != "":
 			_match_tokens[token] = true
-	server_world.start_match()
+	server_world.start_match(GameModes.info(rules.mode))
+	rules.on_match_start()
 
 	for player_id in players.keys():
 		_spawn_player(player_id)
@@ -253,28 +264,16 @@ func _process(delta: float):
 ## host plays the cutscene first) counts as alive; one who left counts as out.
 ## A solo match (practice) never ends.
 func _check_match_end():
-	if _participants.size() < 2:
-		return
-	var alive: Array = []
-	for player_id in _participants:
-		if not players.has(player_id):
-			continue
-		var entity = server_world.players.get(player_id)
-		if entity == null or not is_instance_valid(entity):
-			alive.append(player_id)
-			continue
-		var health = entity.get_component("HealthComponent")
-		if health == null or not health.is_dead:
-			alive.append(player_id)
-	if alive.size() > 1:
+	var result: Dictionary = rules.check_end()  # the battle royale: last one standing (ModeRules)
+	if result.is_empty():
 		return
 
 	match_over = true
-	var winner_id: int = alive[0] if alive.size() == 1 else 0
-	if winner_id != 0 and players.has(winner_id):
+	var winner_id: int = int(result.winner_id)
+	if winner_id > 0 and players.has(winner_id):
 		players[winner_id].place = 1
 		players[winner_id].alive_time = match_time()
-	var winner_name = lobby_manager.get_player_character(winner_id) if winner_id != 0 else ""
+	var winner_name: String = String(result.winner_name)
 	print("[GameServer] ===== MATCH OVER: winner %d (%s) =====" % [winner_id, winner_name])
 	server_world.stop_match()
 	var network_manager = get_node_or_null("/root/NetworkManager")
@@ -282,6 +281,26 @@ func _check_match_end():
 		network_manager.broadcast_match_end(winner_id, winner_name)
 
 ## Participants still standing (the stats' placement)
+## A hero went down (ServerPlayer._on_died): the mode hears of it; respawning modes bring them back
+func on_player_died(player_id: int, killer) -> void:
+	rules.on_player_died(player_id, killer)
+	var delay = float(GameModes.info(rules.mode).respawn)
+	if delay < 0.0 or match_over:
+		return
+	get_tree().create_timer(delay).timeout.connect(func(): respawn_player(player_id))
+
+func respawn_player(player_id: int) -> void:
+	if match_over or not players.has(player_id):
+		return
+	var entity = server_world.players.get(player_id)
+	if entity == null or not is_instance_valid(entity):
+		return
+	var pos = rules.respawn_position(player_id)
+	entity.respawn_at(pos)
+	var network_manager = get_node_or_null("/root/NetworkManager")
+	if network_manager:
+		network_manager.broadcast_respawn(player_id, pos)
+
 func alive_count() -> int:
 	var n = 0
 	for player_id in _participants:

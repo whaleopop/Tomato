@@ -169,6 +169,10 @@ func _update_objects_visibility():
 			continue
 		player.visible = reveal_all or _can_see_player(player, me)
 
+	for weed in tree.get_nodes_in_group("npcs"):
+		if is_instance_valid(weed):
+			weed.visible = reveal_all or get_visibility_at(weed.global_position) > 0.3
+
 	for item in tree.get_nodes_in_group("loot_items"):
 		if is_instance_valid(item):
 			item.visible = reveal_all or get_visibility_at(item.global_position) > 0.3
@@ -180,7 +184,11 @@ func _update_objects_visibility():
 
 func _can_see_player(player: Node3D, me: Node3D) -> bool:
 	if player.get_meta("net_hidden", false):
-		return false  # the server doesn't even tell us where they are
+		return false
+	if me and me.has_meta("team") and player.has_meta("team") and int(me.get_meta("team")) == int(player.get_meta("team")):
+		return true  # teammates (team modes)
+	if player.has_meta("flag_carrier"):
+		return true  # the server doesn't even tell us where they are
 	if get_visibility_at(player.global_position) <= 0.3:
 		return false
 	# Stealth and the Small Target passive (the host sees every entity: the server-side fog doesn't

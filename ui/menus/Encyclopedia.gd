@@ -509,7 +509,35 @@ func _event_entries() -> Array:
 	], "Don't settle in the middle too early."))
 	entries[0]["section"] = tr("Random, every %d – %d s") % [int(D.GAP_MIN), int(D.GAP_MAX)]
 	entries[6]["section"] = "With the zone"
+	# The hostile weeds (world/enemies/Weed.gd), with their real numbers
+	var weeds_start = entries.size()
+	var how = {"Dandelion": ["Throws seed puffs from afar", "Keeps its distance: close in or step aside when it throws"],
+		"Hogweed": ["Slow and tough, its sap burns and slows", "Don't trade blows: shoot it from range"],
+		"Nettle": ["Fast, stings and slows", "It catches up: stand and shoot, or put a wall between you"]}
+	for kind in ["Dandelion", "Hogweed", "Nettle"]:
+		var c: Dictionary = Weed.KINDS[kind]
+		var facts = [
+			["Health", "%d" % int(c.health)],
+			["Hit", tr("%d damage every %.1f s") % [int(c.damage), c.cooldown]],
+			["Reach", tr("%.0f m") % c.range],
+			["Notices you", tr("Within %.0f m") % c.aggro],
+		]
+		if c.slow > 0.0:
+			facts.append(["Slows", tr("To %d%% speed") % int(c.slow * 100.0)])
+		entries.append(_event_entry(kind, how[kind][0], c.color, _weed_model.bind(kind), facts, how[kind][1]))
+	entries[weeds_start]["section"] = "Weeds"
 	return entries
+
+func _weed_model(kind: String) -> Node3D:
+	var path: String = Weed.KINDS[kind].model
+	if not ResourceLoader.exists(path):
+		return Node3D.new()
+	var inst = load(path).instantiate()
+	ModelUtils.apply_lowpoly_look(inst)
+	var holder = Node3D.new()
+	holder.add_child(inst)
+	ModelUtils.normalize_to_height(inst, 1.2)
+	return holder
 
 ## make_model: builds the preview model when the entry is opened (null: nothing on the stage)
 func _event_entry(title: String, subtitle: String, color: Color, make_model: Callable, facts: Array, note: String) -> Dictionary:

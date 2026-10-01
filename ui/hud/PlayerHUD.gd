@@ -142,6 +142,7 @@ func setup(p_player: Player, hex_grid: HexGrid = null):
 	if health:
 		health_bar.setup(health)
 		health.died.connect(_on_player_died)
+		health.revived.connect(_on_player_revived)
 
 	var ability_component = player.get_component("AbilityComponent")
 	if ability_component:
@@ -458,6 +459,10 @@ func _on_match_ended(winner_id: int, winner_name: String):
 	if result_screen:
 		return
 	var i_won = player != null and is_instance_valid(player) and winner_id != 0 and player.entity_id == winner_id
+	var title_text_override = ""
+	# Team modes: winner_id -1 - team
+	if winner_id < 0 and player and is_instance_valid(player) and player.has_meta("team"):
+		i_won = int(player.get_meta("team")) == -1 - winner_id
 	var winner_text = winner_name.to_upper() if winner_name != "" else tr("NOBODY")
 	if death_screen:
 		# Already eliminated: tell who took it
@@ -483,10 +488,25 @@ func _on_match_ended(winner_id: int, winner_name: String):
 	box.add_theme_constant_override("separation", 14)
 	card.add_child(box)
 
-	var title = UITheme.create_title("VICTORY!" if i_won else "MATCH OVER", box)
+	var sub_text = "Last veggie standing - the island is yours!" if i_won else (tr("%s is the last one standing") % winner_text if winner_id != 0 else "Nobody survived the harvest")
+	match GameModes.current():
+		GameModes.SURVIVORS:
+			var parts = winner_name.split("|")
+			title_text_override = "THE WEEDS WON"
+			if parts.size() >= 3:
+				sub_text = tr("You held out %s: wave %s, %s weeds felled") % [parts[0], parts[1], parts[2]]
+		GameModes.CTF:
+			if winner_id < 0:
+				sub_text = tr("%s takes the match") % tr(winner_name)
+				title_text_override = "VICTORY!" if i_won else "DEFEAT"
+			else:
+				sub_text = "A draw"
+		GameModes.KOTH:
+			if winner_id > 0:
+				sub_text = "You ruled the hill!" if i_won else tr("%s ruled the hill") % winner_text
+	var title = UITheme.create_title(title_text_override if title_text_override != "" else ("VICTORY!" if i_won else "MATCH OVER"), box)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_color_override("font_color", (UITheme.ACCENT_SUCCESS if i_won else UITheme.ACCENT_WARNING).lightened(0.25))
-	var sub_text = "Last veggie standing - the island is yours!" if i_won else (tr("%s is the last one standing") % winner_text if winner_id != 0 else "Nobody survived the harvest")
 	var sub = UITheme.create_label(sub_text, box)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_reward_row(box, i_won)
@@ -541,6 +561,9 @@ func show_alert(text: String, color: Color = UITheme.ACCENT_WARNING):
 
 func _on_player_died():
 	if death_screen or result_screen:
+		return
+	if GameModes.respawns(GameModes.current()):
+		_show_respawn_countdown()
 		return
 	death_screen = Control.new()
 	death_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -605,6 +628,54 @@ func _on_player_died():
 	death_screen.modulate.a = 0.0
 	create_tween().tween_property(death_screen, "modulate:a", 1.0, 0.5)
 
+## Respawning modes: a short countdown instead of the elimination card
+var _respawn_left: float = 0.0
+func _show_respawn_countdown():
+	death_screen = Control.new()
+	death_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	death_screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(death_screen)
+	var dim = ColorRect.new()
+	dim.color = Color(0.15, 0.0, 0.02, 0.28)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	death_screen.add_child(dim)
+	var center = CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	death_screen.add_child(center)
+	var box = VBoxContainer.new()
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(box)
+	var title = UITheme.create_title("DOWN!", box)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_color_override("font_color", UITheme.ACCENT_DANGER.lightened(0.2))
+	var count = UITheme.create_heading("", box)
+	count.name = "Count"
+	count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_respawn_left = float(GameModes.info(GameModes.current()).respawn)
+	var t = create_tween().set_loops(int(ceil(_respawn_left)))
+	count.text = tr("Back in %d s") % int(ceil(_respawn_left))
+	t.tween_interval(1.0)
+	t.tween_callback(func():
+		_respawn_left -= 1.0
+		if is_instance_valid(count):
+			count.text = tr("Back in %d s") % int(max(ceil(_respawn_left), 0)))
+
+## Back in the fight (respawning modes): the countdown goes, the camera comes back to us
+func _on_player_revived():
+	if death_screen and is_instance_valid(death_screen):
+		death_screen.queue_free()
+	death_screen = null
+	for c in [ability_bar, crosshair, aim_overlay, weapon_slots_ui, consumable_bar]:
+		if c:
+			c.visible = true
+	if ammo_display:
+		ammo_display.modulate.a = 1.0
+	var cam = get_viewport().get_camera_3d()
+	if cam and cam.has_method("set_target") and player:
+		cam.set_target(player)
+
 func _start_spectating():
 	if death_screen:
 		var t = create_tween()
@@ -636,6 +707,16 @@ func _fill_killer_card():
 	var killer_id = int(_death_info.get("killer_id", 0))
 	var info: Dictionary = _death_info.get("info", {})
 	if killer_id == 0:
+		if info.has("npc"):
+			var weed = String(info["npc"])
+			UITheme.create_caption("Eliminated by", _killer_slot).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			var who = UITheme.create_heading(weed, _killer_slot)
+			who.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			who.add_theme_color_override("font_color", Weed.KINDS.get(weed, {}).get("color", Color.WHITE).lightened(0.2))
+			var note = UITheme.create_label("A weed. Watch the bushes.", _killer_slot, UITheme.FONT_SMALL)
+			note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			note.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
+			return
 		var lbl = UITheme.create_heading("The island got you", _killer_slot)
 		lbl.add_theme_color_override("font_color", UITheme.ACCENT_WARNING)
 		return
@@ -653,6 +734,7 @@ func _fill_killer_card():
 		hero_card.accent = hero.color
 		hero_card.badge = String(info.get("killer_name", ""))
 		hero_card.live = ["hero", [hero.character_name, skin, hat]]
+		hero_card.show_wear_mastery(wear)  # the killer's level and rank come with what they wear
 		hero_card.always_live = true
 		hero_card.custom_minimum_size = hero_card.card_size
 		_killer_slot.add_child(hero_card)
@@ -701,6 +783,44 @@ func _reward_row(box: Control, won: bool) -> void:
 	PlayerProfile.add_coins(total)
 	var pill = UITheme.create_pill(tr("+%d coins") % total, Color(1.0, 0.8, 0.3), box)
 	pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_mastery_rows(box, stats)
+
+## Mastery XP for the hero and the guns used (Mastery.gd): bars, level-ups and what got unlocked
+func _mastery_rows(box: Control, stats: Dictionary) -> void:
+	var hero = player.character_data.character_name if player and is_instance_valid(player) and player.character_data else ""
+	var report = PlayerProfile.add_match_xp(hero, stats)
+	var rows: Array = []
+	if report.has("hero"):
+		rows.append([tr(hero), report.hero])
+	var guns: Array = report.weapons.keys()
+	guns.sort_custom(func(a, b): return report.weapons[a][2] > report.weapons[b][2])
+	for t in guns.slice(0, 3):
+		rows.append([tr(RangedWeapon.create_weapon(t).item_name), report.weapons[t]])
+	if rows.is_empty():
+		return
+	UITheme.create_separator(box)
+	for r in rows:
+		var before: Dictionary = r[1][0]
+		var after: Dictionary = r[1][1]
+		var line = HBoxContainer.new()
+		line.add_theme_constant_override("separation", 10)
+		box.add_child(line)
+		var name_label = UITheme.create_label(r[0], line, UITheme.FONT_SMALL)
+		name_label.custom_minimum_size.x = 130
+		var lvl_text = tr("Lv %d") % after.level if before.level == after.level else tr("Lv %d → %d") % [before.level, after.level]
+		var lvl = UITheme.create_label(lvl_text, line, UITheme.FONT_SMALL)
+		lvl.custom_minimum_size.x = 92
+		lvl.add_theme_font_override("font", UITheme.font_black())
+		lvl.add_theme_color_override("font_color", Mastery.tier_color(after.tier).lightened(0.2) if after.tier >= 0 else UITheme.TEXT_PRIMARY)
+		var bar = UITheme.create_progress_bar(float(after.need), float(after.need if after.max else after.into), Mastery.tier_color(after.tier) if after.tier >= 0 else UITheme.ACCENT_INFO, line)
+		bar.custom_minimum_size = Vector2(150, 8)
+		bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		var xp = UITheme.create_label("+%d XP" % int(r[1][2]), line, UITheme.FONT_SMALL)
+		xp.add_theme_color_override("font_color", UITheme.ACCENT_INFO.lightened(0.3))
+	for u in report.unlocked:
+		var rank: int = u[1]
+		var unlock = UITheme.create_pill(tr("Unlocked: %s — %s") % [tr(u[0]), tr(Mastery.TIER_NAMES[rank])], Mastery.tier_color(rank), box)
+		unlock.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 
 func _is_real_match() -> bool:
 	var network_manager = get_node_or_null("/root/NetworkManager")
@@ -714,7 +834,9 @@ func _my_stats() -> Dictionary:
 	if network_manager and network_manager.game_server and network_manager.game_server.players.has(player.entity_id):
 		var sp = network_manager.game_server.players[player.entity_id]
 		var t = sp.alive_time if sp.place > 0 else network_manager.game_server.match_time()
-		return {"kills": sp.kills, "damage": int(sp.damage_dealt), "place": sp.place, "time": int(t)}
+		var st = sp.stats()
+		st["time"] = int(t)
+		return st
 	var scene = get_tree().current_scene
 	var client_world = scene.get_node_or_null("ClientWorld") if scene else null
 	if client_world:
@@ -864,6 +986,15 @@ func _create_weapon_slot(index: int) -> PanelContainer:
 	icon.custom_minimum_size = Vector2(30, 14)
 	icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(icon)
+	# The gun's own picture (ItemRenderer, in its finish); the color bar stands in until it's there
+	var pic = TextureRect.new()
+	pic.name = "WeaponPic"
+	pic.custom_minimum_size = Vector2(66, 30)
+	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pic.visible = false
+	box.add_child(pic)
 
 	var name_label = UITheme.create_label("", box, 9)
 	name_label.name = "WeaponName"
@@ -897,6 +1028,21 @@ func _update_weapon_slots_display(inventory: InventoryComponent):
 			icon_box.bg_color = color
 			icon_box.set_corner_radius_all(5)
 			icon.add_theme_stylebox_override("panel", icon_box)
+		var pic = slot_panel.find_child("WeaponPic", true, false) as TextureRect
+		if pic:
+			pic.visible = false
+			if icon:
+				icon.visible = true
+			if weapon:
+				pic.set_meta("weapon", weapon)
+				ItemRenderer.get_instance(get_tree()).icon_for(weapon, func(tex):
+					if is_instance_valid(pic) and pic.get_meta("weapon", null) == weapon:
+						pic.texture = tex
+						pic.visible = true
+						if is_instance_valid(icon):
+							icon.visible = false)
+			else:
+				pic.set_meta("weapon", null)
 
 		var name_label = slot_panel.find_child("WeaponName", true, false) as Label
 		if name_label:
@@ -959,6 +1105,9 @@ func _setup_hero_card(p: Player) -> void:
 	_hero_card_small.subtitle = Cosmetics.TIER_NAMES[Cosmetics.tier_of(Cosmetics.hero_id(data.character_name))]
 	_hero_card_small.accent = data.color
 	_hero_card_small.live = ["hero", [data.character_name, wear.skin, wear.hat]]
+	_hero_card_small.show_hero_mastery(data.character_name)
+	if _hero_card_small.mastery >= 0:
+		_hero_card_small.subtitle = Mastery.tier_name(_hero_card_small.mastery)
 	_hero_card_small.always_live = true
 	_hero_card_small.refresh()
 	_hero_card_small.visible = true
@@ -978,6 +1127,9 @@ func _animate_hero_card_intro(p: Player) -> void:
 	big.subtitle = Cosmetics.TIER_NAMES[Cosmetics.tier_of(Cosmetics.hero_id(data.character_name))]
 	big.accent = data.color
 	big.live = ["hero", [data.character_name, wear.skin, wear.hat]]
+	big.show_hero_mastery(data.character_name)
+	if big.mastery >= 0:
+		big.subtitle = Mastery.tier_name(big.mastery)
 	big.always_live = true
 	big.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	big.set_anchors_preset(Control.PRESET_CENTER)

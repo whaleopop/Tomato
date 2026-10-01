@@ -243,6 +243,13 @@ func _setup_local_player(player: Player):
 			grid = training_ground.grid
 		hud.setup(player, grid)
 		_connect_destruction_alerts(hud)
+		# The match mode's own HUD and markers (ModeView), not on the training ground
+		var gm = get_node_or_null("/root/GameManager")
+		if gm and not gm.training_mode and String(gm.game_mode) != GameModes.BR:
+			var mode_view = ModeView.new()
+			mode_view.name = "ModeView"
+			hud.add_child(mode_view)
+			mode_view.setup(player, hud)
 
 	_setup_inventory_menu(player)
 	_setup_pause_menu()

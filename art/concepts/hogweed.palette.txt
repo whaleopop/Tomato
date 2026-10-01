@@ -1,0 +1,13 @@
+; flat colors for rig_and_animate.py --palette (edit freely: '#rrggbb name')
+#597219  color0   ; 16.1%  L=0.51 C=0.116 hue=124
+#3a4a0b  color1   ; 14.8%  L=0.38 C=0.087 hue=124
+#6e861e  color2   ; 14.4%  L=0.58 C=0.129 hue=122
+#465c15  color3   ; 13.5%  L=0.44 C=0.099 hue=126
+#8b9e28  color4   ; 9.1%  L=0.66 C=0.140 hue=119
+#f4e2c5  color5   ; 8.5%  L=0.92 C=0.043 hue=80
+#e3cdab  color6   ; 6.8%  L=0.86 C=0.052 hue=80
+#a5885e  color7   ; 4.9%  L=0.64 C=0.068 hue=77
+#2a3806  color8   ; 4.8%  L=0.32 C=0.074 hue=124
+#c7b18d  color9   ; 3.3%  L=0.77 C=0.055 hue=80
+#6c5b23  color10   ; 2.3%  L=0.48 C=0.077 hue=92
+#88723d  color11   ; 1.5%  L=0.56 C=0.076 hue=86

@@ -77,7 +77,10 @@ func _update_display():
 		color = LOW_AMMO_COLOR
 	ammo_label.add_theme_color_override("font_color", color)
 
-	if inventory_component:
+	if combat_component.entity and combat_component.entity.has_meta("endless_ammo"):
+		reserve_label.text = tr("Reserve  ∞")  # Weed Swarm
+		reserve_label.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
+	elif inventory_component:
 		var reserve = inventory_component.get_ammo_count(weapon.ammo_type)
 		reserve_label.text = tr("Reserve  %d") % reserve if reserve > 0 else tr("No reserve ammo")
 		reserve_label.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY if reserve > 0 else LOW_AMMO_COLOR)

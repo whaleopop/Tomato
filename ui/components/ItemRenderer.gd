@@ -87,12 +87,25 @@ func _place(stage: Node3D, camera: Camera3D, kind: String, args: Array) -> Node3
 				anim.play("idle")
 		pivot.rotation.y = HERO_YAW
 		camera.look_at_from_position(Vector3(0, 0.95, 4.2), Vector3(0, 0.7, 0))  # works before the viewport is in the tree
+	elif kind == "item":
+		# A pickup (medkit, shield, crystal, ammo) seen from a little above, a bit turned
+		var data: ItemData = null
+		if int(args[0]) == LootItem.ItemType.AMMO:
+			data = AmmoItem.new(int(args[1]), 1)
+		var model = LootVisuals.pickup_model(int(args[0]), data)
+		if model:
+			LootVisuals.fit(model, 1.1)
+			var turn = Node3D.new()
+			turn.add_child(model)
+			turn.rotation = Vector3(deg_to_rad(10), deg_to_rad(-30), 0)
+			pivot.add_child(turn)
+		camera.look_at_from_position(Vector3(0, 0.9, 3.4), Vector3(0, 0, 0))
 	else:
 		var weapon = RangedWeapon.create_weapon(args[0])
 		var model = LootVisuals.pickup_model(LootItem.ItemType.WEAPON, weapon)
 		if model:
 			Cosmetics.apply_to_weapon(model, args[1])
-			LootVisuals.fit(model, 1.25)
+			LootVisuals.fit_length(model, 1.2 * LootVisuals.weapon_scale(weapon))  # true to size between guns
 			var turn = Node3D.new()
 			turn.add_child(model)
 			turn.rotation = Vector3(deg_to_rad(8), deg_to_rad(-70), 0)  # side-on, barrel to the right
@@ -109,6 +122,56 @@ func hero(hero_name: String, skin: String, hat: String, callback: Callable) -> v
 ## A gun with a finish
 func weapon(weapon_type: int, finish: String, callback: Callable) -> void:
 	_request("gun|%d|%s" % [weapon_type, finish], "gun", [weapon_type, finish], callback)
+
+## A pickup: LootItem.ItemType (HEALTH / SHIELD / ABILITY_BOOST / AMMO) and the ammo type for ammo
+func item(item_type: int, ammo_type: int, callback: Callable) -> void:
+	_request("item|%d|%d" % [item_type, ammo_type], "item", [item_type, ammo_type], callback)
+
+## The picture of an inventory item (the HUD and the inventory menu): a gun in the finish it
+## wears for us, a medkit, a shield, a clip of the right ammo. Perks have none (no callback).
+## Pictures are cropped to the model (a gun side-on is a thin strip of the square snapshot), so
+## they fill a small slot
+func icon_for(it: ItemData, callback: Callable) -> void:
+	var crop = func(tex): callback.call(cropped(tex))
+	if it is RangedWeapon:
+		# Guns share one frame (the longest gun's): cropping each to its outline would make them
+		# all the same size again
+		weapon(int(it.weapon_type), PlayerProfile.weapon_finish_for(int(it.weapon_type)), func(tex): callback.call(gun_frame(tex)))
+	elif it is HealthPack:
+		item(LootItem.ItemType.HEALTH, 0, crop)
+	elif it is ShieldPack:
+		item(LootItem.ItemType.SHIELD, 0, crop)
+	elif it is AmmoItem:
+		item(LootItem.ItemType.AMMO, int(it.ammo_type), crop)
+
+var _crops: Dictionary = {}  # snapshot -> its cropped copy
+
+## The middle of a gun snapshot that the longest gun fills (5 : 3, room for the chunky blasters)
+const GUN_FRAME := Rect2i(44, 104, 296, 176)
+func gun_frame(tex: Texture2D) -> Texture2D:
+	if tex == null:
+		return null
+	var key = [tex, "frame"]
+	if _crops.has(key):
+		return _crops[key]
+	var out = ImageTexture.create_from_image(tex.get_image().get_region(GUN_FRAME))
+	_crops[key] = out
+	return out
+
+## The snapshot cut down to what is drawn on it (plus a little air)
+func cropped(tex: Texture2D) -> Texture2D:
+	if tex == null:
+		return null
+	if _crops.has(tex):
+		return _crops[tex]
+	var img = tex.get_image()
+	var used = img.get_used_rect()
+	if used.size.x <= 0 or used.size.y <= 0:
+		return tex
+	used = used.grow(6).intersection(Rect2i(Vector2i.ZERO, img.get_size()))
+	var out = ImageTexture.create_from_image(img.get_region(used))
+	_crops[tex] = out
+	return out
 
 func _request(key: String, kind: String, args: Array, callback: Callable) -> void:
 	if _cache.has(key):

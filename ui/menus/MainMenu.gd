@@ -1,9 +1,10 @@
-## Main menu: title, glass action card, rotating character showcase
+## Main menu: title, glass action card; behind them MenuDiorama (a piece of the map, your arsenal,
+## the heroes you own taking turns on the dais)
 extends Control
 class_name MainMenu
 
 const SHOWCASE_INTERVAL: float = 4.0
-const VERSION = "v0.6.1"
+const VERSION = "v0.7.0"
 
 var start_button: Button = null
 var connect_button: Button = null
@@ -15,7 +16,7 @@ var quit_button: Button = null
 var coins_label: Label = null
 var shop: Shop = null
 
-var showcase: CharacterShowcase = null
+var showcase: MenuDiorama = null  # the scene behind the menu, with the hero on its dais
 var showcase_name: Label = null
 var toast: Control = null
 var settings_layer: Control = null
@@ -36,7 +37,11 @@ func _ready():
 	var game_manager_node = get_node_or_null("/root/GameManager")
 	if game_manager_node:
 		game_manager_node.training_mode = false
+	# The showcase walks through the heroes you own (all of them before you own any)
 	_roster = CharacterRegistry.get_all()
+	var mine = _roster.filter(func(c): return PlayerProfile.owns_hero(c.character_name))
+	if not mine.is_empty():
+		_roster.assign(mine)
 	_showcase_index = randi() % _roster.size()
 	_create_ui()
 	_show_next_character()
@@ -63,6 +68,22 @@ func _process(delta: float):
 
 func _create_ui():
 	UITheme.create_background(self)
+	# Behind everything: a piece of the map with your arsenal and your hero (MenuDiorama)
+	showcase = MenuDiorama.new()
+	showcase.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(showcase)
+	# A soft shade on the left, under the menu card, so the buttons read over the scene
+	var shade = TextureRect.new()
+	var grad = GradientTexture2D.new()
+	grad.gradient = Gradient.new()
+	grad.gradient.set_color(0, Color(0.03, 0.04, 0.08, 0.75))
+	grad.gradient.set_color(1, Color(0.03, 0.04, 0.08, 0.0))
+	grad.fill_to = Vector2(1, 0)
+	shade.texture = grad
+	shade.set_anchors_and_offsets_preset(Control.PRESET_LEFT_WIDE)
+	shade.offset_right = 760
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(shade)
 
 	var margin = UITheme.create_screen_margin(self, 56)
 	var row = HBoxContainer.new()
@@ -130,10 +151,10 @@ func _create_ui():
 	right.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_child(right)
 
-	showcase = CharacterShowcase.new()
-	showcase.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	showcase.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	right.add_child(showcase)
+	var space = Control.new()  # the hero stands in the scene behind (MenuDiorama)
+	space.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	space.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right.add_child(space)
 
 	showcase_name = UITheme.create_title("", right)
 	showcase_name.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
@@ -171,7 +192,8 @@ func _show_next_character():
 		return
 	var data = _roster[_showcase_index % _roster.size()]
 	_showcase_index += 1
-	showcase.show_character(data)
+	var wear = PlayerProfile.equipped_for(data.character_name)
+	showcase.show_hero(data, wear.skin, wear.hat)
 	showcase_name.text = data.character_name  # translated, then uppercased
 	showcase_name.uppercase = true
 	showcase_name.add_theme_color_override("font_color", data.color.lightened(0.35))
@@ -216,7 +238,17 @@ func _set_buttons_enabled(enabled: bool):
 		if b:
 			b.disabled = not enabled
 
+## PLAY: the host picks the mode first (ModeSelect), then the server starts
 func _on_start_pressed():
+	var picker = ModeSelect.new()
+	add_child(picker)
+	picker.chosen.connect(func(mode):
+		var gm = get_node_or_null("/root/GameManager")
+		if gm:
+			gm.game_mode = mode
+		_host_game())
+
+func _host_game():
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if not network_manager:
 		_transition_to("res://scenes/CharacterSelectScene.tscn")

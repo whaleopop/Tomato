@@ -216,7 +216,7 @@ func aim_distance_max() -> float:
 	if target and target.has_method("get_component"):
 		var combat = target.get_component("CombatComponent")
 		if combat and combat.equipped_ranged_weapon:
-			limit = min(limit, combat.equipped_ranged_weapon.range)
+			limit = min(limit, combat.reach())
 	return max(limit, AIM_DISTANCE_MIN + 0.5)
 
 func set_locked(on: bool) -> void:

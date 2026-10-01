@@ -14,6 +14,7 @@ var loot_spawner: LootSpawner = null
 var cover_spawner: CoverSpawner = null
 var map_events: MapEvents = null            # plays the map events on this (the host's) world
 var event_director: MapEventDirector = null  # picks them
+var weed_spawner: WeedSpawner = null         # the hostile weeds (world/enemies)
 var players: Dictionary = {}  # player_id -> Player entity
 var spawn_points: Array[Vector3] = []
 var hex_grid: HexGrid = null
@@ -72,6 +73,12 @@ func _ready():
 	add_child(event_director)
 	event_director.setup(hex_grid, destruction_system, map_events, loot_spawner, cover_spawner)
 
+	# Hostile weeds: they sprout when the match starts
+	weed_spawner = WeedSpawner.new()
+	weed_spawner.name = "WeedSpawner"
+	add_child(weed_spawner)
+	weed_spawner.setup(hex_grid, self, map_seed)
+
 	_generate_spawn_points(hex_grid)
 
 	is_map_ready = true
@@ -90,13 +97,16 @@ func _register_loot_containers():
 	print("[ServerWorld] Registered %d loot containers" % loot_spawner.spawned_containers.size())
 
 ## Called when the lobby countdown finishes
-func start_match():
-	if destruction_system and hex_grid:
+## mode: GameModes.info - the zone, the map events and the wild weeds only where the mode has them
+func start_match(mode: Dictionary = GameModes.info(GameModes.BR)):
+	if destruction_system and hex_grid and mode.get("zone", true):
 		destruction_system.start(hex_grid)
 	if loot_spawner:
 		loot_spawner.start_supply_drops()
-	if event_director:
+	if event_director and mode.get("events", true):
 		event_director.start()
+	if weed_spawner and mode.get("weeds", true):
+		weed_spawner.start()
 
 ## The match is decided: the island stops crumbling, no more supply drops or events
 func stop_match():
@@ -104,6 +114,8 @@ func stop_match():
 		destruction_system.stop()
 	if event_director:
 		event_director.stop()
+	if weed_spawner:
+		weed_spawner.stop()
 	if loot_spawner:
 		loot_spawner.enable_supply_drops = false
 

@@ -18,6 +18,12 @@ mat3 rot() {
 	return ry * rx;
 }
 
+// The node's modulate (in fragment() COLOR already holds the untilted texture)
+varying vec4 tint;
+void vertex() {
+	tint = COLOR;
+}
+
 void fragment() {
 	// Screen point in card units: x in [-aspect, aspect], y in [-1, 1] (y down like UV)
 	vec2 s = (UV - 0.5) * 2.0;
@@ -43,5 +49,5 @@ void fragment() {
 	float band = uv.x * 0.8 + uv.y * 0.6 - 0.7 + yaw * 1.8 - pitch * 1.4;
 	float shine = exp(-band * band * 18.0) * glare * (0.35 + lift);
 	c.rgb += vec3(1.0, 0.97, 0.9) * shine * c.a;
-	COLOR = c;
+	COLOR = c * tint;
 }

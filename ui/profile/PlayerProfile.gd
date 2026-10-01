@@ -21,6 +21,8 @@ const SURVIVAL_PER_COIN: float = 10.0  # seconds alive
 const SURVIVAL_CAP: int = 40
 const PLACE_REWARDS = [0, 100, 50, 30]  # 1st, 2nd, 3rd place
 const WIN_REWARD: int = 100
+const WEED_REWARD: int = 3       # per weed felled (Weed Swarm and the wild weeds)
+const WEED_CAP: int = 150
 
 ## The reward lines for a match: [[label, value text, coins], ...]
 static func match_reward(stats: Dictionary) -> Array:
@@ -31,6 +33,9 @@ static func match_reward(stats: Dictionary) -> Array:
 	lines.append(["Eliminations", str(kills), kills * KILL_REWARD])
 	var t = int(stats.get("time", 0))
 	lines.append(["Survived", "%d:%02d" % [t / 60, t % 60], min(int(t / SURVIVAL_PER_COIN), SURVIVAL_CAP)])
+	var weeds = int(stats.get("weeds", 0))
+	if weeds > 0:
+		lines.append(["Weeds", str(weeds), min(weeds * WEED_REWARD, WEED_CAP)])
 	var place = int(stats.get("place", 0))
 	if place > 0:
 		lines.append(["Place", "#%d" % place, PLACE_REWARDS[place] if place < PLACE_REWARDS.size() else 0])
@@ -41,7 +46,10 @@ static var coins: int = START_COINS
 static var owned: Dictionary = {}          # cosmetic id -> true (free defaults are always owned)
 static var hero_skin: Dictionary = {}      # hero name -> skin id
 static var hero_hat: Dictionary = {}       # hero name -> hat id
-static var weapon_skin: String = "default" # one finish for all guns
+static var weapon_skin: String = "default" # one finish for all guns...
+static var weapon_skin_by_type: Dictionary = {}  # ...unless a gun has its own (mastery camos): "type" -> id
+static var hero_xp: Dictionary = {}        # hero name -> mastery XP (Mastery.gd)
+static var weapon_xp: Dictionary = {}      # "weapon type" -> mastery XP
 static var nickname: String = ""
 
 static func load_profile() -> void:
@@ -57,6 +65,9 @@ static func load_profile() -> void:
 	hero_skin = cfg.get_value("wear", "hero_skin", {})
 	hero_hat = cfg.get_value("wear", "hero_hat", {})
 	weapon_skin = String(cfg.get_value("wear", "weapon_skin", "default"))
+	weapon_skin_by_type = cfg.get_value("wear", "weapon_skin_by_type", {})
+	hero_xp = cfg.get_value("mastery", "heroes", {})
+	weapon_xp = cfg.get_value("mastery", "weapons", {})
 	nickname = String(cfg.get_value("account", "nickname", ""))
 
 static func save() -> void:
@@ -66,6 +77,9 @@ static func save() -> void:
 	cfg.set_value("wear", "hero_skin", hero_skin)
 	cfg.set_value("wear", "hero_hat", hero_hat)
 	cfg.set_value("wear", "weapon_skin", weapon_skin)
+	cfg.set_value("wear", "weapon_skin_by_type", weapon_skin_by_type)
+	cfg.set_value("mastery", "heroes", hero_xp)
+	cfg.set_value("mastery", "weapons", weapon_xp)
 	cfg.set_value("account", "nickname", nickname)
 	cfg.save(PATH)
 
@@ -80,7 +94,57 @@ static func add_coins(amount: int) -> void:
 
 static func owns(id: String) -> bool:
 	load_profile()
+	if Cosmetics.is_mastery(id):
+		return false  # earned per hero / per gun: owns_for
 	return Cosmetics.price_of(id) == 0 or owned.has(id)
+
+## Owned for this hero (skins) / this gun (finishes): mastery ones once its rank is reached
+static func owns_for(id: String, hero: String = "", weapon_type: int = -1) -> bool:
+	var rank = Mastery.tier_of_id(id)
+	if rank < 0:
+		return owns(id)
+	if Cosmetics.kind_of(id) == "weapon":
+		return weapon_type >= 0 and weapon_progress(weapon_type).tier >= rank
+	return hero != "" and hero_progress(hero).tier >= rank
+
+static func hero_progress(hero: String) -> Dictionary:
+	load_profile()
+	return Mastery.progress(int(hero_xp.get(hero, 0)))
+
+static func weapon_progress(weapon_type: int) -> Dictionary:
+	load_profile()
+	return Mastery.progress(int(weapon_xp.get(str(weapon_type), 0)), true)
+
+## The finish this gun wears: its own (a mastery camo) or the one for all guns
+static func weapon_finish_for(weapon_type: int) -> String:
+	load_profile()
+	return String(weapon_skin_by_type.get(str(weapon_type), weapon_skin))
+
+## A real match is over: XP for the hero played and every gun used. Returns what to show:
+## {hero: [before, after, xp], weapons: {type: [before, after, xp]}, unlocked: [[hero / gun name, rank]]}
+static func add_match_xp(hero: String, stats: Dictionary) -> Dictionary:
+	load_profile()
+	var report = {"weapons": {}, "unlocked": []}
+	if hero != "":
+		var before = hero_progress(hero)
+		var gain = Mastery.hero_xp(stats)
+		hero_xp[hero] = int(hero_xp.get(hero, 0)) + gain
+		var after = hero_progress(hero)
+		report["hero"] = [before, after, gain]
+		for t in range(before.tier + 1, after.tier + 1):
+			report.unlocked.append([hero, t])
+	var wx = Mastery.weapon_xp(stats)
+	for t in wx:
+		if wx[t] <= 0:
+			continue
+		var wb = weapon_progress(t)
+		weapon_xp[str(t)] = int(weapon_xp.get(str(t), 0)) + int(wx[t])
+		var wa = weapon_progress(t)
+		report.weapons[t] = [wb, wa, wx[t]]
+		for r in range(wb.tier + 1, wa.tier + 1):
+			report.unlocked.append([RangedWeapon.create_weapon(t).item_name, r])
+	save()
+	return report
 
 ## Buy a cosmetic: false if it costs more than we have
 static func buy(id: String) -> bool:
@@ -97,7 +161,7 @@ static func buy(id: String) -> bool:
 
 static func equip(id: String, hero: String) -> void:
 	load_profile()
-	if not owns(id):
+	if not owns_for(id, hero):
 		return
 	match Cosmetics.kind_of(id):
 		"skin":
@@ -108,8 +172,23 @@ static func equip(id: String, hero: String) -> void:
 			weapon_skin = id
 	save()
 
-static func is_equipped(id: String, hero: String) -> bool:
+## Put a finish on one gun: a mastery camo stays on that gun; an ordinary finish goes on every
+## gun and this one drops its own
+static func equip_weapon(id: String, weapon_type: int) -> void:
+	load_profile()
+	if not owns_for(id, "", weapon_type):
+		return
+	if Cosmetics.is_mastery(id):
+		weapon_skin_by_type[str(weapon_type)] = id
+	else:
+		weapon_skin = id
+		weapon_skin_by_type.erase(str(weapon_type))
+	save()
+
+static func is_equipped(id: String, hero: String, weapon_type: int = -1) -> bool:
 	var wear = equipped_for(hero)
+	if Cosmetics.kind_of(id) == "weapon" and weapon_type >= 0:
+		return weapon_finish_for(weapon_type) == id
 	return wear.skin == id or wear.hat == id or wear.weapon == id
 
 # ---------------------------------------------------------------- account and heroes
@@ -162,4 +241,7 @@ static func equipped_for(hero: String) -> Dictionary:
 		"skin": String(hero_skin.get(hero, "classic")),
 		"hat": String(hero_hat.get(hero, "no_hat")),
 		"weapon": weapon_skin,
+		"weapons": weapon_skin_by_type.duplicate(),  # per-gun finishes (mastery camos)
+		"level": hero_progress(hero).level,          # others see your card's level and rank
+		"mastery": hero_progress(hero).tier,
 	}

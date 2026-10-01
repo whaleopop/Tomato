@@ -19,6 +19,11 @@ static func can_see(viewer: Node3D, target: Node3D, grid: HexGrid) -> bool:
 	# The eliminated spectate the whole map; the fallen are no secret (and invisible anyway)
 	if _is_dead(viewer) or _is_dead(target):
 		return true
+	# Team modes: your team is always in sight; a flag carrier is seen by everyone
+	if viewer.has_meta("team") and target.has_meta("team") and int(viewer.get_meta("team")) == int(target.get_meta("team")):
+		return true
+	if target.has_meta("flag_carrier"):
+		return true
 
 	var radius = VisibilitySystem.BASE_VISIBILITY_RANGE
 	var combat = viewer.get_component("CombatComponent")

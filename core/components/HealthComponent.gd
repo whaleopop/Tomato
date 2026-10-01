@@ -36,11 +36,19 @@ func take_damage(amount: float, source = null) -> float:  # source: Entity
 	# A client killing its copy of someone the server didn't kill left an unhittable "ghost".
 	if not _is_authority():
 		return 0.0
+	# Team modes (GameModes): no friendly fire
+	if source != null and is_instance_valid(source) and source != entity and entity is Node and source is Node 			and entity.has_meta("team") and source.has_meta("team") and int(entity.get_meta("team")) == int(source.get_meta("team")):
+		return 0.0
 
 	# Check for dodge (DodgeChance passive ability)
 	if dodge_chance > 0.0 and randf() < dodge_chance:
 		damage_dodged.emit(amount, source)
 		return 0.0
+
+	# Weed Swarm perks of the attacker (SwarmPerks): a lucky double hit (meta "crit_chance")
+	var attacker_ok = source != null and is_instance_valid(source) and source != entity and source is Node
+	if attacker_ok and source.has_meta("crit_chance") and randf() < float(source.get_meta("crit_chance")):
+		amount *= 2.0
 
 	# Apply damage resistance
 	var actual_damage = amount * (1.0 - damage_resistance)
@@ -58,10 +66,15 @@ func take_damage(amount: float, source = null) -> float:  # source: Entity
 	var dealt = absorbed + _apply_damage(actual_damage, source)
 	_report_hit(source, dealt)
 	_thorns(dealt, source)
+	# ... and sap drinking (meta "lifesteal"): a share of what they dealt heals them
+	if attacker_ok and dealt > 0.0 and source.has_meta("lifesteal") and source.has_method("get_component"):
+		var their_health = source.get_component("HealthComponent")
+		if their_health and not their_health.is_dead:
+			their_health.heal(dealt * float(source.get_meta("lifesteal")))
 	return dealt
 
 func _report_hit(source, amount: float) -> void:
-	if amount > 0.0 and source is Node3D and is_instance_valid(source) and source != entity:
+	if amount > 0.0 and is_instance_valid(source) and source is Node3D and source != entity:
 		hit_from.emit(source.global_position, amount)
 
 ## Spiky Skin passive (meta "thorns"): whoever hurt us gets a share of it back (not reflected again)

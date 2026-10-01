@@ -185,6 +185,27 @@ func _id(key: String) -> String:
 			return Cosmetics.weapon_id(key)
 	return key
 
+## Owned for the hero / gun the cards are tried on (mastery ones are earned per hero / per gun)
+func _owns(id: String) -> bool:
+	match _kind:
+		"hero":
+			return PlayerProfile.owns(id)
+		"weapon":
+			return PlayerProfile.owns_for(id, "", _weapon_type)
+	return PlayerProfile.owns_for(id, _hero().character_name)
+
+func _is_on(id: String) -> bool:
+	return PlayerProfile.is_equipped(id, _hero().character_name, _weapon_type if _kind == "weapon" else -1)
+
+## Levels belong to heroes (and guns), not to things you wear: only hero cards show the level and
+## the rank backdrop. A mastery skin / finish card shows its own rank's material, without a level.
+func _show_mastery(card: ParallaxCard, key: String) -> void:
+	if _kind == "hero":
+		card.show_hero_mastery(key)
+		return
+	card.level = 0
+	card.mastery = Mastery.tier_of_id(_id(key))
+
 func _keys() -> Array:
 	if _kind == "hero":
 		return _roster.map(func(c): return c.character_name)
@@ -200,7 +221,7 @@ func _show_tab(index: int):
 		"hero":
 			_selected = _hero().character_name
 		"weapon":
-			var w = PlayerProfile.equipped_for(_hero().character_name).weapon
+			var w = PlayerProfile.weapon_finish_for(_weapon_type)
 			_selected = "default" if w == "default" else w.substr(2)
 		_:
 			_selected = String(PlayerProfile.equipped_for(_hero().character_name)[_kind])
@@ -288,9 +309,19 @@ func _style_card(card: ParallaxCard, key: String):
 	card.title = key if _kind == "hero" else Cosmetics.name_of(id)
 	card.accent = _roster.filter(func(c): return c.character_name == key)[0].color if _kind == "hero" else Cosmetics.TIER_COLORS[tier]
 	card.subtitle = Cosmetics.TIER_NAMES[tier]
-	card.locked = not PlayerProfile.owns(id)
-	if PlayerProfile.owns(id):
-		card.badge = tr("Equipped") if (_kind != "hero" and PlayerProfile.is_equipped(id, _hero().character_name)) else tr("Owned")
+	_show_mastery(card, key)
+	var rank = Mastery.tier_of_id(id)
+	if rank >= 0:
+		card.accent = Mastery.tier_color(rank)
+		card.subtitle = Mastery.tier_name(rank)
+	elif _kind == "hero" and card.mastery >= 0:
+		card.subtitle = Mastery.tier_name(card.mastery)
+	var mine = _owns(id)
+	card.locked = not mine
+	if mine:
+		card.badge = tr("Equipped") if (_kind != "hero" and _is_on(id)) else tr("Owned")
+	elif rank >= 0:
+		card.badge = tr("From Lv %d") % Mastery.TIER_LEVELS[rank]  # the hero / gun level that unlocks it
 	else:
 		card.badge = tr("%d coins") % Cosmetics.price_of(id)
 	card.selected = key == _selected
@@ -327,6 +358,7 @@ func _build_side():
 	var big = _big
 	_render_art(_selected, func(tex): if is_instance_valid(big): big.set_art(tex))
 
+	_mastery_line(_kind == "weapon", _selected if _kind == "hero" else _hero().character_name)
 	if _kind == "hero":
 		var data: CharacterData = _roster.filter(func(c): return c.character_name == _selected)[0]
 		var facts = UITheme.create_label(tr("%d HP  ·  speed %.1f") % [int(data.base_health), data.base_speed], _side, UITheme.FONT_SMALL)
@@ -342,21 +374,36 @@ func _build_side():
 	var hero = _hero().character_name
 	if _kind != "hero":
 		# Who it goes on: skins and hats are worn per hero, a finish goes on every gun
-		var target = UITheme.create_label(tr("Goes on every gun") if _kind == "weapon" else tr("For hero: %s") % tr(hero), _side, UITheme.FONT_NORMAL)
+		var gun_name = tr(RangedWeapon.create_weapon(_weapon_type).item_name)
+		var where = (tr("Only on: %s") % gun_name if Cosmetics.is_mastery(id) else tr("Goes on every gun")) if _kind == "weapon" else tr("For hero: %s") % tr(hero)
+		var target = UITheme.create_label(where, _side, UITheme.FONT_NORMAL)
 		target.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		target.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY if _kind == "weapon" else _hero().color.lightened(0.3))
 	if _kind == "hero" and PlayerProfile.owns(id):
 		var owned = UITheme.create_button("OWNED", _side, Vector2(0, 52))
 		owned.disabled = true
-	elif PlayerProfile.is_equipped(id, hero):
+	elif _kind != "hero" and _is_on(id):
 		var on = UITheme.create_button("EQUIPPED", _side, Vector2(0, 52))
 		on.disabled = true
-	elif PlayerProfile.owns(id):
+	elif _owns(id):
 		var equip = UITheme.create_primary_button("EQUIP", _side, Vector2(0, 52))
 		equip.pressed.connect(func():
-			PlayerProfile.equip(id, hero)
+			if _kind == "weapon":
+				PlayerProfile.equip_weapon(id, _weapon_type)
+			else:
+				PlayerProfile.equip(id, hero)
 			_build_chips()  # the hero's portrait wears it now
 			_select(_selected))
+	elif Cosmetics.is_mastery(id):
+		# Earned, not bought: play the hero / use the gun
+		var rank = Mastery.tier_of_id(id)
+		var how = tr("Reach level %d with this gun") % Mastery.TIER_LEVELS[rank] if _kind == "weapon" else tr("Reach level %d with %s") % [Mastery.TIER_LEVELS[rank], tr(hero)]
+		var locked = UITheme.create_button(tr("LOCKED"), _side, Vector2(0, 52))
+		locked.disabled = true
+		var hint = UITheme.create_label(how, _side, UITheme.FONT_SMALL)
+		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		hint.add_theme_color_override("font_color", Mastery.tier_color(rank).lightened(0.2))
 	else:
 		var price = Cosmetics.price_of(id)
 		var buy = UITheme.create_primary_button(tr("BUY FOR %d") % price, _side, Vector2(0, 52))
@@ -366,12 +413,34 @@ func _build_side():
 			need.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 		buy.pressed.connect(func():
 			if PlayerProfile.buy(id):
-				if _kind != "hero":
+				if _kind == "weapon":
+					PlayerProfile.equip_weapon(id, _weapon_type)
+				elif _kind != "hero":
 					PlayerProfile.equip(id, hero)
 				_update_coins()
 				ScreenEffects.flash(COIN_COLOR, 0.15, 0.15)
 				_build_chips()
 				_select(_selected))
+
+## "Tomato  Lv 7 · Silver" and a bar to the next level, under the big card
+func _mastery_line(gun: bool, hero: String) -> void:
+	var p = PlayerProfile.weapon_progress(_weapon_type) if gun else PlayerProfile.hero_progress(hero)
+	var who = tr(RangedWeapon.create_weapon(_weapon_type).item_name) if gun else tr(hero)
+	var rank_col = Mastery.tier_color(p.tier) if p.tier >= 0 else UITheme.ACCENT_INFO
+	var text = tr("%s  ·  Lv %d") % [who, p.level]
+	if p.tier >= 0:
+		text += "  ·  " + tr(Mastery.tier_name(p.tier))
+	var line = UITheme.create_label(text, _side, UITheme.FONT_SMALL)
+	line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	line.add_theme_font_override("font", UITheme.font_black())
+	line.add_theme_color_override("font_color", rank_col.lightened(0.2))
+	var bar = UITheme.create_progress_bar(float(p.need), float(p.need if p.max else p.into), rank_col, _side)
+	bar.custom_minimum_size.y = 8
+	var next_rank = Mastery.tier_for_level(p.level) + 1
+	if next_rank < Mastery.TIERS.size():
+		var next = UITheme.create_label(tr("%s at level %d") % [tr(Mastery.TIER_NAMES[next_rank]), Mastery.TIER_LEVELS[next_rank]], _side, UITheme.FONT_TINY)
+		next.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		next.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 
 ## Put the chosen card's hero (with the skin / hat) or gun (with the finish) on the big preview
 func _update_showcase():

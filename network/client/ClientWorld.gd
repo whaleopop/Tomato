@@ -9,6 +9,7 @@ signal map_ready
 signal tiles_destroyed(count: int)
 
 var players: Dictionary = {}  # player_id -> Player entity
+var npcs: Dictionary = {}     # npc id -> Weed copy (the server's weeds this client can see)
 var local_player: Player = null
 var players_character_applied: Dictionary = {}  # player_id -> bool
 
@@ -267,6 +268,11 @@ func apply_world_state(state: Dictionary):
 
 	var player_states: Dictionary = state["players"]
 	last_player_states = player_states
+	_apply_npcs(state.get("npcs", {}))
+	if state.has("mode"):
+		var nm = get_node_or_null("/root/NetworkManager")
+		if nm:
+			nm.mode_state.emit(state["mode"])
 
 	# Players that are no longer on the server have left
 	for player_id in players.keys():
@@ -309,6 +315,27 @@ func apply_world_state(state: Dictionary):
 		# Sync weapon state for remote players
 		if player_data.has("weapon_type") and not player.is_local_player:
 			_sync_remote_player_weapon(player, player_data)
+
+## The weeds the server says we can see: new ones get a copy, known ones follow, the rest go
+func _apply_npcs(states: Dictionary) -> void:
+	for id in states:
+		var s: Array = states[id]
+		var weed: Weed = npcs.get(id)
+		if weed == null or not is_instance_valid(weed):
+			weed = Weed.new()
+			weed.npc_id = int(id)
+			weed.kind = String(s[0])
+			weed.authority = false
+			weed.position = Vector3(s[1], s[2], s[3])
+			add_child(weed)
+			npcs[id] = weed
+		weed.apply_state(s)
+	for id in npcs.keys():
+		if not states.has(id):
+			var gone: Weed = npcs[id]
+			npcs.erase(id)
+			if is_instance_valid(gone):
+				gone.queue_free()
 
 ## Players still standing, from the server's state: with the server-side fog we may never have
 ## had a copy of someone far away, but their health always arrives

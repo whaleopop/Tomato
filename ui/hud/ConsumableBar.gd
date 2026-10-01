@@ -11,8 +11,13 @@ var inventory: InventoryComponent = null
 func _ready():
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+var _icons: Dictionary = {}  # "heal" / "shield" -> the pickup's picture (ItemRenderer)
+
 func setup(p_inventory: InventoryComponent):
 	inventory = p_inventory
+	var renderer = ItemRenderer.get_instance(get_tree())
+	renderer.icon_for(HealthPack.new(), func(tex): _icons["heal"] = tex)
+	renderer.icon_for(ShieldPack.new(), func(tex): _icons["shield"] = tex)
 
 func _process(_delta):
 	queue_redraw()
@@ -43,8 +48,14 @@ func _draw():
 		draw_string(font, key_rect.position + Vector2((key_rect.size.x - kw) / 2.0, 17), key, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.9 * alpha))
 		# icon + count
 		var tx = key_rect.end.x + 8
-		draw_string(font, Vector2(tx, rect.position.y + 27), k[3], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(col, alpha))
-		draw_string(font, Vector2(tx + 20, rect.position.y + 27), str(count), HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1, 1, 1, alpha))
+		if _icons.has(k[0]):
+			var tex: Texture2D = _icons[k[0]]
+			var ih = 28.0
+			var iw = ih * tex.get_width() / max(tex.get_height(), 1)
+			draw_texture_rect(tex, Rect2(Vector2(tx - 2, rect.position.y + (chip.y - ih) / 2.0), Vector2(min(iw, 26.0), ih)), false, Color(1, 1, 1, alpha))
+		else:
+			draw_string(font, Vector2(tx, rect.position.y + 27), k[3], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(col, alpha))
+		draw_string(font, Vector2(tx + (28 if _icons.has(k[0]) else 20), rect.position.y + 27), str(count), HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1, 1, 1, alpha))
 		x += chip.x + gap
 
 	# The one in progress: a bar over the chips with the time left

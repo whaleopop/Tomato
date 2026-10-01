@@ -26,6 +26,14 @@ var locked: bool = false         # darker art with a lock
 var card_size: Vector2 = Vector2(190, 264)
 var live: Array = []              # [kind, args] for ItemRenderer ("hero" [name, skin, hat] / "gun" [type, finish])
 var always_live: bool = false
+## Mastery (Mastery.gd): the level in the top-left corner (0 = none) and the rank (-1 none,
+## 0 bronze .. 4 diamond) - the background turns into that material and the frame with it
+var level: int = 0
+var mastery: int = -1
+var _bg_material: ShaderMaterial
+var _level_panel: PanelContainer
+var _level_label: Label
+var _level_caption: Label
 var _live_on: bool = false
 
 var _viewport: SubViewport
@@ -113,20 +121,16 @@ func _exit_tree():
 
 func _build(root: Control, s: Vector2) -> void:
 	var margin = 14.0
-	# Layer 0: the card's background gradient (slides away from the mouse)
-	var bg = TextureRect.new()
-	var grad = GradientTexture2D.new()
-	var g = Gradient.new()
-	g.set_color(0, accent.darkened(0.25))
-	g.set_color(1, Color(0.05, 0.06, 0.12))
-	grad.gradient = g
-	grad.fill_from = Vector2(0.5, 0.0)
-	grad.fill_to = Vector2(0.5, 1.0)
-	bg.texture = grad
+	# Layer 0: the backdrop (shaders/card_background.gdshader: rays, honeycomb, the mastery
+	# material), sliding away from the mouse
+	var bg = ColorRect.new()
+	_bg_material = ShaderMaterial.new()
+	_bg_material.shader = preload("res://shaders/card_background.gdshader")
+	_bg_material.set_shader_parameter("aspect", Vector2(s.x / s.y, 1.0))
+	_bg_material.set_shader_parameter("seed", float(get_instance_id() % 97) * 0.37)
+	bg.material = _bg_material
 	bg.position = Vector2(-30, -30)
 	bg.size = s + Vector2(60, 60)
-	bg.stretch_mode = TextureRect.STRETCH_SCALE
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	root.add_child(bg)
 	_layers.append([bg, DEPTHS[0]])
 	# Layer 1: a glow behind the art
@@ -181,10 +185,27 @@ func _build(root: Control, s: Vector2) -> void:
 	_sub_label.size = Vector2(s.x - margin * 4, 40)
 	_sub_label.add_theme_font_override("font", UITheme.font_black())
 	_sub_label.clip_text = true
+	# Top-left: the level (a chip in the rank's color), then the badge next to it
+	var corner = HBoxContainer.new()
+	corner.position = Vector2(margin * 1.5, margin * 1.5)
+	corner.add_theme_constant_override("separation", 10)
+	root.add_child(corner)
+	_level_panel = PanelContainer.new()
+	corner.add_child(_level_panel)
+	var level_box = VBoxContainer.new()
+	level_box.add_theme_constant_override("separation", -8)
+	_level_panel.add_child(level_box)
+	_level_caption = UITheme.create_label("LV", level_box, 15)
+	_level_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_level_caption.add_theme_font_override("font", UITheme.font_black())
+	_level_label = UITheme.create_heading("", level_box)
+	_level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_level_label.add_theme_font_size_override("font_size", 34)
+	_level_label.add_theme_font_override("font", UITheme.font_black())
 	var badge_panel = PanelContainer.new()
 	badge_panel.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0.03, 0.04, 0.08, 0.8), Color(1, 1, 1, 0.3), 99, 16, 6))
-	badge_panel.position = Vector2(margin * 1.5, margin * 1.5)
-	root.add_child(badge_panel)
+	badge_panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	corner.add_child(badge_panel)
 	_badge_label = UITheme.create_heading("", badge_panel)
 	_badge_label.add_theme_font_size_override("font_size", 22)
 	_lock = UITheme.create_heading("LOCKED", root)
@@ -196,6 +217,22 @@ func _build(root: Control, s: Vector2) -> void:
 	_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(_frame)
 
+## Level and rank of one of our own heroes / guns (PlayerProfile), or from what another player
+## wears (their cosmetics carry "level" / "mastery")
+func show_hero_mastery(hero: String) -> void:
+	var p = PlayerProfile.hero_progress(hero)
+	level = p.level
+	mastery = p.tier
+
+func show_weapon_mastery(weapon_type: int) -> void:
+	var p = PlayerProfile.weapon_progress(weapon_type)
+	level = p.level
+	mastery = p.tier
+
+func show_wear_mastery(wear: Dictionary) -> void:
+	level = int(wear.get("level", 0))
+	mastery = int(wear.get("mastery", -1))
+
 ## Apply title / badge / accent / art / selected after changing them
 func refresh() -> void:
 	if not _title_label:
@@ -205,15 +242,32 @@ func refresh() -> void:
 	_sub_label.add_theme_color_override("font_color", accent.lightened(0.35))
 	_badge_label.text = badge
 	_badge_label.get_parent().visible = badge != ""
+	_bg_material.set_shader_parameter("accent", accent)
+	_bg_material.set_shader_parameter("tier", mastery)
+	_level_panel.visible = level > 0
+	if level > 0:
+		var rank_col = Mastery.tier_color(mastery) if mastery >= 0 else Color(0.85, 0.9, 1.0)
+		var chip = UITheme.glass_box(Color(0.03, 0.04, 0.08, 0.88), Color(rank_col, 0.95), 14, 12, 6)
+		chip.set_border_width_all(4)
+		chip.shadow_color = Color(rank_col, 0.45 if mastery >= 0 else 0.0)
+		chip.shadow_size = 10
+		_level_panel.add_theme_stylebox_override("panel", chip)
+		_level_label.text = str(level)
+		_level_label.add_theme_color_override("font_color", rank_col.lightened(0.25))
+		_level_caption.add_theme_color_override("font_color", Color(rank_col, 0.85))
 	if not _live_on:
 		_art_rect.texture = art
 	_art_rect.modulate = Color(0.68, 0.68, 0.76) if locked else Color.WHITE  # still shows what is inside
 	_lock.visible = locked
+	# Under the level / price row when there is one, else in the top-right corner
+	_lock.position = Vector2(card_size.x * 2.0 - 150, 14.0 * 1.8 + (72.0 if level > 0 or badge != "" else 0.0))
 	var frame = StyleBoxFlat.new()
 	frame.bg_color = Color(0, 0, 0, 0)
 	frame.set_corner_radius_all(int(CORNER_RADIUS))
-	frame.set_border_width_all(10 if selected else 5)
+	frame.set_border_width_all(10 if selected else (8 if mastery >= 0 else 5))
 	frame.border_color = accent.lightened(0.45) if selected else Color(accent, 0.8)
+	if mastery >= 0 and not selected:
+		frame.border_color = Mastery.tier_color(mastery).lightened(0.15)  # a rank frame
 	_frame.add_theme_stylebox_override("panel", frame)
 
 func set_art(texture: Texture2D) -> void:

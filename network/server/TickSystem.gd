@@ -31,6 +31,9 @@ func _sync_clients():
 	# Nothing to sync while players sit in the lobby
 	if server == null or not is_instance_valid(server) or not server.game_started:
 		return
+	var nm = get_node_or_null("/root/NetworkManager")
+	if nm and server.rules:
+		nm.mode_state.emit(server.rules.state_for(1))  # the host's own HUD (ModeView)
 	var peers = server.multiplayer.get_peers()
 	if peers.is_empty():
 		return
@@ -41,6 +44,10 @@ func _sync_clients():
 	for peer_id in peers:
 		var viewer = world.get_player(peer_id) if world else null
 		var state = {"tick": full.tick, "timestamp": full.timestamp, "players": {}}
+		if world and world.weed_spawner:
+			state["npcs"] = world.weed_spawner.states_for(viewer)
+		if server.rules and server.rules.mode != GameModes.BR:
+			state["mode"] = server.rules.state_for(peer_id)
 		for player_id in full.players:
 			var data: Dictionary = full.players[player_id]
 			if data.is_empty() or player_id == peer_id:

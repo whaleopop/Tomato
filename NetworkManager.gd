@@ -10,6 +10,10 @@ signal match_ended(winner_id: int, winner_name: String)  # 0 = nobody left stand
 ## info: victim_name, victim_hero, killer_name, killer_hero, killer_wear, weapon (RangedWeapon type, -1
 ## none), killer_health, killer_max_health, killer_kills
 signal player_killed(victim_id: int, killer_id: int, info: Dictionary)
+## The match mode's state (ModeRules.state_for): scores, flags, the hill, XP - ModeView shows it
+signal mode_state(state: Dictionary)
+## A hero came back (respawning modes)
+signal player_respawned(player_id: int, pos: Vector3)
 
 var game_server: GameServer = null
 var game_client: GameClient = null
@@ -310,6 +314,33 @@ func _receive_map_event(kind: String, data: Dictionary, elapsed: float):
 	elif game_client:
 		game_client.pending_map_events.append([kind, data, elapsed, Time.get_ticks_msec()])
 	map_event.emit(kind, data, elapsed)
+
+# === Respawns ===
+
+func broadcast_respawn(player_id: int, pos: Vector3):
+	if _has_remote_peers():
+		_receive_respawn.rpc(player_id, pos)
+	player_respawned.emit(player_id, pos)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_respawn(player_id: int, pos: Vector3):
+	var world = _get_client_world()
+	var p = world.get_player(player_id) if world and world.has_method("get_player") else null
+	if p and is_instance_valid(p):
+		p.respawn_at(pos)
+	player_respawned.emit(player_id, pos)
+
+# === Weeds ===
+
+## Server: a dandelion threw seeds (the host saw it already: the weed is in its world)
+func broadcast_npc_seed(from: Vector3, to: Vector3):
+	if _has_remote_peers():
+		_receive_npc_seed.rpc(from, to)
+
+@rpc("authority", "call_remote", "unreliable")
+func _receive_npc_seed(from: Vector3, to: Vector3):
+	var world = _get_client_world()
+	Weed.play_seed(from, to, world)
 
 # === Kills ===
 

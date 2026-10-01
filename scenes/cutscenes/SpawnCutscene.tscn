@@ -1,9 +1,9 @@
-[gd_scene load_steps=8 format=3 uid="uid://spawn_cutscene_main"]
+[gd_scene format=3 uid="uid://c6tywoy7hv2la"]
 
-[ext_resource type="Script" path="res://scenes/cutscenes/SpawnCutsceneController.gd" id="1_controller"]
-[ext_resource type="Script" path="res://scenes/cutscenes/CutsceneCamera.gd" id="2_camera"]
-[ext_resource type="Script" path="res://scenes/cutscenes/MeteorVisual.gd" id="3_meteor"]
-[ext_resource type="Script" path="res://scenes/cutscenes/ExplosionFX.gd" id="4_explosion"]
+[ext_resource type="Script" uid="uid://csje5dcxci0aj" path="res://scenes/cutscenes/SpawnCutsceneController.gd" id="1_controller"]
+[ext_resource type="Script" uid="uid://btfbruih8pywi" path="res://scenes/cutscenes/CutsceneCamera.gd" id="2_camera"]
+[ext_resource type="Script" uid="uid://pk0fn6hae0s5" path="res://scenes/cutscenes/MeteorVisual.gd" id="3_meteor"]
+[ext_resource type="Script" uid="uid://ddn5bnnadi6qv" path="res://scenes/cutscenes/ExplosionFX.gd" id="4_explosion"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.2, 0.3, 0.5, 1)
@@ -25,45 +25,39 @@ glow_enabled = true
 glow_intensity = 0.8
 glow_bloom = 0.3
 
-[node name="SpawnCutscene" type="Node3D"]
+[node name="SpawnCutscene" type="Node3D" unique_id=2031036773]
 script = ExtResource("1_controller")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1091229061]
 environment = SubResource("Environment_1")
 
-[node name="WorldContainer" type="Node3D" parent="."]
+[node name="WorldContainer" type="Node3D" parent="." unique_id=1549813411]
 
-[node name="MeteorVisual" type="Node3D" parent="."]
+[node name="MeteorVisual" type="Node3D" parent="." unique_id=229300848]
 script = ExtResource("3_meteor")
-meteor_radius = 3.0
-num_floating_rocks = 12
-rock_orbit_radius = 4.5
-rock_orbit_speed = 1.5
 
-[node name="HeroProxies" type="Node3D" parent="."]
+[node name="HeroProxies" type="Node3D" parent="." unique_id=1044732340]
 
-[node name="CutsceneCamera" type="Camera3D" parent="."]
+[node name="CutsceneCamera" type="Camera3D" parent="." unique_id=257500392]
 transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 50, 50)
 current = true
 fov = 60.0
 far = 500.0
 script = ExtResource("2_camera")
 
-[node name="ExplosionFX" type="Node3D" parent="."]
+[node name="ExplosionFX" type="Node3D" parent="." unique_id=1377436155]
 script = ExtResource("4_explosion")
-explosion_radius = 15.0
-debris_count = 30
 
-[node name="DirectionalLight" type="DirectionalLight3D" parent="."]
+[node name="DirectionalLight" type="DirectionalLight3D" parent="." unique_id=1696147792]
 transform = Transform3D(0.866025, -0.25, 0.433013, 0, 0.866025, 0.5, -0.5, -0.433013, 0.75, 0, 100, 0)
 light_color = Color(1, 0.95, 0.9, 1)
 light_energy = 1.2
 shadow_enabled = true
 
-[node name="UI" type="CanvasLayer" parent="."]
+[node name="UI" type="CanvasLayer" parent="." unique_id=91056889]
 layer = 10
 
-[node name="SkipBlocker" type="ColorRect" parent="UI"]
+[node name="SkipBlocker" type="ColorRect" parent="UI" unique_id=135938411]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0

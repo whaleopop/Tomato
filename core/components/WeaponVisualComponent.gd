@@ -79,7 +79,9 @@ func _show_weapon(weapon: RangedWeapon):
 	_length = weapon.hold_length * hero_scale
 	_fit(model, _length)
 	if player:
-		Cosmetics.apply_to_weapon(model, String(player.cosmetics.get("weapon", "default")))
+		# This gun's own finish (a mastery camo) or the one for every gun
+		var own: Dictionary = player.cosmetics.get("weapons", {})
+		Cosmetics.apply_to_weapon(model, String(own.get(str(int(weapon.weapon_type)), player.cosmetics.get("weapon", "default"))))
 
 	weapon_model = Node3D.new()
 	weapon_model.name = "HeldWeapon"

@@ -37,7 +37,7 @@ static func out_of_range(p: Player) -> bool:
 		return false
 	var off = handler.current_aim_position - p.global_position
 	off.y = 0.0
-	return off.length() > combat.equipped_ranged_weapon.range
+	return off.length() > combat.reach()
 
 func _draw():
 	if not player or not is_instance_valid(player) or not player.is_inside_tree():
@@ -77,7 +77,7 @@ func _draw_weapon(camera: Camera3D, feet: Vector3, dir: Vector3, aim_dist: float
 	var weapon: RangedWeapon = combat.equipped_ranged_weapon if combat else null
 	if not weapon:
 		return
-	var reach = weapon.range
+	var reach = combat.reach()
 	var line_col = Color(1, 1, 1, 0.4)
 	match weapon.fire_mode:
 		"spread", "flame":

@@ -131,6 +131,9 @@ func _send_spawn_result(success: bool, hex_q: int, hex_r: int):
 @rpc("authority", "call_remote", "reliable")
 func _receive_lobby_state(state: Dictionary):
 	last_lobby_state = state
+	var gm = get_node_or_null("/root/GameManager")
+	if gm and state.has("mode"):
+		gm.game_mode = String(state["mode"])
 	lobby_state_updated.emit(state)
 
 @rpc("authority", "call_remote", "reliable")

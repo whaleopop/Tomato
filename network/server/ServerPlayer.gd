@@ -11,6 +11,9 @@ var kills: int = 0               # eliminations this match (coins at the end: Pl
 var damage_dealt: float = 0.0    # to other players
 var place: int = 0               # 1 = winner, set when out (or at the end)
 var alive_time: float = 0.0      # seconds from the match start to elimination / the end
+var weapon_damage: Dictionary = {}  # gun type -> damage dealt with it (mastery XP, Mastery.weapon_xp)
+var weapon_kills: Dictionary = {}   # gun type -> eliminations with it
+var weed_kills: int = 0             # weeds felled (Weed._credit_kill; coins in the Weed Swarm)
 ## Recent hits on us [id, x, z, amount, msec]: sent to our own client only (TickSystem strips
 ## them for others) for the damage direction arcs; ids let the client skip repeats
 var _hits: Array = []
@@ -56,7 +59,12 @@ func _on_damaged(amount: float, source) -> void:
 		return
 	var game_server = get_parent() as GameServer
 	if game_server and game_server.players.has(source.entity_id):
-		game_server.players[source.entity_id].damage_dealt += amount
+		var attacker: ServerPlayer = game_server.players[source.entity_id]
+		attacker.damage_dealt += amount
+		var combat = source.get_component("CombatComponent") if source.has_method("get_component") else null
+		var gun = combat.credited_weapon() if combat else -1
+		if gun >= 0:
+			attacker.weapon_damage[gun] = float(attacker.weapon_damage.get(gun, 0.0)) + amount
 
 ## We went down: our place is everyone still standing + 1; whoever hit us last gets the kill
 func _on_died():
@@ -67,16 +75,29 @@ func _on_died():
 	var health = player_entity.get_component("HealthComponent") if is_instance_valid(player_entity) else null
 	var killer = health.last_attacker if health else null
 	var game_server = get_parent() as GameServer
+	var npc_kind = ""
+	if not is_instance_valid(killer):
+		killer = null  # a weed that withered away meanwhile (its sap still burned)
+	if killer is Weed:
+		npc_kind = killer.kind  # the kill feed names the weed; no player gets the kill
+		killer = null
 	if killer != null and is_instance_valid(killer) and "entity_id" in killer and killer != player_entity:
 		if game_server and game_server.players.has(killer.entity_id):
-			game_server.players[killer.entity_id].kills += 1
+			var ks: ServerPlayer = game_server.players[killer.entity_id]
+			ks.kills += 1
+			var kcombat = killer.get_component("CombatComponent") if killer.has_method("get_component") else null
+			var gun = kcombat.credited_weapon() if kcombat else -1
+			if gun >= 0:
+				ks.weapon_kills[gun] = int(ks.weapon_kills.get(gun, 0)) + 1
 	else:
 		killer = null
-	_announce_kill(killer, game_server)
+	_announce_kill(killer, game_server, npc_kind)
+	if game_server:
+		game_server.on_player_died(player_id, killer)
 
 ## The kill feed, the victim's killer card: names and heroes from the lobby, the killer's gun and
 ## health as they are right now
-func _announce_kill(killer, game_server: GameServer) -> void:
+func _announce_kill(killer, game_server: GameServer, npc_kind: String = "") -> void:
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if not network_manager or not game_server:
 		return
@@ -86,6 +107,8 @@ func _announce_kill(killer, game_server: GameServer) -> void:
 		"victim_hero": character_name,
 		"weapon": -1,
 	}
+	if npc_kind != "":
+		info["npc"] = npc_kind
 	var killer_id = 0
 	if killer:
 		killer_id = int(killer.entity_id)
@@ -193,6 +216,10 @@ func process_input(input_data: Dictionary):
 	if inventory_comp:
 		if input_data.has("use_item"):
 			inventory_comp.use_item(int(input_data.use_item))
+		if input_data.has("mode_choice"):
+			var gs = get_parent() as GameServer
+			if gs and gs.rules:
+				gs.rules.on_choice(player_id, String(input_data.mode_choice))
 		if input_data.has("use_consumable"):
 			inventory_comp.start_use(String(input_data.use_consumable))
 		if input_data.has("drop_item"):
@@ -240,6 +267,13 @@ func process_input(input_data: Dictionary):
 	
 	last_input_time = Time.get_ticks_msec() / 1000.0
 
+## What the match gave this player so far (coins and mastery XP at the end, PlayerHUD)
+func stats() -> Dictionary:
+	var wdmg = {}
+	for t in weapon_damage:
+		wdmg[t] = int(weapon_damage[t])
+	return {"kills": kills, "damage": int(damage_dealt), "place": place, "time": int(alive_time), "wdmg": wdmg, "wkills": weapon_kills.duplicate(), "weeds": weed_kills}
+
 func get_sync_data() -> Dictionary:
 	if not is_instance_valid(player_entity) or not player_entity.is_inside_tree():
 		return {}
@@ -250,7 +284,7 @@ func get_sync_data() -> Dictionary:
 		"rotation": player_entity.global_rotation,
 		"character_name": character_name,
 		"cosmetics": cosmetics,
-		"stats": {"kills": kills, "damage": int(damage_dealt), "place": place, "time": int(alive_time)},
+		"stats": stats(),
 	}
 
 	# Add component data
@@ -294,6 +328,8 @@ func get_sync_data() -> Dictionary:
 func _process_client_hit(attacker: Entity, target_entity_id: int, combat: CombatComponent):
 	# Find target entity
 	var target = _find_player_entity_by_id(target_entity_id)
+	if not target and target_entity_id < 0:
+		target = _find_npc(target_entity_id)  # a weed (negative ids)
 	if not target:
 		print("[ServerPlayer] WARNING: Target entity %d not found" % target_entity_id)
 		return
@@ -316,7 +352,7 @@ func _process_client_hit(attacker: Entity, target_entity_id: int, combat: Combat
 	var distance = attacker.global_position.distance_to(target.global_position)
 	var max_range = 50.0
 	if combat.equipped_ranged_weapon:
-		max_range = combat.equipped_ranged_weapon.range
+		max_range = combat.reach()
 
 	if distance > max_range + 5.0:  # +5.0 tolerance for latency
 		print("[ServerPlayer] REJECTED: Target too far (possible cheat or latency)")
@@ -349,11 +385,17 @@ func _process_client_hit(attacker: Entity, target_entity_id: int, combat: Combat
 				combat.start_reload()
 
 		# Trigger cooldown
-		combat.attack_cooldown = combat.equipped_ranged_weapon.fire_rate if combat.equipped_ranged_weapon else 0.5
+		combat.attack_cooldown = combat.shot_interval()
 	else:
 		print("[ServerPlayer] WARNING: Target has no HealthComponent")
 
 ## Find player entity by entity_id
+func _find_npc(entity_id: int) -> Node3D:
+	for n in get_tree().get_nodes_in_group("npcs"):
+		if n is Weed and n.entity_id == entity_id and n.authority:
+			return n
+	return null
+
 func _find_player_entity_by_id(entity_id: int) -> Entity:
 	# Search in all players
 	for pid in get_parent().players.keys():  # get_parent() should be GameServer

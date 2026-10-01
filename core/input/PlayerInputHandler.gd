@@ -46,8 +46,9 @@ func _process(delta: float):
 		return
 	_was_blocked = false
 
-	# Always rotate player to face mouse
+	# Always rotate player to face mouse (Weed Swarm: towards the weed the gun locked on)
 	_update_aim_direction()
+	_update_auto_aim(delta)
 
 	for action in LATCHED_ACTIONS:
 		if Input.is_action_just_pressed(action):
@@ -158,6 +159,48 @@ func _update_aim_third_person(camera: CameraController):
 		if not hit.is_empty():
 			current_aim_position = hit.position
 
+## Weed Swarm (meta "auto_fire", SurvivorsRules): the gun picks the nearest weed it can reach and
+## see - no wall in between - and the hero turns to it; _capture_and_send_input fires at it.
+## Holding the attack button still aims by hand.
+var auto_target: Node3D = null
+var _auto_scan: float = 0.0
+const AUTO_SCAN_EVERY: float = 0.1
+
+func _update_auto_aim(delta: float) -> void:
+	if not player.has_meta("auto_fire"):
+		auto_target = null
+		return
+	_auto_scan -= delta
+	if _auto_scan <= 0.0 or not _auto_target_ok(auto_target):
+		_auto_scan = AUTO_SCAN_EVERY
+		auto_target = _find_auto_target()
+	if auto_target and not Input.is_action_pressed("attack"):
+		var dir = auto_target.global_position - player.global_position
+		if Vector2(dir.x, dir.z).length_squared() > 0.01:
+			player.rotation.y = atan2(dir.x, dir.z)
+
+func _auto_target_ok(w) -> bool:
+	return w != null and is_instance_valid(w) and w.is_inside_tree() and w.visible and w is Weed 		and w.health != null and not w.health.is_dead
+
+func _find_auto_target() -> Node3D:
+	var combat = player.get_component("CombatComponent")
+	if not combat or not combat.equipped_ranged_weapon:
+		return null
+	var reach = combat.reach()
+	var candidates: Array = []
+	for w in get_tree().get_nodes_in_group("npcs"):
+		if _auto_target_ok(w):
+			var d = player.global_position.distance_to(w.global_position)
+			if d <= reach:
+				candidates.append([d, w])
+	candidates.sort_custom(func(a, b): return a[0] < b[0])
+	var world_3d = get_viewport().world_3d
+	var eye = player.global_position + Vector3(0, 1.0, 0)
+	for c in candidates.slice(0, 6):
+		if not world_3d or not CoverSpawner.line_blocked(world_3d, eye, c[1].global_position + Vector3(0, 0.9, 0)):
+			return c[1]
+	return null
+
 ## Get current aim position for crosshair
 func get_aim_position() -> Vector3:
 	return current_aim_position
@@ -234,6 +277,10 @@ func _capture_and_send_input():
 		# The client picks who it hit (server-authoritative damage checks it again)
 		if aim.has("entity_id"):
 			input_data["hit_entity_id"] = aim.entity_id
+	elif _auto_target_ok(auto_target) and combat and combat.can_shoot():
+		input_data["attack"] = true
+		input_data["target_position"] = auto_target.global_position + Vector3(0, 0.9, 0)
+		input_data["hit_entity_id"] = auto_target.entity_id
 
 	# Capture ability input (F/G/H/J)
 	for i in range(4):

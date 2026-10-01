@@ -56,6 +56,9 @@ func _ready():
 		card.badge = tr("Playing") if hero_name == current else ""
 		card.selected = hero_name == current
 		card.live = ["hero", [hero_name, wear.skin, wear.hat]]
+		card.show_hero_mastery(hero_name)
+		if card.mastery >= 0:
+			card.subtitle = Mastery.tier_name(card.mastery)
 		card.pressed.connect(func(): picked.emit(data))
 		grid.add_child(card)
 		renderer.hero(hero_name, wear.skin, wear.hat, func(tex): if is_instance_valid(card): card.set_art(tex))

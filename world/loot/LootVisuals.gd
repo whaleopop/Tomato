@@ -52,11 +52,11 @@ static func pickup_model(item_type: int, item_data: ItemData) -> Node3D:
 			path = _ammo_file(item_data)
 			size = 0.42
 		LootItem.ItemType.WEAPON:
-			size = 0.9
+			size = 0.9 * (weapon_scale(item_data) if item_data is RangedWeapon else 1.0)
 			if item_data is RangedWeapon and item_data.model_path != "":
 				var weapon = _instance(item_data.model_path)
 				if weapon:
-					fit(weapon, size)
+					fit_length(weapon, size)  # by the barrel, like in the hands
 					return weapon
 	if path != "" and not path.begins_with("res://"):
 		path = PROPS_DIR + path + ".glb"
@@ -125,6 +125,28 @@ static func _instance(path: String) -> Node3D:
 	return node
 
 ## Scale so the longest side is `size` and center the model on its holder's origin
+## How big a gun is next to the longest one (RangedWeapon.hold_length: a pistol 0.42 m, a sniper
+## 0.95 m), a little softened so a pistol is still clearly a gun in a small slot. Pictures and
+## pickups use it, so a pistol never looks bigger than a shotgun.
+const LONGEST_GUN: float = 0.95
+static func weapon_scale(weapon: RangedWeapon) -> float:
+	return clamp(pow(weapon.hold_length / LONGEST_GUN, 0.7), 0.4, 1.0)
+
+## Like fit, but by the length along -Z (a gun's barrel): chunky blasters stay as long as
+## their hold_length says instead of shrinking to their height
+static func fit_length(model: Node3D, length: float) -> void:
+	var box := AABB()
+	var first := true
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		var b = ModelUtils._relative_xform(model, mi) * mi.get_aabb()
+		box = b if first else box.merge(b)
+		first = false
+	if first:
+		return
+	var s = length / max(box.size.z, 0.001)
+	model.scale = Vector3.ONE * s
+	model.position = -box.get_center() * s
+
 static func fit(model: Node3D, size: float) -> void:
 	var box := AABB()
 	var first := true

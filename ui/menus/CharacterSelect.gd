@@ -194,6 +194,9 @@ func _build_info():
 	card.badge = tr("Owned") if owned else tr("%d coins") % Cosmetics.price_of(id)
 	var wear = PlayerProfile.equipped_for(c.character_name)
 	card.live = ["hero", [c.character_name, wear.skin, wear.hat]]
+	card.show_hero_mastery(c.character_name)
+	if card.mastery >= 0:
+		card.subtitle = Mastery.tier_name(card.mastery)
 	card.always_live = true
 	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	info.add_child(card)

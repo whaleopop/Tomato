@@ -23,6 +23,12 @@ const SKINS = {
 	"checker": {"name": "Checkers", "price": 300, "hsv": Vector3(0, 1, 1), "tint": Color(1, 1, 1), "metal": 0.0, "glow": Color(0, 0, 0, 0), "pattern": [4, 5.0, Color(0.1, 0.1, 0.12, 0.85)]},
 	"waves": {"name": "Waves", "price": 300, "hsv": Vector3(0.55, 1.0, 1.0), "tint": Color(1, 1, 1), "metal": 0.0, "glow": Color(0, 0, 0, 0), "pattern": [7, 2.5, Color(1.0, 0.95, 0.85, 0.8)]},
 	"galaxy": {"name": "Galaxy", "price": 650, "hsv": Vector3(0.7, 1.2, 0.35), "tint": Color(0.8, 0.7, 1.2), "metal": 0.1, "glow": Color(0.5, 0.3, 1.0, 0.5), "pattern": [6, 3.0, Color(0.35, 0.15, 0.6, 0.8)]},
+	# Mastery (Mastery.gd): not sold - a hero earns each one by reaching its rank
+	"m_bronze": {"name": "Bronze Mastery", "price": 0, "mastery": 0, "hsv": Vector3(0.0, 0.35, 0.95), "tint": Color(1.15, 0.72, 0.42), "metal": 0.75, "glow": Color(1.0, 0.55, 0.25, 0.15)},
+	"m_silver": {"name": "Silver Mastery", "price": 0, "mastery": 1, "hsv": Vector3(0.0, 0.08, 1.15), "tint": Color(0.95, 0.98, 1.08), "metal": 0.9, "glow": Color(0.8, 0.9, 1.0, 0.2)},
+	"m_gold": {"name": "Gold Mastery", "price": 0, "mastery": 2, "hsv": Vector3(0.0, 0.15, 1.15), "tint": Color(1.35, 1.0, 0.4), "metal": 0.95, "glow": Color(1.0, 0.8, 0.3, 0.35), "pattern": [1, 9.0, Color(1.0, 0.9, 0.55, 0.25)]},
+	"m_obsidian": {"name": "Obsidian Mastery", "price": 0, "mastery": 3, "hsv": Vector3(0.0, 0.3, 0.28), "tint": Color(0.75, 0.6, 1.0), "metal": 0.6, "glow": Color(0.6, 0.3, 1.0, 0.65), "pattern": [6, 4.0, Color(0.55, 0.2, 1.0, 0.7)]},
+	"m_diamond": {"name": "Diamond Mastery", "price": 0, "mastery": 4, "hsv": Vector3(0.0, 0.25, 1.3), "tint": Color(0.75, 1.0, 1.25), "metal": 0.55, "glow": Color(0.5, 0.95, 1.0, 0.75), "pattern": [4, 9.0, Color(1.0, 1.0, 1.0, 0.45)]},
 }
 const HATS = {
 	"no_hat": {"name": "No Hat", "price": 0},
@@ -46,6 +52,12 @@ const WEAPON_SKINS = {
 	"shadow": {"name": "Shadow", "price": 250, "tint": Color(0.35, 0.3, 0.45), "metal": 0.4, "rough": 0.35, "glow": Color(0.25, 0.1, 0.45)},
 	"neon": {"name": "Neon", "price": 300, "tint": Color(0.5, 1.2, 1.1), "metal": 0.0, "rough": 0.4, "glow": Color(0.1, 0.8, 0.7)},
 	"gold": {"name": "Gold", "price": 400, "tint": Color(1.3, 0.95, 0.4), "metal": 0.95, "rough": 0.2, "glow": Color(0, 0, 0)},
+	# Mastery camos (Mastery.gd): earned per gun by using it, put on that gun only
+	"m_bronze": {"name": "Bronze Mastery", "price": 0, "mastery": 0, "tint": Color(1.1, 0.68, 0.4), "metal": 0.85, "rough": 0.3, "glow": Color(0, 0, 0)},
+	"m_silver": {"name": "Silver Mastery", "price": 0, "mastery": 1, "tint": Color(1.0, 1.02, 1.1), "metal": 0.95, "rough": 0.18, "glow": Color(0, 0, 0)},
+	"m_gold": {"name": "Gold Mastery", "price": 0, "mastery": 2, "tint": Color(1.4, 1.0, 0.38), "metal": 1.0, "rough": 0.12, "glow": Color(0.25, 0.15, 0.0), "pattern": [1, 16.0, Color(1.0, 0.92, 0.6, 0.3)]},
+	"m_obsidian": {"name": "Obsidian Mastery", "price": 0, "mastery": 3, "tint": Color(0.2, 0.15, 0.3), "metal": 0.7, "rough": 0.1, "glow": Color(0.35, 0.1, 0.7), "pattern": [6, 8.0, Color(0.6, 0.25, 1.0, 0.85)]},
+	"m_diamond": {"name": "Diamond Mastery", "price": 0, "mastery": 4, "tint": Color(0.8, 1.1, 1.35), "metal": 0.6, "rough": 0.05, "glow": Color(0.2, 0.55, 0.7), "pattern": [4, 18.0, Color(1.0, 1.0, 1.0, 0.55)]},
 }
 
 static func catalog(kind: String) -> Dictionary:
@@ -92,8 +104,10 @@ static func _entry(id: String) -> Dictionary:
 		return HATS[id]
 	return SKINS.get(id, {})
 
-## Rarity tier from the price (card frames): 0 common .. 3 legendary
+## Rarity tier from the price (card frames): 0 common .. 3 legendary (mastery: legendary)
 static func tier_of(id: String) -> int:
+	if is_mastery(id):
+		return 3
 	var price = price_of(id)
 	if id.begins_with("hero:"):
 		return 2 if price >= 800 else 1
@@ -107,6 +121,10 @@ static func tier_of(id: String) -> int:
 
 const TIER_NAMES = ["Common", "Rare", "Epic", "Legendary"]
 const TIER_COLORS = [Color(0.72, 0.78, 0.88), Color(0.35, 0.65, 1.0), Color(0.72, 0.42, 1.0), Color(1.0, 0.72, 0.25)]
+
+## Earned, not bought (Mastery.gd)
+static func is_mastery(id: String) -> bool:
+	return Mastery.tier_of_id(id) >= 0
 
 static func price_of(id: String) -> int:
 	var e = _entry(id)

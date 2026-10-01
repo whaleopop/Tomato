@@ -133,6 +133,35 @@ func _on_died():
 	tween.tween_property(target, "scale", Vector3(1.3, 0.05, 1.3), 0.25).set_trans(Tween.TRANS_BACK)
 	tween.tween_callback(func(): visible = false)
 
+## Back in the fight (respawning modes, GameModes): undoes _on_died and puts the hero at `pos`.
+## The server calls it on its entity, NetworkManager.broadcast_respawn on every peer's copy.
+func respawn_at(pos: Vector3) -> void:
+	var health = get_component("HealthComponent")
+	if health:
+		health.revive(1.0)
+		health.set_shield(0.0)
+	for component_name in ["MovementComponent", "CombatComponent", "AbilityComponent"]:
+		var component = get_component(component_name)
+		if component:
+			component.enabled = true
+	var status = get_component("StatusComponent")
+	if status and "effects" in status:
+		status.effects.clear()
+	collision_layer = 2
+	global_position = pos
+	_phys_prev = pos
+	_phys_curr = pos
+	visible = true
+	var model = get_node_or_null("Model")
+	if model:
+		model.scale = Vector3.ONE
+	var animator = get_node_or_null("Animator")
+	if animator:
+		animator.set("_dead", false)
+	var networking = get_component("NetworkingComponent")
+	if networking and "target_position" in networking:
+		networking.target_position = pos
+
 func setup_character(data: CharacterData):
 	character_data = data
 
