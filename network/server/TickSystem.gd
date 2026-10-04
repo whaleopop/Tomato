@@ -32,7 +32,7 @@ func _sync_clients():
 	if server == null or not is_instance_valid(server) or not server.game_started:
 		return
 	var nm = get_node_or_null("/root/NetworkManager")
-	if nm and server.rules:
+	if nm and server.rules and not server.dedicated:
 		nm.mode_state.emit(server.rules.state_for(1))  # the host's own HUD (ModeView)
 	var peers = server.multiplayer.get_peers()
 	if peers.is_empty():

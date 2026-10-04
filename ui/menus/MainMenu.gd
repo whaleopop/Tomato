@@ -4,7 +4,7 @@ extends Control
 class_name MainMenu
 
 const SHOWCASE_INTERVAL: float = 4.0
-const VERSION = "v0.7.0"
+const VERSION = "v0.8.0"
 
 var start_button: Button = null
 var connect_button: Button = null
@@ -14,6 +14,10 @@ var shop_button: Button = null
 var training_button: Button = null
 var quit_button: Button = null
 var coins_label: Label = null
+var players_pill: Control = null  # registered / online right now (the backend's /status)
+var players_label: Label = null
+var _players_timer: float = 0.0
+const PLAYERS_EVERY: float = 15.0
 var shop: Shop = null
 
 var showcase: MenuDiorama = null  # the scene behind the menu, with the hero on its dais
@@ -28,6 +32,12 @@ var _showcase_index: int = 0
 var _showcase_timer: float = 0.0
 
 func _ready():
+	# A headless server for the beta: no menu, straight to serving matches
+	if DedicatedServer.requested():
+		set_process(false)
+		get_tree().change_scene_to_file.call_deferred(DedicatedServer.SCENE)
+		return
+
 	# Coming back from a lobby/match: make sure no server/client is left running,
 	# otherwise PLAY fails with "server already exists"
 	var network_manager = get_node_or_null("/root/NetworkManager")
@@ -37,6 +47,7 @@ func _ready():
 	var game_manager_node = get_node_or_null("/root/GameManager")
 	if game_manager_node:
 		game_manager_node.training_mode = false
+		game_manager_node.matchmaking = false
 	# The showcase walks through the heroes you own (all of them before you own any)
 	_roster = CharacterRegistry.get_all()
 	var mine = _roster.filter(func(c): return PlayerProfile.owns_hero(c.character_name))
@@ -45,6 +56,22 @@ func _ready():
 	_showcase_index = randi() % _roster.size()
 	_create_ui()
 	_show_next_character()
+
+	# Online the profile is the server's: wait for the login (the first start depends on it) and
+	# take fresh numbers after a match (the game server credited the coins and XP)
+	var online = get_node_or_null("/root/Online")
+	if online:
+		online.profile_changed.connect(_update_coins)
+		if not online.login_done:
+			await online.wait_login()
+		elif online.logged_in:
+			online.refresh()
+		else:
+			online.login()  # try again in the background
+		if not is_inside_tree():
+			return
+		_update_coins()
+		_refresh_players()
 
 	# First start: a name and the first hero
 	if not PlayerProfile.has_account() or PlayerProfile.needs_starter():
@@ -59,8 +86,13 @@ func _ready():
 	if game_manager and game_manager.last_error != "":
 		show_toast(game_manager.last_error, UITheme.ACCENT_DANGER)
 		game_manager.last_error = ""
+	elif online and online.login_done and not online.logged_in:
+		show_toast(tr("Offline: %s") % tr(online.last_error), UITheme.ACCENT_WARNING)
 
 func _process(delta: float):
+	_players_timer += delta
+	if _players_timer >= PLAYERS_EVERY:
+		_refresh_players()
 	_showcase_timer += delta
 	if _showcase_timer >= SHOWCASE_INTERVAL:
 		_showcase_timer = 0.0
@@ -110,7 +142,7 @@ func _create_ui():
 	buttons.add_theme_constant_override("separation", 12)
 	card.add_child(buttons)
 
-	start_button = UITheme.create_primary_button("PLAY  ·  HOST GAME", buttons, Vector2(0, 62))
+	start_button = UITheme.create_primary_button("PLAY  ·  FIND A MATCH", buttons, Vector2(0, 62))
 	start_button.pressed.connect(_on_start_pressed)
 
 	connect_button = UITheme.create_button("JOIN SERVER", buttons, Vector2(0, 52))
@@ -173,6 +205,20 @@ func _create_ui():
 	coins_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.45))
 	_update_coins()
 
+	# ---- Players (under the coins): how many signed up and how many are on right now
+	players_pill = PanelContainer.new()
+	players_pill.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.7), Color(UITheme.ACCENT_SUCCESS, 0.6), 99, 18, 6))
+	players_pill.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	players_pill.offset_left = -330
+	players_pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	players_pill.offset_right = -32
+	players_pill.offset_top = 84
+	players_pill.visible = false
+	add_child(players_pill)
+	players_label = UITheme.create_label("", players_pill, UITheme.FONT_SMALL)
+	players_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	players_label.add_theme_color_override("font_color", UITheme.ACCENT_SUCCESS.lightened(0.25))
+
 	# ---- Version (bottom-right)
 	var version = UITheme.create_label(VERSION, self, UITheme.FONT_TINY)
 	version.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
@@ -197,6 +243,19 @@ func _show_next_character():
 	showcase_name.text = data.character_name  # translated, then uppercased
 	showcase_name.uppercase = true
 	showcase_name.add_theme_color_override("font_color", data.color.lightened(0.35))
+
+## "Online: N · Registered: M" from the backend (asking also keeps us counted as online)
+func _refresh_players():
+	_players_timer = 0.0
+	var online = get_node_or_null("/root/Online")
+	if online == null or not online.logged_in:
+		players_pill.visible = false
+		return
+	var res = await online.request(HTTPClient.METHOD_GET, "/status")
+	if not is_inside_tree() or not res.get("ok", false):
+		return
+	players_label.text = "●  " + tr("Online: %d  ·  Registered: %d") % [int(res.get("online", 0)), int(res.get("registered", 0))]
+	players_pill.visible = true
 
 ## Friends need the host's LAN address to join
 func _lan_hint() -> String:
@@ -238,15 +297,30 @@ func _set_buttons_enabled(enabled: bool):
 		if b:
 			b.disabled = not enabled
 
-## PLAY: the host picks the mode first (ModeSelect), then the server starts
+## PLAY: the mode first (ModeSelect), then the hero and the online queue (MatchmakingScreen) -
+## or HOST LAN: this computer hosts the match
 func _on_start_pressed():
 	var picker = ModeSelect.new()
 	add_child(picker)
-	picker.chosen.connect(func(mode):
+	picker.chosen.connect(_find_match)
+	picker.host_chosen.connect(func(mode):
 		var gm = get_node_or_null("/root/GameManager")
 		if gm:
 			gm.game_mode = mode
 		_host_game())
+
+func _find_match(mode: String):
+	var online = get_node_or_null("/root/Online")
+	if online == null or not online.logged_in:
+		show_toast(tr("No connection to the game server - host a LAN game or try again"), UITheme.ACCENT_DANGER)
+		if online:
+			online.login()
+		return
+	var gm = get_node_or_null("/root/GameManager")
+	if gm:
+		gm.game_mode = mode
+		gm.matchmaking = true
+	_transition_to("res://scenes/CharacterSelectScene.tscn")
 
 func _host_game():
 	var network_manager = get_node_or_null("/root/NetworkManager")

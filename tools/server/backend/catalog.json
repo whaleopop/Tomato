@@ -1,0 +1,318 @@
+{
+	"heroes": [
+		"Tomato",
+		"Carrot",
+		"Pumpkin",
+		"Corn",
+		"Broccoli",
+		"Beet",
+		"Pepper",
+		"Apple",
+		"Lemon",
+		"Grape",
+		"Watermelon",
+		"Pineapple",
+		"Banana"
+	],
+	"items": {
+		"camo": {
+			"kind": "skin",
+			"price": 300,
+			"rank": -1
+		},
+		"candy": {
+			"kind": "skin",
+			"price": 200,
+			"rank": -1
+		},
+		"cap": {
+			"kind": "hat",
+			"price": 150,
+			"rank": -1
+		},
+		"checker": {
+			"kind": "skin",
+			"price": 300,
+			"rank": -1
+		},
+		"classic": {
+			"kind": "skin",
+			"price": 0,
+			"rank": -1
+		},
+		"crown": {
+			"kind": "hat",
+			"price": 600,
+			"rank": -1
+		},
+		"default": {
+			"kind": "weapon",
+			"price": 0,
+			"rank": -1
+		},
+		"frost": {
+			"kind": "skin",
+			"price": 250,
+			"rank": -1
+		},
+		"galaxy": {
+			"kind": "skin",
+			"price": 650,
+			"rank": -1
+		},
+		"golden": {
+			"kind": "skin",
+			"price": 500,
+			"rank": -1
+		},
+		"halo": {
+			"kind": "hat",
+			"price": 450,
+			"rank": -1
+		},
+		"hero:Apple": {
+			"kind": "hero",
+			"price": 800,
+			"rank": -1
+		},
+		"hero:Banana": {
+			"kind": "hero",
+			"price": 700,
+			"rank": -1
+		},
+		"hero:Beet": {
+			"kind": "hero",
+			"price": 600,
+			"rank": -1
+		},
+		"hero:Broccoli": {
+			"kind": "hero",
+			"price": 600,
+			"rank": -1
+		},
+		"hero:Carrot": {
+			"kind": "hero",
+			"price": 500,
+			"rank": -1
+		},
+		"hero:Corn": {
+			"kind": "hero",
+			"price": 600,
+			"rank": -1
+		},
+		"hero:Grape": {
+			"kind": "hero",
+			"price": 900,
+			"rank": -1
+		},
+		"hero:Lemon": {
+			"kind": "hero",
+			"price": 700,
+			"rank": -1
+		},
+		"hero:Pepper": {
+			"kind": "hero",
+			"price": 800,
+			"rank": -1
+		},
+		"hero:Pineapple": {
+			"kind": "hero",
+			"price": 900,
+			"rank": -1
+		},
+		"hero:Pumpkin": {
+			"kind": "hero",
+			"price": 800,
+			"rank": -1
+		},
+		"hero:Tomato": {
+			"kind": "hero",
+			"price": 500,
+			"rank": -1
+		},
+		"hero:Watermelon": {
+			"kind": "hero",
+			"price": 900,
+			"rank": -1
+		},
+		"horns": {
+			"kind": "hat",
+			"price": 350,
+			"rank": -1
+		},
+		"m_bronze": {
+			"kind": "skin",
+			"price": 0,
+			"rank": 0
+		},
+		"m_diamond": {
+			"kind": "skin",
+			"price": 0,
+			"rank": 4
+		},
+		"m_gold": {
+			"kind": "skin",
+			"price": 0,
+			"rank": 2
+		},
+		"m_obsidian": {
+			"kind": "skin",
+			"price": 0,
+			"rank": 3
+		},
+		"m_silver": {
+			"kind": "skin",
+			"price": 0,
+			"rank": 1
+		},
+		"neon": {
+			"kind": "skin",
+			"price": 400,
+			"rank": -1
+		},
+		"no_hat": {
+			"kind": "hat",
+			"price": 0,
+			"rank": -1
+		},
+		"party": {
+			"kind": "hat",
+			"price": 100,
+			"rank": -1
+		},
+		"polka": {
+			"kind": "skin",
+			"price": 250,
+			"rank": -1
+		},
+		"shadow": {
+			"kind": "skin",
+			"price": 300,
+			"rank": -1
+		},
+		"tiger": {
+			"kind": "skin",
+			"price": 350,
+			"rank": -1
+		},
+		"top_hat": {
+			"kind": "hat",
+			"price": 300,
+			"rank": -1
+		},
+		"w_camo": {
+			"kind": "weapon",
+			"price": 200,
+			"rank": -1
+		},
+		"w_candy": {
+			"kind": "weapon",
+			"price": 150,
+			"rank": -1
+		},
+		"w_checker": {
+			"kind": "weapon",
+			"price": 250,
+			"rank": -1
+		},
+		"w_dots": {
+			"kind": "weapon",
+			"price": 200,
+			"rank": -1
+		},
+		"w_galaxy": {
+			"kind": "weapon",
+			"price": 500,
+			"rank": -1
+		},
+		"w_gold": {
+			"kind": "weapon",
+			"price": 400,
+			"rank": -1
+		},
+		"w_ice": {
+			"kind": "weapon",
+			"price": 200,
+			"rank": -1
+		},
+		"w_m_bronze": {
+			"kind": "weapon",
+			"price": 0,
+			"rank": 0
+		},
+		"w_m_diamond": {
+			"kind": "weapon",
+			"price": 0,
+			"rank": 4
+		},
+		"w_m_gold": {
+			"kind": "weapon",
+			"price": 0,
+			"rank": 2
+		},
+		"w_m_obsidian": {
+			"kind": "weapon",
+			"price": 0,
+			"rank": 3
+		},
+		"w_m_silver": {
+			"kind": "weapon",
+			"price": 0,
+			"rank": 1
+		},
+		"w_neon": {
+			"kind": "weapon",
+			"price": 300,
+			"rank": -1
+		},
+		"w_shadow": {
+			"kind": "weapon",
+			"price": 250,
+			"rank": -1
+		},
+		"w_tiger": {
+			"kind": "weapon",
+			"price": 300,
+			"rank": -1
+		},
+		"w_zebra": {
+			"kind": "weapon",
+			"price": 300,
+			"rank": -1
+		},
+		"waves": {
+			"kind": "skin",
+			"price": 300,
+			"rank": -1
+		},
+		"zebra": {
+			"kind": "skin",
+			"price": 350,
+			"rank": -1
+		},
+		"zombie": {
+			"kind": "skin",
+			"price": 250,
+			"rank": -1
+		}
+	},
+	"mastery": {
+		"hero_base": 500,
+		"hero_step": 100,
+		"max_level": 25,
+		"tier_levels": [
+			3,
+			6,
+			10,
+			15,
+			20
+		],
+		"weapon_base": 300,
+		"weapon_step": 60
+	},
+	"name_max": 16,
+	"name_min": 3,
+	"start_coins": 300,
+	"starter_picks": 2,
+	"version": "0.8.0"
+}

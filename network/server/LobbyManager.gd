@@ -24,6 +24,8 @@ var countdown_timer: float = 0.0
 var countdown_duration: int = 5
 var _last_countdown_second: int = -1
 var min_players_to_start: int = 1  # For testing, normally 2+
+## Matchmade games: when the landing pick ends on its own (Time msec, 0 = never; DedicatedServer)
+var landing_deadline: int = 0
 
 const SPAWN_EXCLUSION_RADIUS: int = 2  # Minimum hex distance between spawn points (big tiles)
 
@@ -254,6 +256,25 @@ func _start_match():
 	match_started.emit()
 	print("[LobbyManager] Match started!")
 
+## The landing pick ran out (matchmade games): whoever has a hero lands, on a free spot if they
+## didn't choose one, and the countdown starts. Players without a hero are the caller's business.
+func force_start() -> void:
+	if state == LobbyState.STARTED or state == LobbyState.COUNTDOWN:
+		return
+	var free = available_spawns.duplicate()
+	free.shuffle()
+	for player_id in players_ready.keys():
+		if players_characters.get(player_id, "") == "":
+			continue
+		if not _has_valid_spawn(player_id):
+			for coords in free:
+				if _is_spawn_available(coords, player_id):
+					select_spawn(player_id, coords)
+					break
+		players_ready[player_id] = true
+	print("[LobbyManager] Landing time is up")
+	_start_countdown()
+
 func get_spawn_position(player_id: int, hex_grid: HexGrid) -> Vector3:
 	if mode_spawn.is_valid():
 		var forced: Vector3 = mode_spawn.call(player_id)
@@ -300,7 +321,8 @@ func get_lobby_state() -> Dictionary:
 		"mode": game_mode,  # GameModes id (clients set GameManager.game_mode from it)
 		"reserved_spawns": reserved_spawns.keys(),
 		"reserved_by": reserved_spawns.duplicate(),
-		"countdown": ceili(countdown_timer) if state == LobbyState.COUNTDOWN else 0
+		"countdown": ceili(countdown_timer) if state == LobbyState.COUNTDOWN else 0,
+		"landing_left": maxi(0, ceili((landing_deadline - Time.get_ticks_msec()) / 1000.0)) if landing_deadline > 0 and state == LobbyState.WAITING else 0,
 	}
 
 ## Returns data needed for spawn cutscene

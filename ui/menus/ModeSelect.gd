@@ -1,11 +1,12 @@
 ## The host picks the match mode (GameModes) before the server starts: a row of tall ModeCards
 ## (the last mode played is chosen), a strip under them with what the chosen mode is about and
-## PLAY. Click a card to choose it, double click / Enter to play; 1-4 or arrows choose, Esc closes.
-## chosen(mode) / closed.
+## PLAY (find an online match) or HOST LAN (this computer hosts). Click a card to choose it, double
+## click / Enter to play; 1-4 or arrows choose, Esc closes. chosen(mode) / host_chosen(mode) / closed.
 extends Control
 class_name ModeSelect
 
 signal chosen(mode: String)
+signal host_chosen(mode: String)
 signal closed
 
 const TAGS = {GameModes.BR: "Free for all", GameModes.SURVIVORS: "Co-op", GameModes.CTF: "Teams", GameModes.KOTH: "Free for all"}
@@ -94,6 +95,12 @@ func _ready():
 	var back = UITheme.create_button("BACK", strip_row, Vector2(140, 56))
 	back.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	back.pressed.connect(_close)
+	var host = UITheme.create_button("HOST LAN", strip_row, Vector2(170, 56))
+	host.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	host.tooltip_text = tr("This computer hosts, friends join by IP")
+	host.pressed.connect(func():
+		host_chosen.emit(current)
+		queue_free())
 	_play = UITheme.create_primary_button("PLAY", strip_row, Vector2(220, 60))
 	_play.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_play.add_theme_font_override("font", UITheme.font_black())

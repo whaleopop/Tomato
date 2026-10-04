@@ -4,6 +4,10 @@
 ## each hero wears. Coins are earned in matches (PlayerHUD: MATCH_REWARD, KILL_REWARD, WIN_REWARD)
 ## and spent in the shop (ui/menus/Shop.gd). What the local player wears goes to the server with
 ## the chosen hero (NetworkLobby.client_set_character), so everybody sees it.
+## Online (network/online/Online.gd logged in) this is a mirror of the profile on the server: nothing
+## is saved here, purchases / equipment / names / starters also go to the server (whose answer
+## replaces the mirror), and match coins / XP are credited by the game server's report - what the
+## HUD adds in memory after a match is only for the result screen.
 extends RefCounted
 class_name PlayerProfile
 
@@ -51,6 +55,32 @@ static var weapon_skin_by_type: Dictionary = {}  # ...unless a gun has its own (
 static var hero_xp: Dictionary = {}        # hero name -> mastery XP (Mastery.gd)
 static var weapon_xp: Dictionary = {}      # "weapon type" -> mastery XP
 static var nickname: String = ""
+static var online: bool = false  # the server's profile (Online.gd), not user://profile.cfg
+
+## The server's profile (every answer of the backend carries it)
+static func apply_remote(p: Dictionary) -> void:
+	_loaded = true
+	online = true
+	coins = int(p.get("coins", 0))
+	owned = {}
+	for id in p.get("owned", []):
+		owned[String(id)] = true
+	hero_skin = p.get("hero_skin", {})
+	hero_hat = p.get("hero_hat", {})
+	weapon_skin = String(p.get("weapon_skin", "default"))
+	weapon_skin_by_type = p.get("weapon_skin_by_type", {})
+	hero_xp = p.get("hero_xp", {})
+	weapon_xp = p.get("weapon_xp", {})
+	nickname = String(p.get("nickname", ""))
+
+## Tell the server (online only); its answer brings the profile back
+static func _remote(path: String, body: Dictionary) -> void:
+	if not online:
+		return
+	var tree = Engine.get_main_loop() as SceneTree
+	var service = tree.root.get_node_or_null("Online") if tree else null
+	if service:
+		service.request(HTTPClient.METHOD_POST, path, body)
 
 static func load_profile() -> void:
 	if _loaded:
@@ -71,6 +101,8 @@ static func load_profile() -> void:
 	nickname = String(cfg.get_value("account", "nickname", ""))
 
 static func save() -> void:
+	if online:
+		return
 	var cfg = ConfigFile.new()
 	cfg.set_value("wallet", "coins", coins)
 	cfg.set_value("wallet", "owned", owned.keys())
@@ -157,6 +189,7 @@ static func buy(id: String) -> bool:
 	coins -= price
 	owned[id] = true
 	save()
+	_remote("/profile/buy", {"id": id})
 	return true
 
 static func equip(id: String, hero: String) -> void:
@@ -171,6 +204,7 @@ static func equip(id: String, hero: String) -> void:
 		"weapon":
 			weapon_skin = id
 	save()
+	_remote("/profile/equip", {"id": id, "hero": hero, "weapon_type": -1})
 
 ## Put a finish on one gun: a mastery camo stays on that gun; an ordinary finish goes on every
 ## gun and this one drops its own
@@ -184,6 +218,7 @@ static func equip_weapon(id: String, weapon_type: int) -> void:
 		weapon_skin = id
 		weapon_skin_by_type.erase(str(weapon_type))
 	save()
+	_remote("/profile/equip", {"id": id, "hero": "", "weapon_type": weapon_type})
 
 static func is_equipped(id: String, hero: String, weapon_type: int = -1) -> bool:
 	var wear = equipped_for(hero)
@@ -208,6 +243,7 @@ static func register(name: String) -> void:
 	load_profile()
 	nickname = name.strip_edges()
 	save()
+	_remote("/profile/name", {"name": nickname})
 
 ## Still has to pick the starting hero (new profiles, and profiles from before heroes were bought)
 static func needs_starter() -> bool:
@@ -222,6 +258,7 @@ static func choose_starters(heroes: Array) -> void:
 		if CharacterRegistry.get_by_name(hero):
 			owned[Cosmetics.hero_id(hero)] = true
 	save()
+	_remote("/profile/starters", {"heroes": heroes})
 
 static func owns_hero(hero: String) -> bool:
 	return owns(Cosmetics.hero_id(hero))

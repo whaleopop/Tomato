@@ -1,0 +1,17 @@
+[Unit]
+Description=ROYALTIM-3 backend (accounts, profiles, matchmaking, game servers)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=royaltim
+WorkingDirectory=/opt/royaltim
+Environment=HOME=/opt/royaltim
+ExecStart=/usr/bin/python3 /opt/royaltim/royaltim_backend.py --port 8080 --data /opt/royaltim/data --catalog /opt/royaltim/catalog.json --server-bin /opt/royaltim/royaltim_server --port-first 7777 --port-last 7786 --max-matches 3
+# Game servers are its children: a restart of the backend ends the running matches too
+KillMode=control-group
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

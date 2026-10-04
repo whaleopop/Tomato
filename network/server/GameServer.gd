@@ -1,4 +1,4 @@
-## Main game server (listen server: the host plays as player 1)
+## Main game server (listen server: the host plays as player 1; dedicated: clients only)
 extends Node
 class_name GameServer
 
@@ -17,6 +17,12 @@ var tick_system: TickSystem = null
 var lobby_manager: LobbyManager = null
 var network_lobby: NetworkLobby = null
 var is_running: bool = false
+## No host player: a headless server (DedicatedServer) that only the clients play on
+var dedicated: bool = false
+## A matchmade game (DedicatedServer --match): ticket -> {account, nickname, hero} from the backend.
+## Only peers presenting one of them play (NetworkLobby.present_ticket); name and hero come from it.
+var roster: Dictionary = {}
+var accounts: Dictionary = {}  # player_id -> its roster entry (+ "ticket")
 var game_started: bool = false
 var match_over: bool = false
 ## The match mode's rules (GameModes / network/server/modes): made from GameManager.game_mode
@@ -84,15 +90,16 @@ func start_server(port: int = PORT) -> bool:
 	is_running = true
 
 	# The host is player 1 and joins its own lobby
-	var host_player = ServerPlayer.new()
-	host_player.player_id = 1
-	host_player.name = "ServerPlayer_1"
-	players[1] = host_player
-	add_child(host_player)
-	lobby_manager.add_player(1)
+	if not dedicated:
+		var host_player = ServerPlayer.new()
+		host_player.player_id = 1
+		host_player.name = "ServerPlayer_1"
+		players[1] = host_player
+		add_child(host_player)
+		lobby_manager.add_player(1)
 
 	server_started.emit()
-	print("[GameServer] ✓ Server started on port %d (max players: %d)" % [port, MAX_PLAYERS])
+	print("[GameServer] ✓ %s server started on port %d (max players: %d)" % ["Dedicated" if dedicated else "Listen", port, MAX_PLAYERS])
 	return true
 
 func stop_server():
@@ -157,6 +164,25 @@ func _on_peer_connected(player_id: int):
 		_send_map_to_peer(player_id)
 
 	# Late joiners are spawned once they picked their character (see spawn_late_joiner)
+
+func is_matchmade() -> bool:
+	return not roster.is_empty()
+
+## A matchmade client says who it is: false (and dropped) for a ticket that isn't ours or is in use
+func claim_ticket(player_id: int, ticket: String) -> bool:
+	var entry = roster.get(ticket)
+	if entry == null or not players.has(player_id):
+		_refuse_join(player_id, "This match is not yours - find a match from the menu")
+		return false
+	for other in accounts:
+		if other != player_id and accounts[other].ticket == ticket:
+			_refuse_join(player_id, "You are already in this match")
+			return false
+	accounts[player_id] = entry.duplicate()
+	accounts[player_id]["ticket"] = ticket
+	lobby_manager.set_player_name(player_id, String(entry.nickname))
+	print("[GameServer] Player %d is %s (account %d)" % [player_id, entry.nickname, int(entry.account)])
+	return true
 
 ## A client joined after the match had started and told us its character
 func spawn_late_joiner(player_id: int):
@@ -236,6 +262,7 @@ func _on_peer_disconnected(player_id: int):
 	player_disconnected.emit(player_id)
 
 	lobby_manager.remove_player(player_id)
+	accounts.erase(player_id)
 	# Others must see them leave (and a cancelled countdown)
 	if network_lobby and not game_started:
 		network_lobby._broadcast_lobby_state()

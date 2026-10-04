@@ -68,8 +68,9 @@ func _cleanup_shared_nodes():
 	_free_now(loot_manager)
 	loot_manager = null
 
-func start_server(port: int = 7777) -> bool:
-	print("[NetworkManager] Starting server on port %d..." % port)
+## dedicated: no host player (DedicatedServer), only remote clients play
+func start_server(port: int = 7777, dedicated: bool = false) -> bool:
+	print("[NetworkManager] Starting %sserver on port %d..." % ["dedicated " if dedicated else "", port])
 
 	# Server and client cannot coexist in this process
 	stop_all()
@@ -78,6 +79,7 @@ func start_server(port: int = 7777) -> bool:
 
 	game_server = GameServer.new()
 	game_server.name = "GameServer"
+	game_server.dedicated = dedicated
 	add_child(game_server)
 
 	if network_lobby and game_server.lobby_manager:
@@ -96,6 +98,7 @@ func start_client(ip: String = "127.0.0.1", port: int = 7777) -> bool:
 	print("[NetworkManager] Starting client connection to %s:%d..." % [ip, port])
 
 	stop_all()
+	refusal_reason = ""  # a notice left over from an earlier server
 
 	_create_shared_nodes(false)
 

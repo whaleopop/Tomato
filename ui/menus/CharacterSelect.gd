@@ -262,7 +262,9 @@ func _on_select_pressed():
 
 	select_button.disabled = true
 	var next_scene = "res://scenes/SpawnSelectScene.tscn"
-	if game_manager and game_manager.training_mode:
+	if game_manager and game_manager.matchmaking:
+		next_scene = MatchmakingScreen.SCENE  # the queue, then the landing pick
+	elif game_manager and game_manager.training_mode:
 		next_scene = "res://scenes/GameScene.tscn"
 	var scene_transition = get_node_or_null("/root/SceneTransition")
 	if scene_transition:

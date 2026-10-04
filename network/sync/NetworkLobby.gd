@@ -93,6 +93,9 @@ func set_player_name(player_name: String):
 		return
 
 	var player_id = multiplayer.get_remote_sender_id()
+	var game_server = get_node_or_null("/root/NetworkManager/GameServer")
+	if game_server and game_server.is_matchmade():
+		return  # the name comes with the ticket
 	lobby_manager.set_player_name(player_id, player_name)
 	_broadcast_lobby_state()
 
@@ -102,17 +105,30 @@ func set_player_character(character_name: String, client_token: String, cosmetic
 		return
 
 	var player_id = multiplayer.get_remote_sender_id()
+	var game_server = get_node_or_null("/root/NetworkManager/GameServer")
+	if game_server and game_server.is_matchmade():
+		if not game_server.accounts.has(player_id):
+			return  # no ticket, no hero
+		character_name = String(game_server.accounts[player_id].hero)  # the one it queued with (owned)
 	lobby_manager.set_player_character(player_id, character_name)
 	lobby_manager.set_player_cosmetics(player_id, cosmetics)
 	lobby_manager.set_player_token(player_id, client_token)
 	print("[NetworkLobby] Player %d selected character: %s" % [player_id, character_name])
 
 	# Late joiner: now that we know the character we can spawn them
-	var game_server = get_node_or_null("/root/NetworkManager/GameServer")
 	if game_server and game_server.game_started:
 		game_server.spawn_late_joiner(player_id)
 	else:
 		_broadcast_lobby_state()  # the lobby list shows the hero
+
+## A matchmade client's ticket (Online matchmaking -> GameServer.roster)
+@rpc("any_peer", "call_remote", "reliable")
+func present_ticket(ticket: String):
+	if not is_server:
+		return
+	var game_server = get_node_or_null("/root/NetworkManager/GameServer")
+	if game_server and game_server.claim_ticket(multiplayer.get_remote_sender_id(), ticket):
+		_broadcast_lobby_state()
 
 # === Server -> Client RPCs ===
 
@@ -307,6 +323,10 @@ func client_set_name(player_name: String):
 			_broadcast_lobby_state()
 	else:
 		set_player_name.rpc_id(1, player_name)
+
+func client_present_ticket(ticket: String):
+	if not is_server:
+		present_ticket.rpc_id(1, ticket)
 
 ## Our hero and what it wears (PlayerProfile) go to the server; others see the skin, hat and guns
 func client_set_character(character_name: String):

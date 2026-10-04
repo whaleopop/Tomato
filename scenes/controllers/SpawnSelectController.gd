@@ -6,6 +6,8 @@ var spawn_menu: SpawnSelectMenu = null
 var network_lobby: NetworkLobby = null
 var is_host: bool = false
 var _leaving: bool = false
+var _landing_until: int = 0  # matchmade games: when the landing pick ends on its own (Time msec)
+var _landing_shown: int = -1
 
 func _ready():
 	spawn_menu = get_parent() as SpawnSelectMenu
@@ -133,11 +135,25 @@ func _on_lobby_state_updated(state: Dictionary):
 		}
 	spawn_menu.update_players_list(players_data)
 
+	var landing_left = int(state.get("landing_left", 0))
+	_landing_until = Time.get_ticks_msec() + landing_left * 1000 if landing_left > 0 else 0
+
 	var countdown = state.get("countdown", 0)
 	if countdown > 0:
 		spawn_menu.show_countdown(countdown)
 	else:
 		spawn_menu.hide_countdown()
+
+func _process(_delta: float):
+	if _landing_until <= 0 or not spawn_menu:
+		return
+	var left = ceili((_landing_until - Time.get_ticks_msec()) / 1000.0)
+	if left != _landing_shown:
+		_landing_shown = left
+		if left > 0:
+			spawn_menu.show_status(tr("Pick a landing spot - landing in %d s") % left)
+		else:
+			_landing_until = 0
 
 func _on_spawn_selection_result(success: bool, coords: Vector2i):
 	if not success and spawn_menu:
