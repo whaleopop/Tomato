@@ -40,6 +40,8 @@ func _ready():
 	_player = AudioStreamPlayer.new()
 	_player.stream = stream
 	_player.volume_db = -4.0
+	Sfx.ensure_buses()
+	_player.bus = "Ambient"  # its own slider in Settings
 	add_child(_player)
 	_player.play()
 	_playback = _player.get_stream_playback()

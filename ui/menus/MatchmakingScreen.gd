@@ -118,6 +118,7 @@ func _show_state(res: Dictionary):
 			_status.text = tr("Starting the server...")
 		"found":
 			_title.text = tr("MATCH FOUND")
+			Sfx.ui("match_found")
 			_join(int(res.port), String(res.ticket))
 		"idle":
 			_fail("You dropped out of the queue")

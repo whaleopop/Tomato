@@ -86,7 +86,28 @@ func _ready():
 	set_third_person(GameSettings.third_person, false)
 	locked = GameSettings.camera_locked
 
+## Sounds are heard from the hero, not from up here (everything would be equally far away and
+## quiet): the listener stands at the target and faces where the view faces (Sfx)
+var _listener: AudioListener3D = null
+
+func _update_listener() -> void:
+	if not target or not is_instance_valid(target) or not target.is_inside_tree():
+		return
+	if _listener == null:
+		_listener = AudioListener3D.new()
+		_listener.name = "HeroListener"
+		get_parent().add_child(_listener)
+		_listener.make_current()
+	var fwd = -global_basis.z
+	fwd.y = 0.0
+	if fwd.length_squared() < 0.0001:
+		fwd = global_basis.y  # looking straight down: "up" on the screen is ahead
+		fwd.y = 0.0
+	var pos = target.visual_position() if target.has_method("visual_position") else target.global_position
+	_listener.global_transform = Transform3D(Basis.looking_at(fwd.normalized(), Vector3.UP), pos + Vector3(0, 1.2, 0))
+
 func _process(delta: float):
+	_update_listener()
 	if Input.is_action_just_pressed("camera_mode") and not _menu_open():
 		set_third_person(not third_person)
 	if third_person:
@@ -383,6 +404,8 @@ func _input(event: InputEvent):
 	# No zooming and no mouse-button turning: the view turns with Q / E and the cursor at the screen edge
 
 func _exit_tree():
+	if _listener and is_instance_valid(_listener):
+		_listener.queue_free()
 	if Input.get_mouse_mode() in [Input.MOUSE_MODE_CAPTURED, Input.MOUSE_MODE_HIDDEN]:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)  # back to the menus with a free mouse
 

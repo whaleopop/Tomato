@@ -161,6 +161,7 @@ func _on_spawn_selection_result(success: bool, coords: Vector2i):
 		print("[SpawnSelectController] Spawn selection failed at %s" % coords)
 
 func _on_countdown_update(seconds: int):
+	Sfx.ui("countdown", 0.0, 1.0 + (5 - clampi(seconds, 1, 5)) * 0.06)
 	if spawn_menu:
 		spawn_menu.show_countdown(seconds)
 
@@ -168,6 +169,7 @@ func _on_match_starting(late_join: bool):
 	if _leaving:
 		return
 	_leaving = true
+	Sfx.ui("match_start")
 
 	var target = "res://scenes/cutscenes/SpawnCutscene.tscn"
 	if late_join:

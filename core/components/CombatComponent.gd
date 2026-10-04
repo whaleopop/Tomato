@@ -273,6 +273,17 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 			_create_shot_effects(muzzle_pos, hit_result, style)
 			shot_fired.emit(muzzle_pos, end_pos, hit_result.get("hit", false))
 
+	# The bang (every peer that runs this shot: the shooter's client, the host for its players;
+	# the others hear it from NetworkManager._create_remote_shot_effects)
+	if equipped_ranged_weapon:
+		Sfx.shot(int(equipped_ranged_weapon.weapon_type), muzzle_pos)
+	if entity and entity.get("is_local_player"):
+		var landed = hit_results.any(func(r): return r.get("hit", false) and r.get("collider") is Entity)
+		if hit_result and hit_result.get("hit", false) and hit_result.get("collider") is Entity:
+			landed = true
+		if landed:
+			Sfx.own("hit")
+
 	# Add bullet trail to visibility system
 	_add_visibility_trail(muzzle_pos, end_pos)
 
@@ -580,6 +591,8 @@ func start_reload() -> void:
 		_reload_amount = ammo_to_reload
 		_reload_weapon = equipped_ranged_weapon
 		reload_started.emit()
+		if entity.get("is_local_player"):
+			Sfx.own("reload")
 		print("[CombatComponent] Reloading... (%d rounds)" % ammo_to_reload)
 
 ## Complete reload after timer: the rounds taken from the reserve go into the magazine
@@ -591,6 +604,8 @@ func _complete_reload() -> void:
 	_reload_amount = 0
 	_reload_weapon = null
 	reload_finished.emit()
+	if entity and entity.get("is_local_player"):
+		Sfx.own("reload_done")
 	print("[CombatComponent] Reload complete")
 
 ## Stop a running reload (weapon switched, dropped...): the rounds go back into the reserve

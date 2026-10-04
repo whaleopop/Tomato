@@ -25,6 +25,8 @@ var _was_blocked: bool = false
 ## A quick tap casts like before; RMB (top-down) or opening a menu cancels.
 var aiming_ability: int = -1
 
+var _clicked_empty: bool = false  # the empty-gun click sounded for this trigger pull
+
 func _ready():
 	pass
 
@@ -358,8 +360,15 @@ func _apply_input_locally(input_data: Dictionary):
 	if input_data.has("attack") and input_data.attack:
 		var combat = player.get_component("CombatComponent")
 		if combat:
+			# An empty gun clicks once per trigger pull (no reserve left to reload with)
+			var gun = combat.equipped_ranged_weapon
+			if gun and gun.current_ammo <= 0 and not combat.is_reloading and not _clicked_empty:
+				Sfx.own("empty")
+			_clicked_empty = gun != null and gun.current_ammo <= 0
 			if input_data.has("target_position"):
 				combat.attack(input_data.target_position)
+	else:
+		_clicked_empty = false
 
 	# Handle abilities locally
 	if input_data.has("ability_index") and input_data.has("target_position"):

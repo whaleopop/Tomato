@@ -452,6 +452,7 @@ func _receive_ability_cast(caster_id: int, ability_index: int, target_position: 
 func _create_remote_shot_effects(parent: Node3D, from_pos: Vector3, to_pos: Vector3, weapon_type: int, hit: bool):
 	var direction = (to_pos - from_pos).normalized()
 	var mode = RangedWeapon.fire_mode_of(weapon_type)
+	Sfx.shot(weapon_type, from_pos)
 	if mode == "lob":  # a grenade: the arc and the blast, no tracer
 		WeaponEffects.create_muzzle_flash(parent, from_pos, direction)
 		GrenadeFX.lob(parent, from_pos, to_pos, RangedWeapon.create_weapon(weapon_type).blast_radius)

@@ -205,6 +205,11 @@ func _on_zone_changed(kind: String, _coords: Array, seconds: float, center: Vect
 	_zone_left = seconds
 	minimap.set_zone(kind, center, radius)
 	match kind:
+		"warn", "core_warn":
+			Sfx.ui("zone_warn")
+		"rise":
+			Sfx.own("rumble", -6.0)
+	match kind:
 		"warn":
 			show_alert(tr("The zone is closing in - leave the glowing edge!"), UITheme.ACCENT_WARNING)
 		"burn", "core_burn":
@@ -463,6 +468,7 @@ func _on_match_ended(winner_id: int, winner_name: String):
 	# Team modes: winner_id -1 - team
 	if winner_id < 0 and player and is_instance_valid(player) and player.has_meta("team"):
 		i_won = int(player.get_meta("team")) == -1 - winner_id
+	Sfx.ui("victory" if i_won else "defeat")
 	var winner_text = winner_name.to_upper() if winner_name != "" else tr("NOBODY")
 	if death_screen:
 		# Already eliminated: tell who took it
@@ -690,8 +696,11 @@ func _on_player_killed(victim_id: int, killer_id: int, info: Dictionary):
 		_known_names[victim_id] = String(info["victim_name"])
 	if killer_id != 0 and info.has("killer_name"):
 		_known_names[killer_id] = String(info["killer_name"])
+	if player and is_instance_valid(player) and killer_id == player.entity_id and victim_id != killer_id:
+		Sfx.ui("kill")
 	if not player or not is_instance_valid(player) or victim_id != player.entity_id:
 		return
+	Sfx.ui("death")
 	_death_info = {"killer_id": killer_id, "info": info}
 	_fill_killer_card()
 	if spectator and killer_id != 0:
@@ -781,6 +790,7 @@ func _reward_row(box: Control, won: bool) -> void:
 		var coins_label = UITheme.create_label("+%d" % int(line[2]), table, UITheme.FONT_SMALL)
 		coins_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
 	PlayerProfile.add_coins(total)
+	Sfx.ui("coins")
 	var pill = UITheme.create_pill(tr("+%d coins") % total, Color(1.0, 0.8, 0.3), box)
 	pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_mastery_rows(box, stats)

@@ -127,6 +127,8 @@ func update(delta: float):
 		item_used.emit(item)
 		break
 	use_finished.emit(kind)
+	if entity and entity.get("is_local_player"):
+		Sfx.own(kind)  # "heal" / "shield"
 
 func _is_authority() -> bool:
 	if not entity or not is_instance_valid(entity) or not entity.is_inside_tree():

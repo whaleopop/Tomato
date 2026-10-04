@@ -365,6 +365,7 @@ func open(player: Player = null):
 	if pillar:
 		create_tween().tween_property(pillar, "scale", Vector3(0.01, 1.0, 0.01), 0.6)
 	container_opened.emit(self, player)
+	Sfx.at("chest_open", global_position)
 
 	var items = _spawn_loot()
 	_burst_open(items)
@@ -600,6 +601,7 @@ func _weighted_random(items: Array, weights: Array):
 ## Supply drop under its parachute: sways while LootSpawner lowers it
 func start_falling():
 	is_falling = true
+	Sfx.at("supply_drop", global_position)
 	if parachute:
 		parachute.visible = true
 		parachute.scale = Vector3(0.2, 0.2, 0.2)

@@ -6,10 +6,10 @@
 extends Node
 class_name WeedSpawner
 
-const START_CHANCE: float = 0.014
-const CAP: int = 22
-const WAVE_EVERY: float = 40.0
-const WAVE_CHANCE: float = 0.4
+const START_CHANCE: float = 0.007  # was 0.014 / 22 / 40 s / 0.4: far too many, sprouting all the time
+const CAP: int = 12
+const WAVE_EVERY: float = 90.0
+const WAVE_CHANCE: float = 0.3
 const SEEN_FROM: float = 42.0      # world units: weeds further from a client aren't sent to it
 const KIND_BY_BIOME = {
 	HexTile.BiomeType.THORNS: ["Nettle", 2.5], HexTile.BiomeType.TALL_GRASS: ["Nettle", 2.0],

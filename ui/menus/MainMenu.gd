@@ -4,7 +4,7 @@ extends Control
 class_name MainMenu
 
 const SHOWCASE_INTERVAL: float = 4.0
-const VERSION = "v0.8.0"
+const VERSION = "v0.8.1"
 
 var start_button: Button = null
 var connect_button: Button = null
@@ -72,6 +72,7 @@ func _ready():
 			return
 		_update_coins()
 		_refresh_players()
+	_check_update()
 
 	# First start: a name and the first hero
 	if not PlayerProfile.has_account() or PlayerProfile.needs_starter():
@@ -243,6 +244,15 @@ func _show_next_character():
 	showcase_name.text = data.character_name  # translated, then uppercased
 	showcase_name.uppercase = true
 	showcase_name.add_theme_color_override("font_color", data.color.lightened(0.35))
+
+## A newer release on GitHub (exported Windows game only): offer to update right here
+func _check_update():
+	var release = await UpdateDialog.check(self, VERSION)
+	if release.is_empty() or not is_inside_tree():
+		return
+	var dialog = UpdateDialog.new()
+	dialog.release = release
+	add_child(dialog)
 
 ## "Online: N · Registered: M" from the backend (asking also keeps us counted as online)
 func _refresh_players():

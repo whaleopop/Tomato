@@ -267,6 +267,15 @@ func apply_world_state(state: Dictionary):
 		return
 
 	var player_states: Dictionary = state["players"]
+	# The slow fields (name, wear, stats) come only now and then: keep the last ones we got
+	for player_id in player_states:
+		var d: Dictionary = player_states[player_id]
+		var old: Dictionary = last_player_states.get(player_id, {})
+		if d.is_empty() or old.is_empty():
+			continue
+		for k in TickSystem.SLOW_KEYS:
+			if not d.has(k) and old.has(k):
+				d[k] = old[k]
 	last_player_states = player_states
 	_apply_npcs(state.get("npcs", {}))
 	if state.has("mode"):
@@ -319,14 +328,14 @@ func apply_world_state(state: Dictionary):
 ## The weeds the server says we can see: new ones get a copy, known ones follow, the rest go
 func _apply_npcs(states: Dictionary) -> void:
 	for id in states:
-		var s: Array = states[id]
+		var s: PackedInt32Array = states[id]
 		var weed: Weed = npcs.get(id)
 		if weed == null or not is_instance_valid(weed):
 			weed = Weed.new()
 			weed.npc_id = int(id)
-			weed.kind = String(s[0])
+			weed.kind = Weed.kind_of_state(s)
 			weed.authority = false
-			weed.position = Vector3(s[1], s[2], s[3])
+			weed.position = Weed.position_of_state(s)
 			add_child(weed)
 			npcs[id] = weed
 		weed.apply_state(s)

@@ -25,6 +25,7 @@ func track(p: Player):
 		_health.hit_from.connect(_on_hit_from)
 
 func _on_hit_from(pos: Vector3, amount: float):
+	Sfx.own("hurt", linear_to_db(clampf(amount / 25.0, 0.4, 1.4)))
 	# The same attacker again: refresh its arc instead of stacking
 	for arc in _arcs:
 		if Vector2(arc.pos.x, arc.pos.z).distance_to(Vector2(pos.x, pos.z)) < 2.0:

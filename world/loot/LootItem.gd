@@ -290,6 +290,8 @@ func _pickup(player: Player):
 	is_active = false
 	_picked_by_local_player = player != null and player.is_local_player
 	item_picked_up.emit(self, player)
+	if _picked_by_local_player:
+		Sfx.own("pickup_ammo" if item_data is AmmoItem else "pickup")
 
 	# Apply item effect
 	_apply_effect(player)

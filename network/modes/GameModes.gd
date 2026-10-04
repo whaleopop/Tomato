@@ -13,8 +13,8 @@ const ORDER = [BR, SURVIVORS, CTF, KOTH]
 
 const INFO = {
 	BR: {"name": "Battle Royale", "short": "Last one standing on a shrinking island",
-		"lines": ["The island closes in ring by ring", "Map events, loot, weeds", "One life: the last veggie wins"],
-		"color": Color(0.52, 0.91, 0.42), "zone": true, "events": true, "weeds": true, "teams": false, "respawn": -1.0},
+		"lines": ["The island closes in ring by ring", "Map events, loot, supply drops", "One life: the last veggie wins"],
+		"color": Color(0.52, 0.91, 0.42), "zone": true, "events": true, "weeds": false, "teams": false, "respawn": -1.0},
 	SURVIVORS: {"name": "Weed Swarm", "short": "Hold out against endless waves of weeds together",
 		"lines": ["Your gun aims and fires on its own", "After every wave: a card with a buff and a debuff", "Everyone down: the weeds win"],
 		"color": Color(1.0, 0.75, 0.25), "zone": false, "events": false, "weeds": false, "teams": false, "respawn": -1.0},

@@ -188,6 +188,7 @@ static func buy(id: String) -> bool:
 		return false
 	coins -= price
 	owned[id] = true
+	Sfx.ui("purchase")
 	save()
 	_remote("/profile/buy", {"id": id})
 	return true

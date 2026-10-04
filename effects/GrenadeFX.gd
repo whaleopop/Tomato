@@ -45,6 +45,7 @@ static func explode(parent: Node, pos: Vector3, radius: float) -> void:
 	if not parent or not parent.is_inside_tree():
 		return
 	LandingImpact.create_at(parent, pos, Color(1.0, 0.6, 0.25), 1.3)
+	Sfx.at("explosion", pos)
 	var sparks = LootVisuals.sparkles(Color(1.0, 0.55, 0.15), 40, 8.0, 0.7)
 	parent.add_child(sparks)
 	sparks.global_position = pos + Vector3(0, 0.3, 0)

@@ -5,7 +5,6 @@ class_name SettingsPanel
 signal closed
 signal language_changed  # formatted texts are built once: the owner may want to rebuild
 
-var _volume_value: Label
 var _main_box: VBoxContainer = null
 var _keys_box: VBoxContainer = null       # Controls: one row per Keybinds.ACTIONS entry
 var _key_buttons: Dictionary = {}         # action -> Button
@@ -25,11 +24,10 @@ func _ready():
 
 	# Volume
 	UITheme.create_caption("Audio", box)
-	var volume_row = UITheme.create_setting_row("Master volume", box)
-	_volume_value = UITheme.create_label("", volume_row, UITheme.FONT_SMALL)
-	var volume = UITheme.create_slider(0.0, 1.0, GameSettings.master_volume, box)
-	volume.value_changed.connect(_on_volume_changed)
-	_on_volume_changed(GameSettings.master_volume)
+	_volume_slider("Master volume", GameSettings.master_volume, func(v): GameSettings.master_volume = v, box, "gun_pistol", "SFX")
+	_volume_slider("Effects", GameSettings.sfx_volume, func(v): GameSettings.sfx_volume = v, box, "gun_pistol", "SFX")
+	_volume_slider("Interface", GameSettings.ui_volume, func(v): GameSettings.ui_volume = v, box, "ui_click", "UI")
+	_volume_slider("Ambience", GameSettings.ambient_volume, func(v): GameSettings.ambient_volume = v, box)
 
 	# Video
 	UITheme.create_caption("Video", box)
@@ -180,11 +178,20 @@ func _input(event: InputEvent):
 	_refresh_keys()
 	get_viewport().set_input_as_handled()
 
-func _on_volume_changed(value: float):
-	GameSettings.master_volume = value
-	GameSettings.apply()
-	if _volume_value:
-		_volume_value.text = "%d%%" % int(round(value * 100.0))
+## A volume row: name, percent, slider -> `store` (a GameSettings volume); `sample` plays on `bus`
+## when you let go, so you hear what you set
+func _volume_slider(title: String, value: float, store: Callable, box: Control, sample: String = "", bus: String = "UI") -> void:
+	var row = UITheme.create_setting_row(title, box)
+	var value_label = UITheme.create_label("", row, UITheme.FONT_SMALL)
+	var slider = UITheme.create_slider(0.0, 1.0, value, box)
+	var show = func(v: float):
+		store.call(v)
+		GameSettings.apply()
+		value_label.text = "%d%%" % int(round(v * 100.0))
+	slider.value_changed.connect(show)
+	if sample != "":
+		slider.drag_ended.connect(func(_changed): Sfx.ui(sample, 0.0, 1.0, bus))
+	show.call(value)
 
 func close():
 	GameSettings.save()

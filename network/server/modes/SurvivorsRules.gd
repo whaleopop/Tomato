@@ -12,10 +12,10 @@ class_name SurvivorsRules
 const FIRST_WAVE: float = 5.0
 const WAVE_TIME: float = 30.0
 const BREAK_TIME: float = 8.0
-const BURST_EVERY: float = 5.0
+const BURST_EVERY: float = 6.0
 const SPAWN_MIN: float = 16.0        # world units from a hero
 const SPAWN_MAX: float = 24.0
-const MAX_ALIVE: int = 60
+const MAX_ALIVE: int = 30
 const TOUGHER_PER_WAVE: float = 0.15
 
 var wave: int = 0
@@ -88,7 +88,9 @@ func _spawn_burst() -> void:
 	var heroes = _heroes()
 	if not spawner or heroes.is_empty():
 		return
-	var count = mini(1 + heroes.size() + wave, MAX_ALIVE - spawner.weeds.size())
+	# 2 a burst in the first wave, one more every second wave and per extra hero (was 1 + heroes + wave
+	# every 5 s up to 60: a solo player faced 18 in the first wave and 40+ by the fifth)
+	var count = mini(1 + heroes.size() + wave / 2, MAX_ALIVE - spawner.weeds.size())
 	var tough = 1.0 + (wave - 1) * TOUGHER_PER_WAVE
 	for i in count:
 		var hero: Node3D = heroes[i % heroes.size()]

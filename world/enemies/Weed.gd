@@ -334,6 +334,7 @@ static func play_seed(from: Vector3, to: Vector3, parent: Node = null) -> void:
 	var anchor = Node3D.new()
 	host.add_child(anchor)
 	AbilityFX.throw_blob(anchor, from, to, Color(1.0, 0.95, 0.75), SEED_FLIGHT)
+	Sfx.at("weed_spit", from)
 	anchor.get_tree().create_timer(SEED_FLIGHT).timeout.connect(func():
 		if is_instance_valid(anchor):
 			AbilityFX.splash(anchor, to, Color(1.0, 0.92, 0.5), SEED_RADIUS)
@@ -372,6 +373,8 @@ func _on_hurt(amount: float, source):
 func _on_died():
 	_dead_time = 0.0
 	_play("death")
+	if not withered:
+		Sfx.at("weed_die", global_position)
 	collision_layer = 0
 	_bar_root.visible = false
 	if authority and not withered:
@@ -457,16 +460,28 @@ func _drop_loot():
 # ---------------------------------------------------------------- clients: following the server
 
 ## The server's state for this weed: [kind, x, y, z, yaw, hp, max_hp, anim]
-func apply_state(s: Array):
-	_net_pos = Vector3(s[1], s[2], s[3])
-	_net_yaw = s[4]
+## The state goes out 20 times a second to every client near the weed, so it is packed small:
+## [kind, x, y, z, yaw (all * 100), health, max health, anim] as int32 (40 bytes, the old mixed
+## array of strings and doubles was 104)
+const ANIMS = ["idle", "walk", "attack", "hit", "death"]
+
+static func kind_of_state(s: PackedInt32Array) -> String:
+	var kinds = KINDS.keys()
+	return kinds[clampi(s[0], 0, kinds.size() - 1)]
+
+static func position_of_state(s: PackedInt32Array) -> Vector3:
+	return Vector3(s[1], s[2], s[3]) * 0.01
+
+func apply_state(s: PackedInt32Array):
+	_net_pos = position_of_state(s)
+	_net_yaw = s[4] * 0.01
 	health.max_health = float(s[6])
 	var hp = float(s[5])
 	if hp < health.current_health:
 		health._apply_damage(health.current_health - hp)
 	elif hp > health.current_health:
 		health._apply_heal(hp - health.current_health)
-	var st = String(s[7])
+	var st: String = ANIMS[clampi(s[7], 0, ANIMS.size() - 1)]
 	if st == "attack" and anim_state != "attack":
 		var fwd = Vector3(sin(_net_yaw), 0, cos(_net_yaw))
 		if cfg().style == "melee":
@@ -474,9 +489,10 @@ func apply_state(s: Array):
 	if st != anim_state:
 		_play(st)
 
-func get_state() -> Array:
-	return [kind, snappedf(global_position.x, 0.01), snappedf(global_position.y, 0.01), snappedf(global_position.z, 0.01),
-		snappedf(rotation.y, 0.01), int(ceil(health.current_health)), int(health.max_health), anim_state]
+func get_state() -> PackedInt32Array:
+	var p = global_position * 100.0
+	return PackedInt32Array([KINDS.keys().find(kind), roundi(p.x), roundi(p.y), roundi(p.z), roundi(wrapf(rotation.y, -PI, PI) * 100.0),
+		int(ceil(health.current_health)), int(health.max_health), maxi(ANIMS.find(anim_state), 0)])
 
 func _follow_network(delta: float):
 	var k = 1.0 - exp(-12.0 * delta)

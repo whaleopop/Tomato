@@ -72,6 +72,10 @@ func _exit_tree():
 func play(kind: String, data: Dictionary, elapsed: float = 0.0) -> void:
 	if not grid or not is_instance_valid(grid) or not is_inside_tree():
 		return
+	if elapsed < 1.0:  # not for a late joiner catching up
+		var sound = {"quake": "rumble", "rift": "rumble", "night": "night", "flood": "flood", "harvest": "harvest"}.get(kind, "")
+		if sound != "":
+			Sfx.own(sound)
 	match kind:
 		"meteors":
 			_meteors(data, elapsed)
@@ -148,6 +152,8 @@ func _meteors(data: Dictionary, elapsed: float) -> void:
 
 ## A meteor came down at `pos`: knockback for whoever this peer moves, damage on the server
 func meteor_impact(pos: Vector3) -> void:
+	Sfx.at("meteor", pos)
+	Sfx.at("explosion", pos, -2.0, 0.8)
 	for p in movers():
 		var off: Vector3 = p.global_position - pos
 		off.y = 0.0

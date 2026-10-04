@@ -384,6 +384,8 @@ static func create_button(text: String, parent: Control = null, size: Vector2 = 
 	button.add_theme_font_override("font", font_bold())
 	button.add_theme_font_size_override("font_size", FONT_NORMAL)
 	add_hover_animation(button)
+	button.pressed.connect(func(): Sfx.ui("ui_click"))
+	button.mouse_entered.connect(func(): if not button.disabled: Sfx.ui("ui_hover"))
 	if parent:
 		parent.add_child(button)
 	return button

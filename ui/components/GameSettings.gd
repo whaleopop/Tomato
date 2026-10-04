@@ -8,6 +8,9 @@ const PATH = "user://settings.cfg"
 const VERSION = 2
 
 static var master_volume: float = 0.8
+static var sfx_volume: float = 0.8      # guns, blasts, loot... (bus "SFX", effects/Sfx.gd)
+static var ui_volume: float = 0.7       # menus, countdown, results (bus "UI")
+static var ambient_volume: float = 0.7  # wind, water, birds (bus "Ambient", AmbientSound)
 static var fullscreen: bool = false
 static var vsync: bool = false
 static var language: String = "ru"
@@ -23,6 +26,9 @@ static func load_and_apply():
 	if cfg.load(PATH) == OK:
 		Keybinds.load_from(cfg)
 		master_volume = cfg.get_value("audio", "master_volume", master_volume)
+		sfx_volume = cfg.get_value("audio", "sfx_volume", sfx_volume)
+		ui_volume = cfg.get_value("audio", "ui_volume", ui_volume)
+		ambient_volume = cfg.get_value("audio", "ambient_volume", ambient_volume)
 		fullscreen = cfg.get_value("video", "fullscreen", fullscreen)
 		vsync = cfg.get_value("video", "vsync", vsync)
 		if int(cfg.get_value("meta", "version", 1)) < 2:
@@ -38,6 +44,9 @@ static func load_and_apply():
 
 static func apply():
 	AudioServer.set_bus_volume_db(0, linear_to_db(max(master_volume, 0.0001)))
+	Sfx.ensure_buses()
+	for pair in [["SFX", sfx_volume], ["UI", ui_volume], ["Ambient", ambient_volume]]:
+		AudioServer.set_bus_volume_db(AudioServer.get_bus_index(pair[0]), linear_to_db(max(float(pair[1]), 0.0001)))
 	if DisplayServer.get_name() == "headless":
 		return
 	# Only when it really changes: re-setting "windowed" on every volume tick un-maximized the window
@@ -51,6 +60,9 @@ static func save():
 	var cfg = ConfigFile.new()
 	cfg.set_value("meta", "version", VERSION)
 	cfg.set_value("audio", "master_volume", master_volume)
+	cfg.set_value("audio", "sfx_volume", sfx_volume)
+	cfg.set_value("audio", "ui_volume", ui_volume)
+	cfg.set_value("audio", "ambient_volume", ambient_volume)
 	cfg.set_value("video", "fullscreen", fullscreen)
 	cfg.set_value("video", "vsync", vsync)
 	cfg.set_value("video", "third_person", third_person)

@@ -339,6 +339,7 @@ func _apply_bounce(t: float, strength: float, axis: Vector3) -> void:
 static func shake_around(context: Node3D, pos: Vector3, strength: float = 1.0, radius: float = 2.6) -> void:
 	if not context or not context.is_inside_tree():
 		return
+	Sfx.at("thud", pos, linear_to_db(clampf(strength, 0.15, 1.6)), 1.0 / clampf(sqrt(strength), 0.7, 1.3))
 	radius *= HEX_RADIUS  # the callers' radii are in (old, 1-unit) tile sizes
 	var query = PhysicsShapeQueryParameters3D.new()
 	var sphere = SphereShape3D.new()

@@ -86,6 +86,7 @@ func activate_ability(ability_index: int, target_position: Vector3 = Vector3.ZER
 	ability_cooldowns[ability] = effective_cooldown(ability)
 	ability_activated.emit(ability)
 	ability_cast.emit(ability_index, target_position)
+	Sfx.at("ability", entity.global_position)
 	_activate_ability_async(ability, target_position)
 	return true
 
@@ -96,6 +97,7 @@ func play_remote_cast(ability_index: int, target_position: Vector3):
 	var ability = active_abilities[ability_index]
 	ability_cooldowns[ability] = effective_cooldown(ability)  # their HUD-less cooldown, just for consistency
 	ability_activated.emit(ability)
+	Sfx.at("ability", entity.global_position)
 	ability.replay = true
 	await ability.activate(entity, target_position)
 	ability.replay = false
