@@ -374,7 +374,7 @@ func _item_entries() -> Array:
 	var weapon_entry = _pickup_entry("Weapon", T.WEAPON, RangedWeapon.create_weapon(RangedWeapon.WeaponType.RIFLE), _loot_chance(T.WEAPON), [
 		["Effect", "One of the twelve guns, see the Weapons tab"],
 		["Where", "Every chest and supply drop, often in crates - always with a pack of its ammo"],
-		["Slots", "Up to five weapons, switch with 1 – 5"],
+		["Slots", "Two weapons, switch with 1 / 2; X swaps the one in hand"],
 	], "")
 	entries.append(weapon_entry)
 
@@ -634,7 +634,7 @@ func _build_howto() -> Control:
 		["Mouse", "Mouse: turn the hero and the camera, up / down - aim nearer / further" if GameSettings.camera_locked else "Aim"],
 		[K.call("attack"), "Shoot (hold for automatic fire)"],
 		[K.call("reload"), "Reload"],
-		["%s – %s" % [K.call("weapon_slot_1"), K.call("weapon_slot_5")], "Switch weapon"],
+		["%s – %s" % [K.call("weapon_slot_1"), K.call("weapon_slot_2")], "Switch weapon"],
 		[K.call("ability_1"), "Use your ability (hold to see its area, release to cast)"],
 		[K.call("interact"), "Open containers, pick up loot"],
 		[K.call("inventory"), "Inventory"],

@@ -119,6 +119,8 @@ func interact(player: Player):
 	var dist = global_position.distance_to(player.global_position)
 	if dist > INTERACT_RANGE:
 		return
+	if not can_be_taken_by(player, false):
+		return  # the bag is full
 
 	print("[LootItem] Player pressing E to pickup: %s" % item_name)
 	_pickup(player)
@@ -277,6 +279,8 @@ func _on_body_entered(body: Node3D):
 		return
 	if body.entity_id == no_auto_pickup_id and Time.get_ticks_msec() < no_auto_pickup_until:
 		return
+	if not can_be_taken_by(body, true):
+		return  # a full bag / both gun slots full: it stays where it is (X swaps a gun)
 
 	# On a client only our own player may pick things up by walking over them.
 	# Pickups by anyone else are decided by the server and replicated via NetworkLootManager.
@@ -285,6 +289,28 @@ func _on_body_entered(body: Node3D):
 		return
 
 	_pickup(body as Player)
+
+## Can `player` take this? Bag things need room (a full bag leaves them on the ground); a gun
+## walked over needs a free slot, picked with X it swaps the one in hand. The same check runs on
+## the server for the request (NetworkLootManager._server_request_pickup).
+func can_be_taken_by(player: Node, walking: bool) -> bool:
+	var inventory = player.get_component("InventoryComponent") if player and player.has_method("get_component") else null
+	if inventory == null:
+		return true
+	match item_type:
+		ItemType.HEALTH:
+			var pack = HealthPack.new()
+			pack.heal_amount = item_value
+			return inventory.has_room_for(pack)
+		ItemType.SHIELD:
+			var pack = ShieldPack.new()
+			pack.shield_amount = item_value
+			return inventory.has_room_for(pack)
+		ItemType.AMMO:
+			return inventory.has_room_for(item_data if item_data is AmmoItem else _create_default_ammo())
+		ItemType.WEAPON:
+			return not walking or inventory.has_free_weapon_slot()
+	return true
 
 func _pickup(player: Player):
 	is_active = false

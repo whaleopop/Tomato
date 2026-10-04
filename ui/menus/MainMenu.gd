@@ -4,7 +4,7 @@ extends Control
 class_name MainMenu
 
 const SHOWCASE_INTERVAL: float = 4.0
-const VERSION = "v0.8.1"
+const VERSION = "v0.8.2"
 
 var start_button: Button = null
 var connect_button: Button = null
@@ -322,7 +322,10 @@ func _on_start_pressed():
 func _find_match(mode: String):
 	var online = get_node_or_null("/root/Online")
 	if online == null or not online.logged_in:
-		show_toast(tr("No connection to the game server - host a LAN game or try again"), UITheme.ACCENT_DANGER)
+		var why = tr("No connection to the game server - host a LAN game or try again")
+		if online and online.login_done and online.last_error != "No connection to the game server":
+			why = tr(online.last_error)  # the server answered: an old game, ...
+		show_toast(why, UITheme.ACCENT_DANGER)
 		if online:
 			online.login()
 		return

@@ -99,6 +99,12 @@ func _start():
 		get_tree().quit(1)  # the service manager (systemd / the backend) deals with it
 		return
 	nm.game_server.lobby_manager.min_players_to_start = min_players
+	# The hit registration record: next to the match logs on the VPS, in user:// otherwise
+	var hl: HitLog = nm.game_server.hit_log
+	hl.mode = mode
+	hl.match_id = match_id if _matchmade() else int(Time.get_unix_time_from_system())
+	hl.log_dir = roster_path.get_base_dir().get_base_dir().path_join("logs") if _matchmade() else OS.get_user_data_dir().path_join("hitlogs")
+	nm.match_ended.connect(func(_w, _n): _finish_hit_log(), CONNECT_ONE_SHOT)
 	_matches += 1
 	if _matchmade():
 		_setup_match(nm)
@@ -135,6 +141,8 @@ func _process(delta: float):
 	if server == null or _restarting:
 		return
 	var peers = server.multiplayer.get_peers().size()
+	if server.game_started and Engine.get_process_frames() % 60 == 0:
+		_remember_players(server)  # before anyone leaves (their name goes with them)
 
 	_status_timer += delta
 	if _status_timer >= STATUS_EVERY:
@@ -247,9 +255,30 @@ func _post(path: String, body: Dictionary):
 		_pending_http -= 1
 		http.queue_free()
 
+## Names and heroes of everyone who played (some may have left by the end)
+var _names: Dictionary = {}
+var _heroes: Dictionary = {}
+
+func _remember_players(server: GameServer) -> void:
+	_names.merge(server.lobby_manager.players_names, true)
+	for id in server.lobby_manager.players_characters:
+		if String(server.lobby_manager.players_characters[id]) != "":
+			_heroes[id] = server.lobby_manager.players_characters[id]
+
+var _hit_log_done: bool = false
+
+func _finish_hit_log() -> void:
+	var server = _server()
+	if server == null or _hit_log_done:
+		return
+	_hit_log_done = true
+	_remember_players(server)
+	server.hit_log.finish(_names, _heroes)
+
 ## Matchmade: the match is done - tell whoever is left, let the reports out, quit
 func _finish(reason: String):
 	_restarting = true
+	_finish_hit_log()
 	var server = _server()
 	if server and server.game_started:
 		for id in server.accounts.keys():
@@ -267,6 +296,10 @@ func _finish(reason: String):
 
 func _restart(reason: String):
 	_restarting = true
+	_finish_hit_log()
+	_hit_log_done = false
+	_names.clear()
+	_heroes.clear()
 	print("[DedicatedServer] Starting over")
 	var nm = get_node("/root/NetworkManager")
 	# Shown on their main menu instead of "connection lost" (see NetworkManager.refusal_reason)

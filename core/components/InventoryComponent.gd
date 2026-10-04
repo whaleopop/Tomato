@@ -24,8 +24,8 @@ var _offline_drops: int = 0
 var inventory = null
 var max_size: int = 10
 
-# Weapon slots (5 slots for quick weapon switching)
-const MAX_WEAPON_SLOTS: int = 5
+# Weapon slots: two guns at a time (1 / 2); a third is picked up with X and swaps the one in hand
+const MAX_WEAPON_SLOTS: int = 2
 var weapon_slots: Array[RangedWeapon] = []
 var current_weapon_slot: int = 0
 
@@ -44,6 +44,19 @@ func add_item(item: ItemData) -> bool:
 	if not enabled:
 		return false
 	
+	# Rounds of one kind go into one pile (each box used to take a slot of its own)
+	if item is AmmoItem:
+		for i in inventory.slots.size():
+			var stack = inventory.slots[i]
+			if stack.item is AmmoItem and stack.item != item and stack.item.ammo_type == item.ammo_type:
+				stack.item.ammo_amount = stack.item.ammo_amount * maxi(stack.count, 1) + item.ammo_amount
+				stack.count = 1
+				inventory.slot_changed.emit(i)
+				inventory.inventory_changed.emit()
+				item_added.emit(stack.item, i)
+				return true
+		item = item.duplicate()  # the pile grows later: never the box still lying on a respawning rack
+
 	var slot = inventory.add_item(item)
 	if slot >= 0:
 		item_added.emit(item, slot)
@@ -51,6 +64,19 @@ func add_item(item: ItemData) -> bool:
 	else:
 		inventory_full.emit()
 		return false
+
+## Is there room for this in the bag? (rounds always join their pile)
+func has_room_for(item: ItemData) -> bool:
+	if not enabled or item == null:
+		return false
+	if item is AmmoItem:
+		for stack in inventory.slots:
+			if stack.item is AmmoItem and stack.item.ammo_type == item.ammo_type:
+				return true
+	return inventory.has_room_for(item)
+
+func has_free_weapon_slot() -> bool:
+	return weapon_slots.has(null)
 
 func remove_item(slot: int) -> ItemData:
 	if not enabled:
@@ -288,10 +314,13 @@ func add_weapon_to_slot(weapon: RangedWeapon) -> int:
 				switch_weapon_slot(i)
 
 			return i
-	# All five slots taken: the new gun replaces the one in hand
+	# Both slots taken: the new gun replaces the one in hand, which goes on the ground
 	var combat = entity.get_component("CombatComponent") if entity else null
 	if combat:
 		combat.cancel_reload()
+	var old = weapon_slots[current_weapon_slot]
+	if old:
+		_drop_to_ground(old)
 	weapon_slots[current_weapon_slot] = weapon
 	weapon_equipped.emit(weapon, current_weapon_slot)
 	switch_weapon_slot(current_weapon_slot)

@@ -10,7 +10,7 @@ DIR=/opt/royaltim
 id royaltim >/dev/null 2>&1 || useradd --system --home-dir "$DIR" --shell /usr/sbin/nologin royaltim
 mkdir -p "$DIR/data"
 install -m 755 royaltim_server.* "$DIR/royaltim_server"
-install -m 644 royaltim_backend.py catalog.json "$DIR/"
+install -m 644 royaltim_backend.py catalog.json hitreg_report.py "$DIR/"
 chown -R royaltim:royaltim "$DIR"
 chmod 700 "$DIR/data"
 install -m 644 royaltim-backend.service /etc/systemd/system/royaltim-backend.service

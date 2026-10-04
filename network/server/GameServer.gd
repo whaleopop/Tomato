@@ -35,6 +35,10 @@ const END_CHECK_INTERVAL: float = 0.5
 const LATE_JOIN_WINDOW: float = 45.0
 var _match_tokens: Dictionary = {}  # client token -> true: everyone who played this match
 var _match_start_time: float = 0.0
+## Hit registration record (HitLog): every reported hit's verdict, server shots, damage, pings
+var hit_log: HitLog = HitLog.new()
+var _net_sample: float = 0.0
+const NET_SAMPLE_EVERY: float = 2.0
 
 func _ready():
 	server_world = ServerWorld.new()
@@ -282,6 +286,14 @@ func _on_peer_disconnected(player_id: int):
 func _process(delta: float):
 	if not game_started or match_over:
 		return
+	_net_sample += delta
+	if _net_sample >= NET_SAMPLE_EVERY and peer:
+		_net_sample = 0.0
+		for id in multiplayer.get_peers():
+			var pp = peer.get_peer(id)
+			if pp:
+				hit_log.sample(id, pp.get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME),
+					pp.get_statistic(ENetPacketPeer.PEER_PACKET_LOSS) / float(ENetPacketPeer.PACKET_LOSS_SCALE))
 	_end_check_timer += delta
 	if _end_check_timer >= END_CHECK_INTERVAL:
 		_end_check_timer = 0.0

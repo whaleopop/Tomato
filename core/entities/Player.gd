@@ -136,6 +136,7 @@ func _on_died():
 ## Back in the fight (respawning modes, GameModes): undoes _on_died and puts the hero at `pos`.
 ## The server calls it on its entity, NetworkManager.broadcast_respawn on every peer's copy.
 func respawn_at(pos: Vector3) -> void:
+	set_meta("respawn_msec", Time.get_ticks_msec())  # NetworkingComponent: late "dead" states don't count
 	var health = get_component("HealthComponent")
 	if health:
 		health.revive(1.0)

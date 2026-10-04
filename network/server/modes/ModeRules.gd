@@ -95,6 +95,13 @@ func alive_entity(player_id: int) -> Node3D:
 	var h = e.get_component("HealthComponent")
 	return e if h and not h.is_dead else null
 
+## Land a hero can stand on in the open: not water, a ramp or a mountain, and not a landmark's
+## tile (the windmill stands on its middle: a respawn there was stuck inside it)
+func _open_land(t: HexTile) -> bool:
+	if t == null or not t.is_playable() or t.is_water() or t.is_ramp():
+		return false
+	return t.biome_type != HexTile.BiomeType.MOUNTAIN and not t.has_meta("landmark")
+
 ## A random walkable land tile's top
 func _random_land_spot(near: Vector3 = Vector3.INF, min_d: float = 0.0, max_d: float = INF) -> Vector3:
 	var g = grid()
@@ -104,7 +111,7 @@ func _random_land_spot(near: Vector3 = Vector3.INF, min_d: float = 0.0, max_d: f
 	for attempt in 80:
 		var c = keys[randi() % keys.size()]
 		var t: HexTile = g.get_tile(c)
-		if not t or not t.is_playable() or t.is_water() or t.is_ramp() or t.biome_type == HexTile.BiomeType.MOUNTAIN:
+		if not _open_land(t):
 			continue
 		var p = g.hex_to_world(c) + Vector3(0, CoverSpawner.tile_top(t) + 1.0, 0)
 		if near != Vector3.INF:
@@ -121,7 +128,7 @@ func _land_near(point: Vector3) -> Vector2i:
 	var best_d = INF
 	for c in g.tiles:
 		var t: HexTile = g.get_tile(c)
-		if not t or not t.is_playable() or t.is_water() or t.is_ramp() or t.biome_type == HexTile.BiomeType.MOUNTAIN:
+		if not _open_land(t):
 			continue
 		var p = g.hex_to_world(c)
 		var d = Vector2(p.x - point.x, p.z - point.z).length()

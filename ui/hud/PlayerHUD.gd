@@ -972,7 +972,7 @@ func _create_weapon_slots_ui():
 	weapon_slots_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(weapon_slots_ui)
 
-	for i in range(5):
+	for i in range(InventoryComponent.MAX_WEAPON_SLOTS):
 		weapon_slots_ui.add_child(_create_weapon_slot(i))
 
 func _create_weapon_slot(index: int) -> PanelContainer:
@@ -1014,7 +1014,7 @@ func _create_weapon_slot(index: int) -> PanelContainer:
 	return slot
 
 func _update_weapon_slots_display(inventory: InventoryComponent):
-	for i in range(5):
+	for i in range(InventoryComponent.MAX_WEAPON_SLOTS):
 		var slot_panel = weapon_slots_ui.get_node_or_null("WeaponSlot_%d" % (i + 1))
 		if not slot_panel:
 			continue

@@ -22,7 +22,7 @@ func add_item(item: ItemData) -> int:
 	if item.stackable:
 		for i in range(slots.size()):
 			var stack = slots[i]
-			if stack.item == item and stack.count < item.max_stack:
+			if stack.item != null and same_stack(stack.item, item) and stack.count < item.max_stack:
 				stack.count += 1
 				slot_changed.emit(i)
 				inventory_changed.emit()
@@ -38,6 +38,27 @@ func add_item(item: ItemData) -> int:
 			return i
 	
 	return -1  # Inventory full
+
+## Same kind of thing (two health packs of the same size): one stack. Every pickup is its own
+## object, so comparing objects never stacked anything and the bag filled up with single packs.
+static func same_stack(a: ItemData, b: ItemData) -> bool:
+	if a == b:
+		return true
+	if a.get_script() != b.get_script() or a.item_name != b.item_name:
+		return false
+	for key in ["heal_amount", "shield_amount"]:
+		if key in a and a.get(key) != b.get(key):
+			return false
+	return true
+
+## Would `item` fit (onto a stack or into an empty slot)?
+func has_room_for(item: ItemData) -> bool:
+	for stack in slots:
+		if stack.item == null:
+			return true
+		if item.stackable and same_stack(stack.item, item) and stack.count < item.max_stack:
+			return true
+	return false
 
 func remove_item(slot: int) -> ItemData:
 	if slot < 0 or slot >= slots.size():

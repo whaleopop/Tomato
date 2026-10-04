@@ -344,7 +344,7 @@ def login(body):
         return {"ok": False, "error": "Bad device key"}
     version = str(body.get("version", ""))
     if CATALOG.get("version") and version != CATALOG["version"]:
-        return {"ok": False, "error": "Update the game: the server runs v%s" % CATALOG["version"]}
+        return {"ok": False, "error": "Update the game: the server runs v%s" % CATALOG["version"], "server_version": CATALOG["version"]}
     h = token_hash(device)
     row = DB.execute("SELECT id FROM accounts WHERE token_hash=?", (h,)).fetchone()
     if row:

@@ -312,8 +312,8 @@ func _capture_and_send_input():
 		# Handle locally for immediate feedback
 		_handle_reload()
 
-	# Capture weapon slot switching (1-5 keys)
-	for i in range(5):
+	# Capture weapon slot switching (1 / 2: two gun slots)
+	for i in range(InventoryComponent.MAX_WEAPON_SLOTS):
 		if _pressed("weapon_slot_%d" % (i + 1)):
 			input_data["weapon_slot"] = i
 			_handle_weapon_switch(i)

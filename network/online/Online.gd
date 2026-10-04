@@ -52,6 +52,8 @@ func login() -> bool:
 	logged_in = bool(res.get("ok", false))
 	account_id = int(res.get("account", 0))
 	last_error = "" if logged_in else String(res.get("error", "No connection to the game server"))
+	if res.has("server_version"):  # the server is fine, this game is too old (UpdateDialog fetches the new one)
+		last_error = tr("Update the game: the server runs v%s") % String(res.server_version)
 	login_done = true
 	print("[Online] %s" % ("logged in as account %d" % account_id if logged_in else "offline: " + last_error))
 	login_finished.emit(logged_in)

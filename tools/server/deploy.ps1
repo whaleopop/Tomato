@@ -37,7 +37,7 @@ if ($Standalone) {
 	if ($LASTEXITCODE -ne 0) { throw "scp failed" }
 	& ssh @sshArgs $target "cd ~/royaltim-upload && chmod +x install.sh && ${sudo}./install.sh $Port"
 } else {
-	& scp @sshArgs $build "$backend\royaltim_backend.py" "$backend\catalog.json" "$PSScriptRoot\install_backend.sh" "$PSScriptRoot\royaltim-backend.service" "${target}:~/royaltim-upload/"
+	& scp @sshArgs $build "$backend\royaltim_backend.py" "$backend\catalog.json" "$PSScriptRoot\hitreg_report.py" "$PSScriptRoot\install_backend.sh" "$PSScriptRoot\royaltim-backend.service" "${target}:~/royaltim-upload/"
 	if ($LASTEXITCODE -ne 0) { throw "scp failed" }
 	& ssh @sshArgs $target "cd ~/royaltim-upload && chmod +x install_backend.sh && ${sudo}./install_backend.sh"
 }

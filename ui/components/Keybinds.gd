@@ -23,9 +23,6 @@ const ACTIONS = [
 	["use_shield", "Drink a shield"],
 	["weapon_slot_1", "Weapon 1"],
 	["weapon_slot_2", "Weapon 2"],
-	["weapon_slot_3", "Weapon 3"],
-	["weapon_slot_4", "Weapon 4"],
-	["weapon_slot_5", "Weapon 5"],
 	["camera_mode", "Third-person camera on / off"],
 	["camera_reset", "Reset the camera"],
 ]

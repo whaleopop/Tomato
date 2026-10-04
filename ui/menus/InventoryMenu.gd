@@ -54,11 +54,11 @@ func _create_ui():
 	close_btn.pressed.connect(func(): visible = false)
 
 	# Weapon hot-bar section
-	UITheme.create_caption("Weapons  (1–5)", vbox)
+	UITheme.create_caption("Weapons  (1–2)", vbox)
 	weapon_slots_container = HBoxContainer.new()
 	weapon_slots_container.add_theme_constant_override("separation", 10)
 	vbox.add_child(weapon_slots_container)
-	for i in range(5):
+	for i in range(InventoryComponent.MAX_WEAPON_SLOTS):
 		var ws = _create_weapon_slot_button(i)
 		weapon_slots_container.add_child(ws)
 		weapon_slot_buttons.append(ws)

@@ -27,6 +27,8 @@ var _last_hit_id: int = 0  # ServerPlayer's hit ids already shown
 var target_position: Vector3 = Vector3.ZERO  # Target position for interpolation
 var target_rotation: Vector3 = Vector3.ZERO  # Target rotation for interpolation
 
+const RESPAWN_STALE_MSEC: int = 600  # states this soon after a respawn may still say "dead"
+
 func _init(p_entity = null):  # p_entity: Entity
 	entity = p_entity
 
@@ -191,6 +193,15 @@ func _apply_component_sync_data(data: Dictionary):
 
 			# Apply health change through proper method to emit signals
 			var new_health = data["health"]
+			# The respawn RPC and the state travel on different channels: a state from just before
+			# the respawn can arrive after it. Its "health 0" must not kill the hero again (the dead
+			# send no input: the hero stood frozen on the respawn spot), and if it did, the next
+			# state's health brings it back.
+			var since_respawn = Time.get_ticks_msec() - int(entity.get_meta("respawn_msec", -100000))
+			if float(new_health) <= 0.0 and not health.is_dead and since_respawn < RESPAWN_STALE_MSEC:
+				new_health = health.current_health
+			elif health.is_dead and float(new_health) > 0.0 and entity.has_method("respawn_at") and GameModes.respawns(GameModes.current()):
+				entity.respawn_at(entity.global_position)
 			if health.current_health != new_health:
 				var diff = new_health - health.current_health
 				if diff > 0:

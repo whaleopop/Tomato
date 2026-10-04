@@ -24,6 +24,11 @@ const HIT_KEEP_MSEC: int = 1000
 var input_buffer: Array = []
 const MAX_INPUT_BUFFER_SIZE: int = 60  # ~2 seconds at 30 inputs/sec
 var last_processed_sequence: int = -1
+var _last_input_msec: int = 0
+## The client fires by its own clock and its inputs arrive bunched up (30 a second, plus network
+## jitter): a shot up to SHOT_GRACE early is taken and the time it was early is added to the next
+## pause, so the gun's rate stays its rate (it used to be dropped without a trace - lost hits).
+const SHOT_GRACE: float = 0.12
 
 func _ready():
 	pass
@@ -55,6 +60,7 @@ func _on_hit_from(pos: Vector3, amount: float) -> void:
 
 ## Somebody hurt us: it counts as their damage dealt
 func _on_damaged(amount: float, source) -> void:
+	_log_damage(amount, source)
 	if amount <= 0.0 or source == null or not is_instance_valid(source) or source == player_entity or not "entity_id" in source:
 		return
 	var game_server = get_parent() as GameServer
@@ -65,6 +71,44 @@ func _on_damaged(amount: float, source) -> void:
 		var gun = combat.credited_weapon() if combat else -1
 		if gun >= 0:
 			attacker.weapon_damage[gun] = float(attacker.weapon_damage.get(gun, 0.0)) + amount
+
+## Into the hit log (GameServer.hit_log): who hurt us with what
+func _log_damage(amount: float, source) -> void:
+	var hl = _hit_log()
+	if hl == null or amount <= 0.0:
+		return
+	var kind = "world"  # the zone, map events, brambles
+	var attacker = 0
+	var gun = -1
+	if source != null and is_instance_valid(source):
+		if source is Weed:
+			kind = "weed"
+		elif source == player_entity:
+			kind = "self"
+		elif "entity_id" in source and source.has_method("get_component"):
+			attacker = int(source.entity_id)
+			var combat = source.get_component("CombatComponent")
+			gun = combat.credited_weapon() if combat else -1
+			kind = "gun" if gun >= 0 else "ability"
+	hl.damage(attacker, player_id, amount, kind, gun)
+
+func _hit_log() -> HitLog:
+	var gs = get_parent() as GameServer
+	return gs.hit_log if gs and gs.game_started else null
+
+func _weapon_type(combat: CombatComponent) -> int:
+	return int(combat.equipped_ranged_weapon.weapon_type) if combat and combat.equipped_ranged_weapon else -1
+
+## A shot that came in a little early (jitter): let it through now, owe the time. Returns the debt.
+func _take_early_shot(combat: CombatComponent) -> float:
+	var debt = 0.0
+	if combat.attack_cooldown > 0.0 and combat.attack_cooldown <= SHOT_GRACE:
+		debt = combat.attack_cooldown
+		combat.attack_cooldown = 0.0
+	# A reload that is all but done counts as done (the client's finished a moment ago)
+	if combat.is_reloading and combat.reload_timer <= SHOT_GRACE:
+		combat._complete_reload()
+	return debt
 
 ## We went down: our place is everyone still standing + 1; whoever hit us last gets the kill
 func _on_died():
@@ -147,6 +191,9 @@ func _on_shot_fired(from_pos: Vector3, to_pos: Vector3, hit: bool):
 	var combat = player_entity.get_component("CombatComponent") if player_entity else null
 	if combat and combat.equipped_ranged_weapon:
 		weapon_type = combat.equipped_ranged_weapon.weapon_type
+	var hl = _hit_log()
+	if hl:
+		hl.shot(player_id, weapon_type, hit)
 
 	# Broadcast to all clients via GameServer
 	var game_server = get_parent() as GameServer
@@ -168,6 +215,12 @@ func process_input(input_data: Dictionary):
 			# Old or duplicate input, ignore
 			return
 		last_processed_sequence = seq
+
+	var now_msec = Time.get_ticks_msec()
+	var hl = _hit_log()
+	if hl and _last_input_msec > 0:
+		hl.input(player_id, (now_msec - _last_input_msec) / 1000.0)
+	_last_input_msec = now_msec
 
 	# Store input in buffer for lag compensation
 	input_buffer.append({
@@ -250,7 +303,9 @@ func process_input(input_data: Dictionary):
 				_process_client_hit(player_entity, hit_entity_id, combat)
 			else:
 				# No hit reported by client, still call attack for effects and potential server-side hits
+				var debt = _take_early_shot(combat)
 				combat.attack(target_pos)
+				combat.attack_cooldown += debt  # owed, shot or not (it was zeroed above)
 
 	# Process ability input
 	if input_data.has("ability_index"):
@@ -327,36 +382,61 @@ func get_sync_data() -> Dictionary:
 ## Process client-reported hit with server-side validation
 func _process_client_hit(attacker: Entity, target_entity_id: int, combat: CombatComponent):
 	# Find target entity
+	var hl = _hit_log()
+	var gun = _weapon_type(combat)
 	var target = _find_player_entity_by_id(target_entity_id)
 	if not target and target_entity_id < 0:
 		target = _find_npc(target_entity_id)  # a weed (negative ids)
 	if not target:
-		print("[ServerPlayer] WARNING: Target entity %d not found" % target_entity_id)
+		if hl:
+			hl.claim(player_id, target_entity_id, gun, "no_target")
 		return
 	if target == attacker:
 		return  # clicked on yourself
-	# Same rules as a server-side shot: fire rate, reload, magazine
+	var target_health = target.get_component("HealthComponent")
+	if target_health and target_health.is_dead:
+		if hl:
+			hl.claim(player_id, target_entity_id, gun, "dead")
+		return
+	# Same rules as a server-side shot: fire rate, reload, magazine - with a little slack for jitter
+	var cooldown_left = combat.attack_cooldown
+	var debt = _take_early_shot(combat)
 	if not combat.can_shoot():
+		combat.attack_cooldown += debt
+		if hl:
+			var why = "no_gun" if not combat.equipped_ranged_weapon else ("stunned" if combat._stunned() else ("reloading" if combat.is_reloading \
+				else ("no_ammo" if combat.equipped_ranged_weapon.current_ammo <= 0 else "cooldown")))
+			hl.claim(player_id, target_entity_id, gun, why, {"cd": snappedf(cooldown_left, 0.001)})
 		return
 	var target_point = target.global_position + Vector3(0, 0.9, 0)
+	var distance = attacker.global_position.distance_to(target.global_position)
 	# Only a single bullet is resolved by the client; pellets, fire and grenades by the server
 	if combat.equipped_ranged_weapon and combat.equipped_ranged_weapon.fire_mode != "single":
+		if hl:
+			hl.claim(player_id, target_entity_id, gun, "server", {"d": snappedf(distance, 0.1)})
 		combat.attack(target_point)
+		combat.attack_cooldown += debt
 		return
 	# A wall between shooter and target stops the bullet: shoot it for real so it hits the wall
 	if CoverSpawner.line_blocked(attacker.get_world_3d(), attacker.global_position + Vector3(0, 1.0, 0), target_point):
+		if hl:
+			hl.claim(player_id, target_entity_id, gun, "wall", {"d": snappedf(distance, 0.1)})
 		combat.attack(target_point)
+		combat.attack_cooldown += debt
 		return
 
 	# Validate distance (anti-cheat: ensure target is in range)
-	var distance = attacker.global_position.distance_to(target.global_position)
 	var max_range = 50.0
 	if combat.equipped_ranged_weapon:
 		max_range = combat.reach()
 
 	if distance > max_range + 5.0:  # +5.0 tolerance for latency
-		print("[ServerPlayer] REJECTED: Target too far (possible cheat or latency)")
+		combat.attack_cooldown += debt
+		if hl:
+			hl.claim(player_id, target_entity_id, gun, "range", {"d": snappedf(distance, 0.1), "max": snappedf(max_range, 0.1)})
 		return
+	if hl:
+		hl.claim(player_id, target_entity_id, gun, "early" if debt > 0.0 else "ok", {"d": snappedf(distance, 0.1), "early": snappedf(debt, 0.001)})
 
 	# Apply damage (server-authoritative)
 	var damage = combat.base_damage
@@ -365,6 +445,9 @@ func _process_client_hit(attacker: Entity, target_entity_id: int, combat: Combat
 
 	var health_comp = target.get_component("HealthComponent")
 	if health_comp:
+		# A gun shot: its damage counts for the gun (mastery XP, CombatComponent.credited_weapon) -
+		# this path never went through combat.attack, so it all used to count as "ability"
+		combat.last_shot_msec = Time.get_ticks_msec()
 		var actual_damage = health_comp.take_damage(damage, attacker)
 		combat.target_hit.emit(target, actual_damage)
 		if actual_damage > 0:
@@ -384,8 +467,8 @@ func _process_client_hit(attacker: Entity, target_entity_id: int, combat: Combat
 			if combat.equipped_ranged_weapon.current_ammo <= 0:
 				combat.start_reload()
 
-		# Trigger cooldown
-		combat.attack_cooldown = combat.shot_interval()
+		# Trigger cooldown (plus what an early shot owes)
+		combat.attack_cooldown = combat.shot_interval() + debt
 	else:
 		print("[ServerPlayer] WARNING: Target has no HealthComponent")
 

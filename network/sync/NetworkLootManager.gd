@@ -212,6 +212,8 @@ func _server_request_pickup(item_id: int):
 		print("[NetworkLootManager] Player %d too far from item %d" % [sender_id, item_id])
 		return
 
+	if not item.can_be_taken_by(player, false):
+		return  # no room in their bag (on the server's copy)
 	# Applies the effect to the server entity and broadcasts via _on_item_picked_up
 	item._pickup(player)
 

@@ -189,6 +189,7 @@ const STRINGS = {
 	"A match is in progress - wait for the next one": "Идёт матч, дождитесь следующего",
 	"The match is over - the server is starting a new one": "Матч окончен, сервер запускает новый",
 	"HOST LAN": "СВОЯ ИГРА",
+	"Update the game: the server runs v%s": "Обновите игру: на сервере версия v%s",
 	"UPDATE AVAILABLE": "ДОСТУПНО ОБНОВЛЕНИЕ",
 	"Download: %.0f MB": "Скачать: %.0f МБ",
 	"LATER": "ПОЗЖЕ",
@@ -943,5 +944,7 @@ const STRINGS = {
 	"Empty weapon slot": "Пустой слот оружия",
 	"YOUR HERO": "ВАШ ГЕРОЙ",
 	"Weapons  (1–5)": "Оружие  (1–5)",
+	"Weapons  (1–2)": "Оружие  (1–2)",
+	"Two weapons, switch with 1 / 2; X swaps the one in hand": "Два ствола, смена на 1 / 2; X меняет оружие в руках",
 	"Added Health Pack (heal=%f) to inventory": "Аптечка добавлена в инвентарь (лечение=%f)",
 }
