@@ -51,6 +51,33 @@ static func same_stack(a: ItemData, b: ItemData) -> bool:
 			return false
 	return true
 
+## Drag and drop in the bag (InventoryMenu): onto an empty slot it moves, onto the same kind it
+## stacks (as much as fits), onto something else the two swap
+func move_item(from: int, to: int) -> bool:
+	if from == to or from < 0 or to < 0 or from >= slots.size() or to >= slots.size():
+		return false
+	var a = slots[from]
+	var b = slots[to]
+	if a.item == null:
+		return false
+	if b.item != null and a.item.stackable and same_stack(a.item, b.item) and not (a.item is AmmoItem):
+		var room = a.item.max_stack - b.count
+		if room <= 0:
+			return false
+		var moved = mini(room, a.count)
+		b.count += moved
+		a.count -= moved
+		if a.count <= 0:
+			a.item = null
+			a.count = 0
+	else:
+		slots[from] = b
+		slots[to] = a
+	slot_changed.emit(from)
+	slot_changed.emit(to)
+	inventory_changed.emit()
+	return true
+
 ## Would `item` fit (onto a stack or into an empty slot)?
 func has_room_for(item: ItemData) -> bool:
 	for stack in slots:

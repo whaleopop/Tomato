@@ -279,6 +279,10 @@ func process_input(input_data: Dictionary):
 			inventory_comp.drop_item(int(input_data.drop_item))
 		if input_data.has("drop_weapon"):
 			inventory_comp.drop_weapon(int(input_data.drop_weapon))
+		if input_data.get("move_item") is Array and input_data.move_item.size() == 2:
+			inventory_comp.move_item(int(input_data.move_item[0]), int(input_data.move_item[1]))
+		if input_data.get("swap_weapons") is Array and input_data.swap_weapons.size() == 2:
+			inventory_comp.swap_weapon_slots(int(input_data.swap_weapons[0]), int(input_data.swap_weapons[1]))
 
 	if input_data.get("reload", false):
 		var combat_comp = player_entity.get_component("CombatComponent")
@@ -418,7 +422,7 @@ func _process_client_hit(attacker: Entity, target_entity_id: int, combat: Combat
 		combat.attack_cooldown += debt
 		return
 	# A wall between shooter and target stops the bullet: shoot it for real so it hits the wall
-	if CoverSpawner.line_blocked(attacker.get_world_3d(), attacker.global_position + Vector3(0, 1.0, 0), target_point):
+	if CoverSpawner.fire_blocked(attacker.get_world_3d(), attacker.global_position + Vector3(0, 1.0, 0), target_point):
 		if hl:
 			hl.claim(player_id, target_entity_id, gun, "wall", {"d": snappedf(distance, 0.1)})
 		combat.attack(target_point)

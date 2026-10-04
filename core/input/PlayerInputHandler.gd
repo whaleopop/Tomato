@@ -199,7 +199,7 @@ func _find_auto_target() -> Node3D:
 	var world_3d = get_viewport().world_3d
 	var eye = player.global_position + Vector3(0, 1.0, 0)
 	for c in candidates.slice(0, 6):
-		if not world_3d or not CoverSpawner.line_blocked(world_3d, eye, c[1].global_position + Vector3(0, 0.9, 0)):
+		if not world_3d or not CoverSpawner.fire_blocked(world_3d, eye, c[1].global_position + Vector3(0, 0.9, 0)):
 			return c[1]
 	return null
 
@@ -231,7 +231,7 @@ func _mouse_target() -> Dictionary:
 	if collider and collider != player and "entity_id" in collider:
 		var eye = player.global_position + Vector3(0, 1.0, 0)
 		var body = collider.global_position + Vector3(0, 0.9, 0)
-		if not CoverSpawner.line_blocked(world_3d, eye, body):
+		if not CoverSpawner.fire_blocked(world_3d, eye, body):
 			target["entity_id"] = collider.entity_id
 		else:
 			target.position = body  # the shot goes into the wall
@@ -279,7 +279,7 @@ func _capture_and_send_input():
 		# The client picks who it hit (server-authoritative damage checks it again)
 		if aim.has("entity_id"):
 			input_data["hit_entity_id"] = aim.entity_id
-	elif _auto_target_ok(auto_target) and combat and combat.can_shoot():
+	elif _auto_target_ok(auto_target) and combat and combat.can_shoot() and not _using_consumable():
 		input_data["attack"] = true
 		input_data["target_position"] = auto_target.global_position + Vector3(0, 0.9, 0)
 		input_data["hit_entity_id"] = auto_target.entity_id
@@ -324,6 +324,12 @@ func _capture_and_send_input():
 		
 		# Also apply locally for immediate feedback
 		_apply_input_locally(input_data)
+
+## Drinking a health pack / shield (InventoryComponent.start_use): the auto-fire waits (a shot
+## would cancel it); your own click still shoots
+func _using_consumable() -> bool:
+	var inventory = player.get_component("InventoryComponent") if player else null
+	return inventory != null and inventory.using != ""
 
 func _send_input_to_server(input_data: Dictionary):
 	var network_manager = get_node_or_null("/root/NetworkManager")

@@ -42,13 +42,21 @@ func update(delta: float):
 		sync_timer = 0.0
 		_sync_entity()
 
-	# Apply smooth interpolation to remote players every frame
-	if entity and not _is_local():
+	# Apply smooth interpolation to remote players every frame - on a client only: the server's
+	# entities ARE the truth (with a target set by Player.respawn_at the server pulled the hero
+	# back to the respawn spot every frame - "can't leave the hex" in CTF / King of the Hill)
+	if entity and not _is_local() and not _is_authority():
 		_apply_smooth_interpolation(delta)
 
 ## is_local_player is a property on Player, not a method
 func _is_local() -> bool:
 	return entity != null and entity.get("is_local_player") == true
+
+func _is_authority() -> bool:
+	if entity == null or not entity.is_inside_tree():
+		return false
+	var mp = entity.get_tree().get_multiplayer()
+	return mp.has_multiplayer_peer() and mp.is_server() and not (mp.multiplayer_peer is OfflineMultiplayerPeer)
 
 func _sync_entity():
 	if entity == null:

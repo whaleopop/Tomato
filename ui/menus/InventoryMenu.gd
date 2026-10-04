@@ -178,6 +178,7 @@ func _create_slot_button(slot, index: int) -> Button:
 		button.add_theme_stylebox_override("normal", UITheme.glow_box(Color(UITheme.ACCENT_PRIMARY, 0.25), 0.4, 16, 10))
 
 	button.pressed.connect(_on_slot_pressed.bind(index))
+	button.set_drag_forwarding(_drag_from.bind("item", index, button), _can_drop.bind("item", index), _drop_on.bind("item", index))
 	return button
 
 func _on_slot_pressed(slot: int):
@@ -206,6 +207,7 @@ func _create_weapon_slot_button(index: int) -> Button:
 	btn.add_theme_font_size_override("font_size", 11)
 	btn.clip_text = true
 	btn.pressed.connect(_on_weapon_slot_pressed.bind(index))
+	btn.set_drag_forwarding(_drag_from.bind("weapon", index, btn), _can_drop.bind("weapon", index), _drop_on.bind("weapon", index))
 	return btn
 
 func _update_weapon_slots() -> void:
@@ -242,6 +244,43 @@ func _on_weapon_slot_pressed(index: int) -> void:
 		info_label.text = tr("Empty weapon slot")
 	_update_weapon_slots()
 	_update_inventory()
+
+# ---------------------------------------------------------------- drag and drop
+# Grab a gun or a bag item with the mouse and drop it on another slot of its kind: guns swap
+# slots (the HUD bar follows), items move / stack / swap. The server is told the same move.
+
+func _drag_from(_at: Vector2, kind: String, index: int, button: Button):
+	if not inventory_component:
+		return null
+	var thing = inventory_component.get_weapon_in_slot(index) if kind == "weapon" else inventory_component.get_inventory().slots[index].item
+	if thing == null:
+		return null
+	var preview = button.duplicate(0) as Control
+	preview.modulate.a = 0.75
+	preview.size = button.size
+	var holder = Control.new()  # the preview hangs centered on the cursor
+	holder.add_child(preview)
+	preview.position = -button.size / 2.0
+	set_drag_preview(holder)
+	return {"inv_kind": kind, "index": index}
+
+func _can_drop(_at: Vector2, data, kind: String, index: int) -> bool:
+	return data is Dictionary and data.get("inv_kind") == kind and int(data.get("index", -1)) != index
+
+func _drop_on(_at: Vector2, data, kind: String, index: int) -> void:
+	var from = int(data.index)
+	if kind == "weapon":
+		if inventory_component.swap_weapon_slots(from, index):
+			_send_to_server({"swap_weapons": [from, index]})
+			if selected_slot == -(from + 100):
+				selected_slot = -(index + 100)
+		_update_weapon_slots()
+	else:
+		if inventory_component.move_item(from, index):
+			_send_to_server({"move_item": [from, index]})
+			if selected_slot == from:
+				selected_slot = index
+		_update_inventory()
 
 func _on_use_pressed():
 	if selected_slot < -99:

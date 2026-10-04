@@ -78,6 +78,36 @@ func has_room_for(item: ItemData) -> bool:
 func has_free_weapon_slot() -> bool:
 	return weapon_slots.has(null)
 
+## Drag a bag item onto another slot (InventoryMenu; the server does the same, the slot numbers of
+## later "use" / "drop" actions must mean the same thing on both sides)
+func move_item(from: int, to: int) -> bool:
+	if not enabled:
+		return false
+	return inventory.move_item(from, to)
+
+## Swap two gun slots (InventoryMenu drag): the gun in hand stays in hand, only its number changes
+func swap_weapon_slots(a: int, b: int) -> bool:
+	if a == b or a < 0 or b < 0 or a >= MAX_WEAPON_SLOTS or b >= MAX_WEAPON_SLOTS:
+		return false
+	var t = weapon_slots[a]
+	weapon_slots[a] = weapon_slots[b]
+	weapon_slots[b] = t
+	if current_weapon_slot == a:
+		current_weapon_slot = b
+	elif current_weapon_slot == b:
+		current_weapon_slot = a
+	weapon_slot_changed.emit(a)
+	weapon_slot_changed.emit(b)
+	return true
+
+## Is one of our guns loaded with this kind of rounds? (ammo for other guns isn't picked up by
+## walking over it - only with X)
+func has_gun_for(ammo_type: int) -> bool:
+	for w in weapon_slots:
+		if w != null and int(w.ammo_type) == ammo_type:
+			return true
+	return false
+
 func remove_item(slot: int) -> ItemData:
 	if not enabled:
 		return null

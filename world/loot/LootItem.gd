@@ -307,7 +307,10 @@ func can_be_taken_by(player: Node, walking: bool) -> bool:
 			pack.shield_amount = item_value
 			return inventory.has_room_for(pack)
 		ItemType.AMMO:
-			return inventory.has_room_for(item_data if item_data is AmmoItem else _create_default_ammo())
+			var ammo: AmmoItem = item_data if item_data is AmmoItem else _create_default_ammo()
+			if walking and not inventory.has_gun_for(int(ammo.ammo_type)):
+				return false  # rounds for a gun we don't carry: only with X
+			return inventory.has_room_for(ammo)
 		ItemType.WEAPON:
 			return not walking or inventory.has_free_weapon_slot()
 	return true

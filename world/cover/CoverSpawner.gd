@@ -156,6 +156,16 @@ static func line_blocked(world: World3D, from: Vector3, to: Vector3) -> bool:
 	var query = PhysicsRayQueryParameters3D.create(from, to, COVER_LAYER)
 	return not world.direct_space_state.intersect_ray(query).is_empty()
 
+## Would a bullet from `from` reach `to`? Anything solid stops it - walls, trees, mountains, but
+## also what sight passes (the greenhouse glass) or ignores (terrace cliffs, the ground): the same
+## things the server's own shots stop at (HitscanSystem). Client-judged hits used to check only
+## the cover layer, so they went through the greenhouse and the cliffs.
+static func fire_blocked(world: World3D, from: Vector3, to: Vector3) -> bool:
+	if not world:
+		return false
+	var query = PhysicsRayQueryParameters3D.create(from, to, HitscanSystem.LAYER_ENVIRONMENT | COVER_LAYER)
+	return not world.direct_space_state.intersect_ray(query).is_empty()
+
 ## Shared prop loader (paper low-poly look), null if the model is missing
 static func load_prop(prop_name: String) -> Node3D:
 	var path = PROPS_DIR + prop_name + ".glb"

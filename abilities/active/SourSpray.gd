@@ -30,7 +30,7 @@ func _on_activate(entity, target_position: Vector3) -> bool:
 		if to_other.length() > reach or rad_to_deg(forward.angle_to(to_other.normalized())) > angle / 2.0:
 			continue
 		var eye = Vector3(0, 1.0, 0)
-		if CoverSpawner.line_blocked(entity.get_world_3d(), entity.global_position + eye, other.global_position + eye):
+		if CoverSpawner.fire_blocked(entity.get_world_3d(), entity.global_position + eye, other.global_position + eye):
 			continue  # juice doesn't go through walls
 		var health = other.get_component("HealthComponent")
 		if health:

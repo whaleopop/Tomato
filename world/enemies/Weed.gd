@@ -280,7 +280,7 @@ func _pick_target():
 	_target = best
 
 func _sees(p: Node3D) -> bool:
-	return not CoverSpawner.line_blocked(get_world_3d(), global_position + Vector3(0, 1.0, 0), p.global_position + Vector3(0, 0.9, 0))
+	return not CoverSpawner.fire_blocked(get_world_3d(), global_position + Vector3(0, 1.0, 0), p.global_position + Vector3(0, 0.9, 0))
 
 func _strike():
 	if not _target or not is_instance_valid(_target):

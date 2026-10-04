@@ -159,8 +159,10 @@ func respawn_at(pos: Vector3) -> void:
 	var animator = get_node_or_null("Animator")
 	if animator:
 		animator.set("_dead", false)
+	# A client's copy of someone else: interpolate from here (never on the server, see
+	# NetworkingComponent._is_authority)
 	var networking = get_component("NetworkingComponent")
-	if networking and "target_position" in networking:
+	if networking and "target_position" in networking and not networking._is_authority():
 		networking.target_position = pos
 
 func setup_character(data: CharacterData):
