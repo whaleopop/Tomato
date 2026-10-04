@@ -1,7 +1,7 @@
 # Windows build of the game on every push to master / main (and by hand from the Actions tab).
 # Exports the "Windows Desktop" preset with Godot's headless editor and uploads the result as an
 # artifact (Actions -> the run -> Artifacts). A tag "v*" also publishes a GitHub release with the zip,
-# described by the tagged commit's message.
+# named and described by the tag's message (its first line is the title).
 name: Build
 
 on:
@@ -50,14 +50,20 @@ jobs:
           name: Royaltim-windows
           path: build/Royaltim-windows.zip
 
-      - name: Release notes (the tagged commit's message)
+      # Notes and title from the annotated tag's message (its first line names the release),
+      # the tagged commit's message if the tag carries none
+      - name: Release notes and title (the tag's message)
         if: startsWith(github.ref, 'refs/tags/v')
-        run: git log -1 --format=%B > build/release_notes.md
+        run: |
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}" || true
+          git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > build/release_notes.md
+          if [ ! -s build/release_notes.md ]; then git log -1 --format=%B > build/release_notes.md; fi
+          echo "RELEASE_NAME=Royaltim $(head -n 1 build/release_notes.md)" >> "$GITHUB_ENV"
 
       - name: Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          name: Royaltim ${{ github.ref_name }}
+          name: ${{ env.RELEASE_NAME }}
           body_path: build/release_notes.md
           files: build/Royaltim-windows.zip
