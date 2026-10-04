@@ -20,6 +20,7 @@ var _timer_label: Label
 var _status: Label
 var _cancel: Button
 var _spinner: Control
+var _following: bool = false  # a party member: the leader queued us
 
 func _ready():
 	var gm = get_node_or_null("/root/GameManager")
@@ -30,6 +31,12 @@ func _ready():
 	var online = get_node_or_null("/root/Online")
 	if online == null or _hero == null:
 		_fail("No connection to the game server")
+		return
+	# In a party but not its leader: the leader's search took us along, we only follow it
+	if gm and gm.matchmaking_follow:
+		_following = true
+		_status.text = tr("The party leader is searching for a match")
+		_polling = true
 		return
 	var res = await online.request(HTTPClient.METHOD_POST, "/queue/join", {"mode": _mode, "hero": _hero.character_name})
 	if not is_inside_tree() or _leaving:
@@ -121,7 +128,7 @@ func _show_state(res: Dictionary):
 			Sfx.ui("match_found")
 			_join(int(res.port), String(res.ticket))
 		"idle":
-			_fail("You dropped out of the queue")
+			_fail("The party leader stopped the search" if _following else "You dropped out of the queue")
 
 func _join(port: int, ticket: String):
 	_polling = false

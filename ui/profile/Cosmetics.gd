@@ -195,6 +195,9 @@ static func _bounds(root: Node3D) -> AABB:
 ## A small hat model, about 0.45 wide, standing on y = 0
 static func make_hat(id: String) -> Node3D:
 	var hat = Node3D.new()
+	var model_path = String(HATS.get(id, {}).get("model", ""))
+	if model_path != "":
+		return _model_hat(hat, model_path)
 	match id:
 		"party":
 			_part(hat, _cone(0.2, 0.5), Vector3(0, 0.25, 0), _mat(Color(1.0, 0.35, 0.55)))
@@ -240,6 +243,31 @@ static func make_hat(id: String) -> Node3D:
 			_part(hat, _box(Vector3(0.035, 0.05, 0.36)), Vector3(0, 0.39, -0.02), trim)
 			var plume = _part(hat, _box(Vector3(0.05, 0.12, 0.34)), Vector3(0, 0.45, -0.08), _mat(Color(0.3, 0.07, 0.42)))
 			plume.rotation.x = 0.25
+	return hat
+
+## A hat made by the AI pipeline (tools/ai_models/cosmetics): its GLB (vertex colors, standing on
+## y = 0, facing +Z) in the paper look, fitted to HAT_FIT wide like the hand-made ones
+const HAT_FIT: float = 0.5
+const HAT_MAX_HEIGHT: float = 0.42  # a tall one is fitted by its height instead
+
+static func _model_hat(hat: Node3D, path: String) -> Node3D:
+	var scene = load(path) if ResourceLoader.exists(path) else null
+	if not scene is PackedScene:
+		return hat
+	var model: Node3D = scene.instantiate()
+	ModelUtils.apply_lowpoly_look(model)
+	var box := AABB()
+	var first = true
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		mi.set_meta("cosmetic", true)  # the skin's recolor leaves the hat alone
+		var b = mi.get_aabb()
+		box = b if first else box.merge(b)
+		first = false
+	var width = maxf(box.size.x, box.size.z)
+	if width > 0.001 and box.size.y > 0.001:
+		model.scale = Vector3.ONE * minf(HAT_FIT / width, HAT_MAX_HEIGHT / box.size.y)
+	model.position.y = -box.position.y * model.scale.y
+	hat.add_child(model)
 	return hat
 
 static func _part(parent: Node3D, mesh: Mesh, pos: Vector3, mat: Material) -> MeshInstance3D:

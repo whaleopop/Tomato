@@ -10,7 +10,16 @@ Python 3 standard library only. Clients talk JSON over HTTP (network/online/Onli
   POST /profile/equip {id, hero, weapon_type}
   POST /queue/join {mode, hero}            -> into the queue of that mode
   GET  /queue/status                       -> searching / starting / found {port, ticket} / idle
-  POST /queue/leave
+  POST /queue/leave                        (a party leaves together)
+  GET  /friends                            -> friends (with what they are doing), requests in / out
+  POST /friends/add {id} | /friends/accept {id} | /friends/decline {id} | /friends/remove {id}
+  POST /users/search {q}                   -> players by nickname
+  POST /users/profile {id}                 -> a player's public profile (hero, what they own, mastery)
+  POST /profile/hero {hero}                -> the hero you play (others see it; party members queue with it)
+  GET  /party                              -> your party, invites to you, its queue state
+  POST /party/invite {id} | /party/accept {from} | /party/decline {from} | /party/leave
+  Parties are PARTY_MAX (2) friends; the leader's /queue/join queues them together and the
+  matchmaker never splits them (CTF puts them in one team: "party" in the roster).
   GET  /status                             -> registered / online players, queues, matches (the main menu
                                               asks every few seconds: with the Bearer it also counts as "seen")
 Game servers (DedicatedServer.gd, localhost + X-Server-Key):
@@ -56,6 +65,12 @@ LOCK = threading.RLock()  # DB + queue + matches
 QUEUE = {}    # account -> {mode, hero, nickname, wear, joined, polled}
 FOUND = {}    # account -> {match, port, ticket, at}
 MATCHES = {}  # match id -> {mode, port, proc, accounts, ready, started}
+PARTIES = {}    # party id -> {"leader": account, "members": [accounts]}
+ACC_PARTY = {}  # account -> party id
+INVITES = {}    # invited account -> {inviting account: time}
+PARTY_MAX = 2
+INVITE_TTL = 120.0
+_next_party = [1]
 
 
 def now():
@@ -81,6 +96,9 @@ def open_db(path):
     db.execute("""CREATE TABLE IF NOT EXISTS rewards (
         match INTEGER NOT NULL, account INTEGER NOT NULL, coins INTEGER, hero TEXT, hero_xp INTEGER,
         weapon_xp TEXT, at REAL, PRIMARY KEY (match, account))""")
+    db.execute("""CREATE TABLE IF NOT EXISTS friends (
+        a INTEGER NOT NULL, b INTEGER NOT NULL, status TEXT NOT NULL, created REAL,
+        PRIMARY KEY (a, b))""")  # a asked b; status "pending" / "accepted"
     db.execute("""CREATE TABLE IF NOT EXISTS purchases (
         account INTEGER NOT NULL, item TEXT NOT NULL, price INTEGER, at REAL)""")
     return db
@@ -176,7 +194,7 @@ def start_match(mode, entries):
     roster = {}
     for e in entries:
         ticket = secrets.token_hex(12)
-        roster[ticket] = {"account": e["account"], "nickname": e["nickname"], "hero": e["hero"]}
+        roster[ticket] = {"account": e["account"], "nickname": e["nickname"], "hero": e["hero"], "party": e.get("party", 0)}
         FOUND[e["account"]] = {"match": match_id, "port": port, "ticket": ticket, "at": now()}
         QUEUE.pop(e["account"], None)
     os.makedirs(os.path.join(ARGS.data, "matches"), exist_ok=True)
@@ -230,14 +248,21 @@ def matchmaker_loop():
                     if t - f["at"] > FOUND_KEEP:
                         FOUND.pop(acc, None)
                 for mode, rule in MODES.items():
-                    waiting = sorted((q for q in QUEUE.values() if q["mode"] == mode), key=lambda q: q["joined"])
-                    while waiting:
-                        enough = len(waiting) >= rule["max"] or (
-                            len(waiting) >= rule["min"] and t - waiting[0]["joined"] >= rule["fill"])
+                    units = queue_units(mode)  # a party is one unit: never split
+                    while units:
+                        count = sum(len(u) for u in units)
+                        enough = count >= rule["max"] or (count >= rule["min"] and t - units[0][0]["joined"] >= rule["fill"])
                         if not enough or len(MATCHES) >= ARGS.max_matches or free_port() is None:
                             break
-                        group, waiting = waiting[:rule["max"]], waiting[rule["max"]:]
-                        start_match(mode, group)
+                        group, rest, size = [], [], 0
+                        for u in units:
+                            if size + len(u) <= rule["max"]:
+                                group.append(u)
+                                size += len(u)
+                            else:
+                                rest.append(u)
+                        start_match(mode, [e for u in group for e in u])
+                        units = rest
         except Exception as ex:  # keep matching whatever happened
             log("matchmaker error:", repr(ex))
 
@@ -307,6 +332,7 @@ class Handler(BaseHTTPRequestHandler):
                 account = self._account()
                 if account is None:
                     return self._send(401, {"ok": False, "error": "Not logged in"})
+                DB.execute("UPDATE accounts SET seen=? WHERE id=?", (now(), account))
                 p = load_account(account)
                 handler = ROUTES.get((method, path))
                 if handler is None:
@@ -433,10 +459,23 @@ def queue_join(account, p, body):
         return reply(p, False, "Pick a name first")
     if hero not in CATALOG["heroes"] or not owns_hero(p, hero):
         return reply(p, False, "You don't own this hero")
-    FOUND.pop(account, None)
-    QUEUE[account] = {"account": account, "mode": mode, "hero": hero, "nickname": p["nickname"],
-                      "joined": now(), "polled": now()}
+    pid = ACC_PARTY.get(account)
+    if pid:
+        party = PARTIES[pid]
+        if party["leader"] != account:
+            return reply(p, False, "Only the party leader starts the search")
+        for m in party["members"]:
+            if any(m in mm["accounts"] for mm in MATCHES.values()) and FOUND.get(m):
+                return reply(p, False, "Your friend is still in a match")
+    p["selected_hero"] = hero
     save_account(account, p)
+    t = now()
+    for member in (PARTIES[pid]["members"] if pid else [account]):
+        mp = p if member == account else load_account(member)
+        mhero = hero if member == account else member_hero(mp)
+        FOUND.pop(member, None)
+        QUEUE[member] = {"account": member, "mode": mode, "hero": mhero, "nickname": mp["nickname"] or ("Player %d" % member),
+                         "joined": t, "polled": t, "party": pid or 0}
     return queue_status(account, p, body)
 
 
@@ -460,8 +499,247 @@ def queue_status(account, p, body):
 
 
 def queue_leave(account, p, body):
-    QUEUE.pop(account, None)
+    pid = ACC_PARTY.get(account)
+    for member in (PARTIES[pid]["members"] if pid else [account]):
+        QUEUE.pop(member, None)
     return reply(p, state="idle")
+
+
+# ------------------------------------------------------------------ friends, parties, profiles
+
+def queue_units(mode):
+    """The queue of a mode as units in the order they joined: a party is one unit"""
+    units, by_key = [], {}
+    for q in sorted((q for q in QUEUE.values() if q["mode"] == mode), key=lambda q: q["joined"]):
+        key = ("p", q["party"]) if q.get("party") else ("s", q["account"])
+        if key not in by_key:
+            by_key[key] = []
+            units.append(by_key[key])
+        by_key[key].append(q)
+    return units
+
+
+def member_hero(p):
+    """The hero a party member queues with: the one they picked last, else one they own"""
+    hero = p.get("selected_hero", "")
+    if hero and owns_hero(p, hero):
+        return hero
+    owned = [i[5:] for i in p["owned"] if i.startswith("hero:")]
+    return owned[0] if owned else CATALOG["heroes"][0]
+
+
+def activity(account):
+    """offline / online (in the menus) / searching / match"""
+    if any(account in m["accounts"] for m in MATCHES.values()) and FOUND.get(account):
+        return "match"
+    if account in QUEUE:
+        return "searching"
+    row = DB.execute("SELECT seen FROM accounts WHERE id=?", (account,)).fetchone()
+    return "online" if row and now() - row[0] < ONLINE_WINDOW else "offline"
+
+
+def card(account, p=None):
+    p = p or load_account(account)
+    if p is None:
+        return None
+    hero = member_hero(p)
+    return {"id": account, "nickname": p["nickname"] or ("Player %d" % account), "hero": hero,
+            "skin": p["hero_skin"].get(hero, "classic"), "hat": p["hero_hat"].get(hero, "no_hat"),
+            "level": mastery_level(p["hero_xp"].get(hero, 0), False), "state": activity(account)}
+
+
+def mastery_level(xp, weapon):
+    m = CATALOG["mastery"]
+    base, step = (m["weapon_base"], m["weapon_step"]) if weapon else (m["hero_base"], m["hero_step"])
+    level, left = 1, max(int(xp), 0)
+    while level < m["max_level"] and left >= base + step * (level - 1):
+        left -= base + step * (level - 1)
+        level += 1
+    return level
+
+
+def relation(me, other):
+    row = DB.execute("SELECT a, status FROM friends WHERE (a=? AND b=?) OR (a=? AND b=?)", (me, other, other, me)).fetchone()
+    if not row:
+        return "none"
+    if row[1] == "accepted":
+        return "friend"
+    return "requested" if row[0] == me else "incoming"
+
+
+def friends_list(account, p, body):
+    out = {"friends": [], "incoming": [], "outgoing": []}
+    for a, b, st in DB.execute("SELECT a, b, status FROM friends WHERE a=? OR b=?", (account, account)).fetchall():
+        other = b if a == account else a
+        c = card(other)
+        if c is None:
+            continue
+        if st == "accepted":
+            out["friends"].append(c)
+        elif a == account:
+            out["outgoing"].append(c)
+        else:
+            out["incoming"].append(c)
+    order = {"match": 0, "searching": 1, "online": 2, "offline": 3}
+    out["friends"].sort(key=lambda c: (order[c["state"]], c["nickname"].lower()))
+    return reply(p, **out)
+
+
+def friend_add(account, p, body):
+    other = int(body.get("id", 0))
+    if other == account or load_account(other) is None:
+        return reply(p, False, "No such player")
+    rel = relation(account, other)
+    if rel == "incoming":
+        return friend_accept(account, p, body)
+    if rel == "none":
+        DB.execute("INSERT INTO friends (a, b, status, created) VALUES (?,?,?,?)", (account, other, "pending", now()))
+    return friends_list(account, p, body)
+
+
+def friend_accept(account, p, body):
+    other = int(body.get("id", 0))
+    DB.execute("UPDATE friends SET status='accepted' WHERE a=? AND b=?", (other, account))
+    return friends_list(account, p, body)
+
+
+def friend_decline(account, p, body):
+    other = int(body.get("id", 0))
+    DB.execute("DELETE FROM friends WHERE a=? AND b=? AND status='pending'", (other, account))
+    return friends_list(account, p, body)
+
+
+def friend_remove(account, p, body):
+    other = int(body.get("id", 0))
+    DB.execute("DELETE FROM friends WHERE (a=? AND b=?) OR (a=? AND b=?)", (account, other, other, account))
+    return friends_list(account, p, body)
+
+
+def user_search(account, p, body):
+    q = str(body.get("q", "")).strip().lower()
+    found = []
+    if len(q) >= 2:
+        for acc, prof in DB.execute("SELECT id, profile FROM accounts").fetchall():
+            nick = json.loads(prof).get("nickname", "")
+            if acc != account and nick and q in nick.lower():
+                c = card(acc)
+                c["relation"] = relation(account, acc)
+                found.append(c)
+            if len(found) >= 15:
+                break
+    return reply(p, players=found)
+
+
+def user_profile(account, p, body):
+    other = int(body.get("id", account))
+    op = load_account(other)
+    if op is None:
+        return reply(p, False, "No such player")
+    owned = op["owned"]
+    rows = DB.execute("SELECT COUNT(*), COALESCE(SUM(coins), 0) FROM rewards WHERE account=?", (other,)).fetchone()
+    view = card(other, op)
+    view.update({
+        "relation": "self" if other == account else relation(account, other),
+        "heroes": [i[5:] for i in owned if i.startswith("hero:")],
+        "skins": [i for i in owned if item(i) and item(i)["kind"] == "skin"],
+        "hats": [i for i in owned if item(i) and item(i)["kind"] == "hat"],
+        "finishes": [i for i in owned if item(i) and item(i)["kind"] == "weapon"],
+        "hero_levels": {h: mastery_level(x, False) for h, x in op["hero_xp"].items()},
+        "weapon_levels": {t: mastery_level(x, True) for t, x in op["weapon_xp"].items()},
+        "weapon_skin": op["weapon_skin"], "matches": rows[0], "earned": rows[1],
+    })
+    return reply(p, player=view)
+
+
+def set_hero(account, p, body):
+    hero = str(body.get("hero", ""))
+    if hero in CATALOG["heroes"] and owns_hero(p, hero):
+        p["selected_hero"] = hero
+        save_account(account, p)
+    return reply(p)
+
+
+def party_view(account):
+    pid = ACC_PARTY.get(account)
+    party = None
+    if pid:
+        pt = PARTIES[pid]
+        party = {"id": pid, "leader": pt["leader"], "members": [card(m) for m in pt["members"]]}
+    t = now()
+    mine = INVITES.get(account, {})
+    for frm in [f for f, at in mine.items() if t - at > INVITE_TTL]:
+        mine.pop(frm, None)
+    invites = [{"from": f, "nickname": (load_account(f) or {}).get("nickname", "")} for f in mine]
+    return party, invites
+
+
+def party_get(account, p, body):
+    party, invites = party_view(account)
+    q = queue_status(account, p, body)
+    return reply(p, party=party, invites=invites, queue=q.get("state"), mode=q.get("mode", ""))
+
+
+def party_invite(account, p, body):
+    other = int(body.get("id", 0))
+    if relation(account, other) != "friend":
+        return reply(p, False, "Only friends can be invited")
+    if activity(other) == "offline":
+        return reply(p, False, "Your friend is offline")
+    pid = ACC_PARTY.get(account)
+    if pid and len(PARTIES[pid]["members"]) >= PARTY_MAX:
+        return reply(p, False, "The party is full")
+    if ACC_PARTY.get(other) and ACC_PARTY.get(other) == pid:
+        return reply(p, False, "Already in your party")
+    INVITES.setdefault(other, {})[account] = now()
+    return party_get(account, p, body)
+
+
+def _leave_party(account):
+    pid = ACC_PARTY.pop(account, None)
+    if not pid:
+        return
+    pt = PARTIES[pid]
+    for m in pt["members"]:
+        QUEUE.pop(m, None)  # a party that changes leaves the queue
+    pt["members"].remove(account)
+    if len(pt["members"]) < 2:
+        for m in pt["members"]:
+            ACC_PARTY.pop(m, None)
+        PARTIES.pop(pid, None)
+    elif pt["leader"] == account:
+        pt["leader"] = pt["members"][0]
+
+
+def party_accept(account, p, body):
+    frm = int(body.get("from", 0))
+    if frm not in INVITES.get(account, {}) or now() - INVITES[account][frm] > INVITE_TTL:
+        return reply(p, False, "The invitation has expired")
+    INVITES[account].pop(frm, None)
+    pid = ACC_PARTY.get(frm)
+    if pid and len(PARTIES[pid]["members"]) >= PARTY_MAX:
+        return reply(p, False, "The party is full")
+    _leave_party(account)
+    QUEUE.pop(account, None)
+    if not pid:
+        pid = _next_party[0]
+        _next_party[0] += 1
+        PARTIES[pid] = {"leader": frm, "members": [frm]}
+        ACC_PARTY[frm] = pid
+        QUEUE.pop(frm, None)
+    PARTIES[pid]["members"].append(account)
+    ACC_PARTY[account] = pid
+    log("party %d: %s" % (pid, PARTIES[pid]["members"]))
+    return party_get(account, p, body)
+
+
+def party_decline(account, p, body):
+    INVITES.get(account, {}).pop(int(body.get("from", 0)), None)
+    return party_get(account, p, body)
+
+
+def party_leave(account, p, body):
+    _leave_party(account)
+    return party_get(account, p, body)
 
 
 def match_ready(body):
@@ -505,6 +783,19 @@ ROUTES = {
     ("POST", "/queue/join"): queue_join,
     ("GET", "/queue/status"): queue_status,
     ("POST", "/queue/leave"): queue_leave,
+    ("GET", "/friends"): friends_list,
+    ("POST", "/friends/add"): friend_add,
+    ("POST", "/friends/accept"): friend_accept,
+    ("POST", "/friends/decline"): friend_decline,
+    ("POST", "/friends/remove"): friend_remove,
+    ("POST", "/users/search"): user_search,
+    ("POST", "/users/profile"): user_profile,
+    ("POST", "/profile/hero"): set_hero,
+    ("GET", "/party"): party_get,
+    ("POST", "/party/invite"): party_invite,
+    ("POST", "/party/accept"): party_accept,
+    ("POST", "/party/decline"): party_decline,
+    ("POST", "/party/leave"): party_leave,
 }
 
 

@@ -45,6 +45,7 @@ func ensure_client_world():
 
 func connect_to_server(ip: String = "127.0.0.1", port: int = PORT) -> bool:
 	print("[GameClient] Attempting to connect to server %s:%d..." % [ip, port])
+	NetClock.reset()  # a new server, a new clock
 
 	if is_connected_to_server or is_connecting:
 		print("[GameClient] ERROR: Already connected or connecting!")

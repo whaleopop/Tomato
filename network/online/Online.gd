@@ -9,6 +9,8 @@ extends Node
 
 signal login_finished(ok: bool)
 signal profile_changed
+## The party and the invitations to us changed (poll_party: the main menu asks every few seconds)
+signal party_changed(data: Dictionary)
 
 const DEFAULT_URL = "http://159.194.255.184:8080"
 const TIMEOUT: float = 8.0
@@ -20,6 +22,9 @@ var logged_in: bool = false
 var login_done: bool = false  # tried (logged in or not)
 var last_error: String = ""
 var _key_path: String = "user://account.cfg"
+## The last /party answer: {"party": {id, leader, members: [{id, nickname, hero, skin, hat, level,
+## state}]} or null, "invites": [{from, nickname}], "queue": our queue state, "mode"}
+var party_data: Dictionary = {}
 
 func _ready():
 	if DedicatedServer.requested():
@@ -69,6 +74,46 @@ func wait_login() -> bool:
 func refresh() -> void:
 	if logged_in:
 		await request(HTTPClient.METHOD_GET, "/profile")
+
+# ---------------------------------------------------------------- friends and the party
+
+func poll_party() -> Dictionary:
+	if not logged_in:
+		return {}
+	var res = await request(HTTPClient.METHOD_GET, "/party")
+	if res.get("ok", false):
+		party_data = res
+		party_changed.emit(res)
+	return res
+
+func party() -> Dictionary:
+	return party_data.get("party") if party_data.get("party") is Dictionary else {}
+
+func in_party() -> bool:
+	return not party().is_empty()
+
+func is_party_leader() -> bool:
+	return in_party() and int(party().get("leader", 0)) == account_id
+
+## Our own entry in the party (its hero is the one we queue with when the leader starts)
+func my_party_member() -> Dictionary:
+	for m in party().get("members", []):
+		if int(m.id) == account_id:
+			return m
+	return {}
+
+## Whatever we answer comes back as the new party state
+func party_action(path: String, body: Dictionary = {}) -> Dictionary:
+	var res = await request(HTTPClient.METHOD_POST, path, body)
+	if res.has("invites"):
+		party_data = res
+		party_changed.emit(res)
+	return res
+
+## The hero we play (others see it in the party bar and our profile; a party member queues with it)
+func set_hero(hero: String) -> void:
+	if logged_in:
+		request(HTTPClient.METHOD_POST, "/profile/hero", {"hero": hero})
 
 ## One JSON request; always returns a Dictionary with "ok" (and "error" when not ok).
 ## A "profile" in the answer replaces the mirrored one.

@@ -40,8 +40,21 @@ func _deal_teams() -> void:
 	for id in ids:
 		if not teams.has(id):
 			var t = 0 if counts[0] <= counts[1] else 1
+			var mate = _party_mate_team(id)  # friends who queued together play together
+			if mate >= 0:
+				t = mate
 			teams[id] = t
 			counts[t] += 1
+
+## The team of this player's party mate (matchmade games: the roster's "party"), -1 if none yet
+func _party_mate_team(player_id: int) -> int:
+	var party = int(server.accounts.get(player_id, {}).get("party", 0))
+	if party == 0:
+		return -1
+	for other in server.accounts:
+		if other != player_id and int(server.accounts[other].get("party", 0)) == party and teams.has(other):
+			return int(teams[other])
+	return -1
 
 func team_of(player_id: int) -> int:
 	if not teams.has(player_id):

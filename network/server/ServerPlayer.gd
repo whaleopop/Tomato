@@ -29,6 +29,12 @@ var _last_input_msec: int = 0
 ## jitter): a shot up to SHOT_GRACE early is taken and the time it was early is added to the next
 ## pause, so the gun's rate stays its rate (it used to be dropped without a trace - lost hits).
 const SHOT_GRACE: float = 0.12
+var ping_ms: float = 0.0  # ENet round trip (GameServer samples it): scoreboard, latency-aware checks
+## Where this hero was lately ([msec, position], HISTORY_MSEC): a client-judged hit is checked
+## against where the shooter saw the target - half its round trip plus the interpolation delay ago
+var _pos_hist: Array = []
+const HISTORY_MSEC: int = 1000
+const MAX_REWIND_MSEC: float = 350.0
 
 func _ready():
 	pass
@@ -102,11 +108,15 @@ func _weapon_type(combat: CombatComponent) -> int:
 ## A shot that came in a little early (jitter): let it through now, owe the time. Returns the debt.
 func _take_early_shot(combat: CombatComponent) -> float:
 	var debt = 0.0
-	if combat.attack_cooldown > 0.0 and combat.attack_cooldown <= SHOT_GRACE:
+	# The slack grows with the shooter's lag (its inputs arrive later and more bunched); the debt
+	# keeps the rate honest whatever the slack
+	var lag = minf(ping_ms / 1000.0, 0.4)
+	if combat.attack_cooldown > 0.0 and combat.attack_cooldown <= SHOT_GRACE + lag * 0.25:
 		debt = combat.attack_cooldown
 		combat.attack_cooldown = 0.0
-	# A reload that is all but done counts as done (the client's finished a moment ago)
-	if combat.is_reloading and combat.reload_timer <= SHOT_GRACE:
+	# A reload that is all but done counts as done: the client started it half a round trip
+	# earlier (its last shot reached us that much later), so it is done that much sooner
+	if combat.is_reloading and combat.reload_timer <= SHOT_GRACE + lag * 0.5:
 		combat._complete_reload()
 	return debt
 
@@ -199,6 +209,32 @@ func _on_shot_fired(from_pos: Vector3, to_pos: Vector3, hit: bool):
 	var game_server = get_parent() as GameServer
 	if game_server:
 		game_server.broadcast_shot_effect(player_id, from_pos, to_pos, weapon_type, hit)
+
+func _physics_process(_delta: float) -> void:
+	if not is_instance_valid(player_entity) or not player_entity.is_inside_tree():
+		return
+	var now = Time.get_ticks_msec()
+	_pos_hist.append([now, player_entity.global_position])
+	while not _pos_hist.is_empty() and now - int(_pos_hist[0][0]) > HISTORY_MSEC:
+		_pos_hist.pop_front()
+
+## Where this hero stood at server time `msec` (the oldest / current if out of the record)
+func position_at(msec: float) -> Vector3:
+	if _pos_hist.is_empty():
+		return player_entity.global_position if is_instance_valid(player_entity) else Vector3.ZERO
+	for i in range(_pos_hist.size() - 1, -1, -1):
+		if float(_pos_hist[i][0]) <= msec:
+			if i + 1 < _pos_hist.size():
+				var a: Array = _pos_hist[i]
+				var b: Array = _pos_hist[i + 1]
+				var f = (msec - float(a[0])) / maxf(float(b[0]) - float(a[0]), 1.0)
+				return a[1].lerp(b[1], clampf(f, 0.0, 1.0))
+			return _pos_hist[i][1]
+	return _pos_hist[0][1]
+
+## How far back this shooter's screen was: half the round trip + the interpolation delay
+func rewind_msec() -> float:
+	return clampf(ping_ms * 0.5 + NetClock.INTERP_DELAY_MS + 33.0, 0.0, MAX_REWIND_MSEC)
 
 func process_input(input_data: Dictionary):
 	if not is_instance_valid(player_entity):
@@ -412,8 +448,15 @@ func _process_client_hit(attacker: Entity, target_entity_id: int, combat: Combat
 				else ("no_ammo" if combat.equipped_ranged_weapon.current_ammo <= 0 else "cooldown")))
 			hl.claim(player_id, target_entity_id, gun, why, {"cd": snappedf(cooldown_left, 0.001)})
 		return
-	var target_point = target.global_position + Vector3(0, 0.9, 0)
-	var distance = attacker.global_position.distance_to(target.global_position)
+	# Lag compensation: where the shooter saw the target (a hero's own history; weeds as they are)
+	var rewind = rewind_msec()
+	var target_pos = target.global_position
+	var gs = get_parent() as GameServer
+	var target_sp: ServerPlayer = gs.players.get(target_entity_id) if gs and target_entity_id > 0 else null
+	if target_sp:
+		target_pos = target_sp.position_at(Time.get_ticks_msec() - rewind)
+	var target_point = target_pos + Vector3(0, 0.9, 0)
+	var distance = attacker.global_position.distance_to(target_pos)
 	# Only a single bullet is resolved by the client; pellets, fire and grenades by the server
 	if combat.equipped_ranged_weapon and combat.equipped_ranged_weapon.fire_mode != "single":
 		if hl:
@@ -440,7 +483,7 @@ func _process_client_hit(attacker: Entity, target_entity_id: int, combat: Combat
 			hl.claim(player_id, target_entity_id, gun, "range", {"d": snappedf(distance, 0.1), "max": snappedf(max_range, 0.1)})
 		return
 	if hl:
-		hl.claim(player_id, target_entity_id, gun, "early" if debt > 0.0 else "ok", {"d": snappedf(distance, 0.1), "early": snappedf(debt, 0.001)})
+		hl.claim(player_id, target_entity_id, gun, "early" if debt > 0.0 else "ok", {"d": snappedf(distance, 0.1), "early": snappedf(debt, 0.001), "rw": int(rewind)})
 
 	# Apply damage (server-authoritative)
 	var damage = combat.base_damage

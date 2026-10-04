@@ -192,3 +192,21 @@ model_path = "res://models/generated/broccoli_knight.glb"
 - **Первый запуск долгий** — это разовая загрузка весов.
 - **Модель «вывернута» или с дырами** — дай картинку с одним объектом по центру на однотонном фоне, в полный рост и спереди.
 - **Проверить установку**: `tools\ai_models\generate.bat --self-check`.
+
+## Косметика: шапки и скины по описанию
+
+`tools/ai_models/cosmetics/make_cosmetic.py` — от описания до вещи в магазине:
+
+```bat
+:: 1) несколько концептов на выбор (ничего не записывает): art\cosmetics\<id>_candidates.png
+D:\royaltim-ai\venv\Scripts\python.exe tools\ai_models\cosmetics\make_cosmetic.py hat --id viking_helm --name "Viking Helm" --price 400 --prompt "viking helmet with two big curved horns" --candidates 4
+:: 2) выбранный вариант по его сиду: модель, запись в магазин, превью
+D:\royaltim-ai\venv\Scripts\python.exe tools\ai_models\cosmetics\make_cosmetic.py hat --id viking_helm --name "Viking Helm" --name-ru "Шлем викинга" --price 400 --prompt "viking helmet with two big curved horns" --seed 102
+:: скин: палитра картинки становится параметрами шейдера (+ узор по желанию)
+D:\royaltim-ai\venv\Scripts\python.exe tools\ai_models\cosmetics\make_cosmetic.py skin --id lava --name "Lava" --name-ru "Лава" --price 350 --prompt "glowing molten lava cracks in black rock" --pattern camo
+```
+
+- **Шапка**: концепт («игрушечная шапка одна на белом фоне» — с другими шаблонами генератор рисовал человека под шапкой) → TripoSR → `models/cosmetics/hats/<id>.glb`; игра подгоняет её под голову.
+- **Скин**: скины — перекраска шейдером, не текстура, поэтому из картинки берётся палитра: средний цвет даёт оттенок и яркость, самый яркий насыщенный — свечение и цвет узора (`--pattern stripes|dots|camo|checker|zebra|galaxy|waves`), `--metal 0..1`.
+- Скрипт сам вписывает вещь в `Cosmetics.gd` (после метки «AI-made»), русское название в `LocaleRu`, обновляет прайс сервера (`catalog.json`) и рендерит `art/cosmetics/<id>_preview.png`. Повтор с тем же `--id` — с `--force`; `--reuse-concept` пересчитывает скин по уже нарисованной картинке.
+- Чтобы вещь продавалась, нужен релиз игры и обновление сервера.

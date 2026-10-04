@@ -29,6 +29,16 @@ var target_rotation: Vector3 = Vector3.ZERO  # Target rotation for interpolation
 
 const RESPAWN_STALE_MSEC: int = 600  # states this soon after a respawn may still say "dead"
 
+# Other heroes: snapshot interpolation (NetClock) - [server msec, position, rotation, velocity]
+var _snaps: Array = []
+const SNAP_KEEP: int = 24
+# Our own hero: where we were lately ([local msec, position]) and a correction being blended in
+var _history: Array = []
+var _correction: Vector3 = Vector3.ZERO
+var _err_strikes: int = 0
+const SOFT_CORRECTION: float = 0.75  # metres off (after allowing for the round trip) before we ease back
+const SOFT_STRIKES: int = 3          # ...in this many states in a row (one odd packet is no reason)
+
 func _init(p_entity = null):  # p_entity: Entity
 	entity = p_entity
 
@@ -46,7 +56,12 @@ func update(delta: float):
 	# entities ARE the truth (with a target set by Player.respawn_at the server pulled the hero
 	# back to the respawn spot every frame - "can't leave the hex" in CTF / King of the Hill)
 	if entity and not _is_local() and not _is_authority():
-		_apply_smooth_interpolation(delta)
+		if not _snaps.is_empty() and NetClock.known():
+			_apply_snapshots()
+		else:
+			_apply_smooth_interpolation(delta)
+	elif entity and _is_local() and not _is_authority():
+		_track_local(delta)
 
 ## is_local_player is a property on Player, not a method
 func _is_local() -> bool:
@@ -123,6 +138,12 @@ func apply_sync_data(data: Dictionary):
 			var server_pos: Vector3 = data["position"]
 			if entity.global_position.distance_to(server_pos) > LOCAL_CORRECTION_DISTANCE:
 				entity.global_position = server_pos
+				_history.clear()
+				_correction = Vector3.ZERO
+			else:
+				_check_drift(server_pos)
+		elif data.has("timestamp") and not _is_authority():
+			_push_snapshot(int(data["timestamp"]), data["position"], data.get("rotation", entity.global_rotation), data.get("velocity", Vector3.ZERO))
 		else:
 			var new_target_pos = data["position"]
 			var current_pos = entity.global_position
@@ -140,7 +161,7 @@ func apply_sync_data(data: Dictionary):
 			if data.has("velocity"):
 				last_velocity = data["velocity"]
 
-	if data.has("rotation") and not _is_local():
+	if data.has("rotation") and not _is_local() and _snaps.is_empty():
 		# Store target rotation for smooth interpolation in update()
 		target_rotation = data["rotation"]
 
@@ -148,6 +169,78 @@ func apply_sync_data(data: Dictionary):
 	_apply_component_sync_data(data)
 
 	sync_data_received.emit(data)
+
+# ---------------------------------------------------------------- other heroes: snapshots
+
+func _push_snapshot(ts: int, pos: Vector3, rot: Vector3, vel: Vector3) -> void:
+	if not _snaps.is_empty():
+		var last: Array = _snaps[-1]
+		if ts <= int(last[0]):
+			return  # late or repeated (the state is unreliable_ordered, but be safe)
+		# Out of sight for a while, respawned, thrown by the zone: start over from here
+		if ts - int(last[0]) > 1000 or pos.distance_to(last[1]) > MAX_SNAP_DISTANCE:
+			_snaps.clear()
+	if _snaps.is_empty():
+		entity.global_position = pos
+	_snaps.append([ts, pos, rot, vel])
+	while _snaps.size() > SNAP_KEEP:
+		_snaps.pop_front()
+
+## Draw the hero where the server had it NetClock.INTERP_DELAY_MS ago: between the two snapshots
+## around that moment; past the newest one, a short guess along its velocity, then wait
+func _apply_snapshots() -> void:
+	var rt = NetClock.render_time()
+	while _snaps.size() >= 2 and float(_snaps[1][0]) <= rt:
+		_snaps.pop_front()
+	var a: Array = _snaps[0]
+	var pos: Vector3 = a[1]
+	var yaw: float = a[2].y
+	if _snaps.size() >= 2 and rt > float(a[0]):
+		var b: Array = _snaps[1]
+		var f = clampf((rt - float(a[0])) / maxf(float(b[0]) - float(a[0]), 1.0), 0.0, 1.0)
+		pos = a[1].lerp(b[1], f)
+		yaw = lerp_angle(a[2].y, b[2].y, f)
+	elif rt > float(a[0]):
+		var ahead = minf((rt - float(a[0])) / 1000.0, MAX_EXTRAPOLATION_TIME)
+		var v: Vector3 = a[3]
+		pos = a[1] + Vector3(v.x, 0.0, v.z) * ahead
+	entity.global_position = pos
+	entity.global_rotation.y = yaw
+
+# ---------------------------------------------------------------- our hero: easing back
+
+func _track_local(delta: float) -> void:
+	var now = Time.get_ticks_msec()
+	_history.append([now, entity.global_position])
+	while not _history.is_empty() and now - int(_history[0][0]) > 1500:
+		_history.pop_front()
+	if _correction.length_squared() > 0.0001:
+		var step = _correction * minf(1.0, delta * 8.0)
+		entity.global_position += step
+		_correction -= step
+
+## Where were we `msec_ago` ago? (the server's word on us is about one round trip old)
+func _position_ago(msec_ago: float) -> Vector3:
+	var when = Time.get_ticks_msec() - msec_ago
+	for i in range(_history.size() - 1, -1, -1):
+		if float(_history[i][0]) <= when:
+			return _history[i][1]
+	return _history[0][1] if not _history.is_empty() else entity.global_position
+
+## The server sees us somewhere else than we were one round trip ago, again and again (pushed,
+## blocked, a stamina or speed mismatch): ease over instead of drifting until the 4 m snap
+func _check_drift(server_pos: Vector3) -> void:
+	if _history.is_empty():
+		return
+	var err = server_pos - _position_ago(NetClock.rtt_ms + 33.0)
+	err.y = 0.0
+	if err.length() > SOFT_CORRECTION:
+		_err_strikes += 1
+		if _err_strikes >= SOFT_STRIKES:
+			_err_strikes = 0
+			_correction = err
+	else:
+		_err_strikes = 0
 
 ## Apply smooth interpolation every frame for remote players
 func _apply_smooth_interpolation(delta: float):

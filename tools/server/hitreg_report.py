@@ -18,7 +18,7 @@ from collections import Counter, defaultdict
 
 GUNS = ["Pistol", "Shotgun", "Sniper", "Rifle", "Flamethrower", "SMG", "Hand Cannon", "Marksman",
         "Minigun", "Double Barrel", "Jam Blaster", "Grenade Launcher"]
-OK = ("ok", "early")
+OK = ("ok", "early", "server")  # "server": a pellet / flame / grenade gun, the server shot it itself
 
 
 def pct(a, b):

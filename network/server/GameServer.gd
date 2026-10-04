@@ -38,7 +38,7 @@ var _match_start_time: float = 0.0
 ## Hit registration record (HitLog): every reported hit's verdict, server shots, damage, pings
 var hit_log: HitLog = HitLog.new()
 var _net_sample: float = 0.0
-const NET_SAMPLE_EVERY: float = 2.0
+const NET_SAMPLE_EVERY: float = 1.0
 
 func _ready():
 	server_world = ServerWorld.new()
@@ -292,8 +292,10 @@ func _process(delta: float):
 		for id in multiplayer.get_peers():
 			var pp = peer.get_peer(id)
 			if pp:
-				hit_log.sample(id, pp.get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME),
-					pp.get_statistic(ENetPacketPeer.PEER_PACKET_LOSS) / float(ENetPacketPeer.PACKET_LOSS_SCALE))
+				var rtt = float(pp.get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME))
+				if players.has(id):
+					players[id].ping_ms = rtt
+				hit_log.sample(id, rtt, pp.get_statistic(ENetPacketPeer.PEER_PACKET_LOSS) / float(ENetPacketPeer.PACKET_LOSS_SCALE))
 	_end_check_timer += delta
 	if _end_check_timer >= END_CHECK_INTERVAL:
 		_end_check_timer = 0.0
@@ -339,6 +341,19 @@ func respawn_player(player_id: int) -> void:
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager:
 		network_manager.broadcast_respawn(player_id, pos)
+
+## Everyone in the match for the Tab scoreboard: id -> [name, hero, kills, ping ms, alive, team]
+## (TickSystem sends it once a second; the host's HUD asks here)
+func scoreboard() -> Dictionary:
+	var out = {}
+	for id in players:
+		var sp: ServerPlayer = players[id]
+		var e = server_world.get_player(id) if server_world else null
+		var alive = e != null and is_instance_valid(e) and not e.get_component("HealthComponent").is_dead
+		var team = int(e.get_meta("team")) if e and is_instance_valid(e) and e.has_meta("team") else -1
+		out[id] = [String(lobby_manager.players_names.get(id, "Player_%d" % id)), sp.character_name, sp.kills,
+			int(sp.ping_ms), alive, team]
+	return out
 
 func alive_count() -> int:
 	var n = 0

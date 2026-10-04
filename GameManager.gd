@@ -6,6 +6,7 @@ var map_seed: int = 0  # Map seed for generation
 var last_error: String = ""  # Shown by the main menu after a failed/lost connection
 var training_mode: bool = false  # the game scene builds the training ground (TrainingGround)
 var matchmaking: bool = false  # PLAY online: after the hero comes the queue (MatchmakingScreen)
+var matchmaking_follow: bool = false  # in a party, not the leader: the leader's search took us along
 var game_mode: String = "br"   # GameModes id: the host picks it, clients get it in the lobby state
 
 # Cutscene data - set by SpawnSelectController / NetworkLobby before cutscene

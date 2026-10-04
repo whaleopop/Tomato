@@ -45,6 +45,7 @@ func _sync_clients():
 		return
 	var full = _collect_world_state()
 	var world = server.server_world
+	var board = server.scoreboard() if current_tick % SLOW_EVERY == 0 else {}  # Tab, once a second
 	var slow_hash = {}
 	for player_id in full.players:
 		var d: Dictionary = full.players[player_id]
@@ -61,6 +62,8 @@ func _sync_clients():
 			state["npcs"] = world.weed_spawner.states_for(viewer)
 		if server.rules and server.rules.mode != GameModes.BR:
 			state["mode"] = server.rules.state_for(peer_id)
+		if board.size() > 0:
+			state["board"] = board
 		var sent: Dictionary = _slow_sent.get_or_add(peer_id, {})
 		for player_id in full.players:
 			var data: Dictionary = full.players[player_id]

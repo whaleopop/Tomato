@@ -259,6 +259,9 @@ func _on_select_pressed():
 	var game_manager = get_node_or_null("/root/GameManager")
 	if game_manager:
 		game_manager.selected_character = selected_character
+	var online = get_node_or_null("/root/Online")
+	if online and not (game_manager and game_manager.training_mode):
+		online.set_hero(selected_character.character_name)  # profile, party bar, the party's queue
 
 	select_button.disabled = true
 	var next_scene = "res://scenes/SpawnSelectScene.tscn"

@@ -4,7 +4,7 @@ extends Control
 class_name MainMenu
 
 const SHOWCASE_INTERVAL: float = 4.0
-const VERSION = "v0.8.4"
+const VERSION = "v0.8.5"
 
 var start_button: Button = null
 var connect_button: Button = null
@@ -15,6 +15,12 @@ var training_button: Button = null
 var quit_button: Button = null
 var coins_label: Label = null
 var players_pill: Control = null  # registered / online right now (the backend's /status)
+var party_bar: PartyBar = null     # the party and invitations (Online.poll_party)
+var friends_button: Button = null
+var profile_button: Button = null
+var _party_timer: float = 0.0
+const PARTY_EVERY: float = 3.0
+var _overlay: Control = null       # FRIENDS / PROFILE
 var players_label: Label = null
 var _players_timer: float = 0.0
 const PLAYERS_EVERY: float = 15.0
@@ -48,6 +54,7 @@ func _ready():
 	if game_manager_node:
 		game_manager_node.training_mode = false
 		game_manager_node.matchmaking = false
+		game_manager_node.matchmaking_follow = false
 	# The showcase walks through the heroes you own (all of them before you own any)
 	_roster = CharacterRegistry.get_all()
 	var mine = _roster.filter(func(c): return PlayerProfile.owns_hero(c.character_name))
@@ -72,6 +79,7 @@ func _ready():
 			return
 		_update_coins()
 		_refresh_players()
+		_poll_party()
 	_check_update()
 
 	# First start: a name and the first hero
@@ -91,6 +99,10 @@ func _ready():
 		show_toast(tr("Offline: %s") % tr(online.last_error), UITheme.ACCENT_WARNING)
 
 func _process(delta: float):
+	_party_timer += delta
+	if _party_timer >= PARTY_EVERY:
+		_party_timer = 0.0
+		_poll_party()
 	_players_timer += delta
 	if _players_timer >= PLAYERS_EVERY:
 		_refresh_players()
@@ -162,6 +174,16 @@ func _create_ui():
 	training_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	training_button.pressed.connect(_on_training_pressed)
 
+	var social_row = HBoxContainer.new()
+	social_row.add_theme_constant_override("separation", 12)
+	buttons.add_child(social_row)
+	friends_button = UITheme.create_button("FRIENDS", social_row, Vector2(0, 52))
+	friends_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	friends_button.pressed.connect(_open_friends)
+	profile_button = UITheme.create_button("PROFILE", social_row, Vector2(0, 52))
+	profile_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	profile_button.pressed.connect(func(): _open_profile(0))
+
 	var small_row = HBoxContainer.new()
 	small_row.add_theme_constant_override("separation", 12)
 	buttons.add_child(small_row)
@@ -217,6 +239,16 @@ func _create_ui():
 	players_pill.visible = false
 	add_child(players_pill)
 	players_label = UITheme.create_label("", players_pill, UITheme.FONT_SMALL)
+
+	# ---- The party (under the players pill): members, LEAVE, invitations
+	party_bar = PartyBar.new()
+	party_bar.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	party_bar.offset_left = -360
+	party_bar.offset_right = -32
+	party_bar.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	party_bar.offset_top = 128
+	add_child(party_bar)
+	party_bar.open_profile.connect(_open_profile)
 	players_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	players_label.add_theme_color_override("font_color", UITheme.ACCENT_SUCCESS.lightened(0.25))
 
@@ -253,6 +285,57 @@ func _check_update():
 	var dialog = UpdateDialog.new()
 	dialog.release = release
 	add_child(dialog)
+
+# ---------------------------------------------------------------- friends and the party
+
+## Every few seconds: the party / invitations (PartyBar shows them) and, for a party member,
+## the leader's search - then we go to the search screen with them
+func _poll_party() -> void:
+	var online = get_node_or_null("/root/Online")
+	if online == null or not online.logged_in:
+		return
+	var res = await online.poll_party()
+	if not is_inside_tree() or res.is_empty() or not online.in_party() or online.is_party_leader():
+		return
+	if String(res.get("queue", "idle")) in ["searching", "starting", "found"]:
+		var gm = get_node_or_null("/root/GameManager")
+		var me = online.my_party_member()
+		if gm:
+			gm.game_mode = String(res.get("mode", gm.game_mode))
+			gm.matchmaking = true
+			gm.matchmaking_follow = true
+			var hero = CharacterRegistry.get_by_name(String(me.get("hero", "")))
+			if hero:
+				gm.selected_character = hero
+		set_process(false)
+		_transition_to(MatchmakingScreen.SCENE)
+
+func _open_friends() -> void:
+	if _overlay:
+		return
+	var panel = FriendsPanel.new()
+	add_child(panel)
+	_overlay = panel
+	showcase.visible = false
+	panel.closed.connect(func():
+		_overlay = null
+		showcase.visible = true)
+	panel.open_profile.connect(func(id):
+		panel.queue_free()
+		_overlay = null
+		_open_profile(id))
+
+func _open_profile(account_id: int) -> void:
+	if _overlay:
+		_overlay.queue_free()
+	var view = ProfileView.new()
+	view.account_id = account_id
+	add_child(view)
+	_overlay = view
+	showcase.visible = false
+	view.closed.connect(func():
+		_overlay = null
+		showcase.visible = true)
 
 ## "Online: N · Registered: M" from the backend (asking also keeps us counted as online)
 func _refresh_players():
@@ -328,6 +411,9 @@ func _find_match(mode: String):
 		show_toast(why, UITheme.ACCENT_DANGER)
 		if online:
 			online.login()
+		return
+	if online.in_party() and not online.is_party_leader():
+		show_toast(tr("Only the party leader starts the search"), UITheme.ACCENT_WARNING)
 		return
 	var gm = get_node_or_null("/root/GameManager")
 	if gm:

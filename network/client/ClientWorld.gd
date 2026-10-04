@@ -22,6 +22,8 @@ var hex_grid: HexGrid = null
 var visibility_system: VisibilitySystem = null
 var is_host_view: bool = false  # True when showing the host's ServerWorld
 var last_player_states: Dictionary = {}  # latest world state per player (hidden ones too)
+var last_board: Dictionary = {}  # everyone's name / hero / kills / ping (TickSystem, Tab: Scoreboard)
+var _rtt_timer: float = 0.0
 
 # Spawn queue for handling spawns before map is ready
 var is_map_ready: bool = false
@@ -134,6 +136,19 @@ func _setup_visibility_system():
 	visibility_system.name = "VisibilitySystem"
 	add_child(visibility_system)
 	visibility_system.setup(hex_grid)
+
+## Our round trip to the server (NetClock: drift checks; the scoreboard shows the server's numbers)
+func _process(delta: float) -> void:
+	_rtt_timer += delta
+	if _rtt_timer < 0.5:
+		return
+	_rtt_timer = 0.0
+	var nm = get_node_or_null("/root/NetworkManager")
+	var peer = nm.game_client.peer if nm and nm.game_client else null
+	if peer and peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		var server = peer.get_peer(1)
+		if server:
+			NetClock.rtt_ms = float(server.get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME))
 
 func _process_pending_spawns():
 	if pending_spawns.is_empty():
@@ -267,6 +282,10 @@ func apply_world_state(state: Dictionary):
 		return
 
 	var player_states: Dictionary = state["players"]
+	if state.has("timestamp"):
+		NetClock.on_state(int(state["timestamp"]))
+	if state.has("board"):
+		last_board = state["board"]
 	# The slow fields (name, wear, stats) come only now and then: keep the last ones we got
 	for player_id in player_states:
 		var d: Dictionary = player_states[player_id]
@@ -319,6 +338,8 @@ func apply_world_state(state: Dictionary):
 
 		var networking = player.get_component("NetworkingComponent")
 		if networking:
+			if state.has("timestamp"):
+				player_data["timestamp"] = state["timestamp"]  # when the server had them there (snapshots)
 			networking.apply_sync_data(player_data)
 
 		# Sync weapon state for remote players

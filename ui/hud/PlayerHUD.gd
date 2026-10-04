@@ -57,6 +57,7 @@ func _ready():
 	alive_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	alive_label.add_theme_font_override("font", UITheme.font_black())
 
+	add_child(Scoreboard.new())  # hold Tab: everyone with kills and ping
 	kill_feed = KillFeed.new()
 	kill_feed.name = "KillFeed"
 	kill_feed.set_anchors_preset(Control.PRESET_TOP_RIGHT)
