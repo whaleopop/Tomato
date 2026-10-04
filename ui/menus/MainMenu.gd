@@ -4,7 +4,7 @@ extends Control
 class_name MainMenu
 
 const SHOWCASE_INTERVAL: float = 4.0
-const VERSION = "v0.8.3"
+const VERSION = "v0.8.4"
 
 var start_button: Button = null
 var connect_button: Button = null

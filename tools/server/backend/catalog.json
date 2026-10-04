@@ -45,6 +45,16 @@
 			"price": 600,
 			"rank": -1
 		},
+		"dark_helm": {
+			"kind": "hat",
+			"price": 550,
+			"rank": -1
+		},
+		"dark_knight": {
+			"kind": "skin",
+			"price": 500,
+			"rank": -1
+		},
 		"default": {
 			"kind": "weapon",
 			"price": 0,
@@ -314,5 +324,5 @@
 	"name_min": 3,
 	"start_coins": 300,
 	"starter_picks": 2,
-	"version": "0.8.3"
+	"version": "0.8.4"
 }

@@ -23,6 +23,8 @@ const SKINS = {
 	"checker": {"name": "Checkers", "price": 300, "hsv": Vector3(0, 1, 1), "tint": Color(1, 1, 1), "metal": 0.0, "glow": Color(0, 0, 0, 0), "pattern": [4, 5.0, Color(0.1, 0.1, 0.12, 0.85)]},
 	"waves": {"name": "Waves", "price": 300, "hsv": Vector3(0.55, 1.0, 1.0), "tint": Color(1, 1, 1), "metal": 0.0, "glow": Color(0, 0, 0, 0), "pattern": [7, 2.5, Color(1.0, 0.95, 0.85, 0.8)]},
 	"galaxy": {"name": "Galaxy", "price": 650, "hsv": Vector3(0.7, 1.2, 0.35), "tint": Color(0.8, 0.7, 1.2), "metal": 0.1, "glow": Color(0.5, 0.3, 1.0, 0.5), "pattern": [6, 3.0, Color(0.35, 0.15, 0.6, 0.8)]},
+	# Dark knight: blackened steel with a violet glint (goes with the "dark_helm" hat)
+	"dark_knight": {"name": "Dark Knight", "price": 500, "hsv": Vector3(0.0, 0.08, 0.5), "tint": Color(0.88, 0.88, 0.98), "metal": 0.95, "glow": Color(0.45, 0.25, 0.9, 0.16)},
 	# Mastery (Mastery.gd): not sold - a hero earns each one by reaching its rank
 	"m_bronze": {"name": "Bronze Mastery", "price": 0, "mastery": 0, "hsv": Vector3(0.0, 0.35, 0.95), "tint": Color(1.15, 0.72, 0.42), "metal": 0.75, "glow": Color(1.0, 0.55, 0.25, 0.15)},
 	"m_silver": {"name": "Silver Mastery", "price": 0, "mastery": 1, "hsv": Vector3(0.0, 0.08, 1.15), "tint": Color(0.95, 0.98, 1.08), "metal": 0.9, "glow": Color(0.8, 0.9, 1.0, 0.2)},
@@ -38,6 +40,7 @@ const HATS = {
 	"horns": {"name": "Horns", "price": 350},
 	"halo": {"name": "Halo", "price": 450},
 	"crown": {"name": "Crown", "price": 600},
+	"dark_helm": {"name": "Dark Knight Helm", "price": 550},
 }
 const WEAPON_SKINS = {
 	"default": {"name": "Factory", "price": 0},
@@ -216,6 +219,27 @@ static func make_hat(id: String) -> Node3D:
 				var a = TAU * i / 5.0
 				_part(hat, _cone(0.05, 0.14), Vector3(cos(a) * 0.19, 0.18, sin(a) * 0.19), _mat(Color(1.0, 0.8, 0.25), 0.9))
 				_part(hat, _ball(0.03), Vector3(cos(a) * 0.2, 0.08, sin(a) * 0.2), _mat(Color(0.9, 0.2, 0.3)))
+		"dark_helm":
+			# A great helm in blackened steel (a "bucket" with a low dome): the visor plates sit on its
+			# front, a glowing violet eye slit and breathing holes, a riveted brow band and a dark
+			# plume on a crest (the hero faces +Z)
+			var steel = _mat(Color(0.2, 0.2, 0.24), 0.9)
+			var trim = _mat(Color(0.42, 0.38, 0.5), 0.95)
+			_part(hat, _cyl(0.25, 0.27, 0.3), Vector3(0, 0.15, 0), steel)
+			_part(hat, _dome(0.25, 0.12), Vector3(0, 0.3, 0), steel)
+			_part(hat, _cyl(0.272, 0.272, 0.04), Vector3(0, 0.03, 0), trim)
+			_part(hat, _cyl(0.258, 0.258, 0.035), Vector3(0, 0.27, 0), trim)
+			_part(hat, _box(Vector3(0.26, 0.022, 0.03)), Vector3(0, 0.19, 0.255), _glow_mat(Color(0.7, 0.35, 1.0)))
+			_part(hat, _box(Vector3(0.03, 0.2, 0.03)), Vector3(0, 0.1, 0.262), trim)
+			for side in [-1, 1]:
+				for row in 2:
+					_part(hat, _ball(0.012), Vector3(side * 0.08, 0.09 - row * 0.05, 0.262), _glow_mat(Color(0.5, 0.25, 0.85)))
+			for i in 6:
+				var a = TAU * i / 6.0
+				_part(hat, _ball(0.018), Vector3(cos(a) * 0.275, 0.03, sin(a) * 0.275), trim)
+			_part(hat, _box(Vector3(0.035, 0.05, 0.36)), Vector3(0, 0.39, -0.02), trim)
+			var plume = _part(hat, _box(Vector3(0.05, 0.12, 0.34)), Vector3(0, 0.45, -0.08), _mat(Color(0.3, 0.07, 0.42)))
+			plume.rotation.x = 0.25
 	return hat
 
 static func _part(parent: Node3D, mesh: Mesh, pos: Vector3, mat: Material) -> MeshInstance3D:

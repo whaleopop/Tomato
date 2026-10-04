@@ -189,6 +189,8 @@ const STRINGS = {
 	"A match is in progress - wait for the next one": "Идёт матч, дождитесь следующего",
 	"The match is over - the server is starting a new one": "Матч окончен, сервер запускает новый",
 	"HOST LAN": "СВОЯ ИГРА",
+	"Dark Knight": "Тёмный рыцарь",
+	"Dark Knight Helm": "Шлем тёмного рыцаря",
 	"Update the game: the server runs v%s": "Обновите игру: на сервере версия v%s",
 	"UPDATE AVAILABLE": "ДОСТУПНО ОБНОВЛЕНИЕ",
 	"Download: %.0f MB": "Скачать: %.0f МБ",
