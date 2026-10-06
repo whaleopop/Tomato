@@ -20,6 +20,12 @@ var kind: int = Kind.WATERING_CAN
 var coords: Vector2i = Vector2i.ZERO
 var _spin: Node3D = null                  # the windmill's sails
 var _falling: bool = false
+const NAME_NEAR: float = 14.0    # the sign starts to fade this close
+const NAME_LINGER: float = 4.0   # seconds it stays after that
+var _name_label: Label3D = null
+var _name_near: float = -1.0     # seconds since the hero first came near (-1: not yet)
+var _name_check: float = 0.0
+var _name_done: bool = false
 
 # ---------------------------------------------------------------- where
 
@@ -136,6 +142,7 @@ func _ready():
 func _process(delta: float):
 	if _spin:
 		_spin.rotate_z(delta * 0.8)
+	_fade_name(delta)
 
 func fall():
 	if _falling or not is_inside_tree() or is_queued_for_deletion():
@@ -153,7 +160,7 @@ func _add_name():
 	label.text = NAMES[kind]
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.font_size = 64
-	label.pixel_size = 0.012
+	label.pixel_size = 0.0065
 	label.outline_size = 14
 	label.modulate = COLORS[kind].lightened(0.3)
 	label.outline_modulate = Color(0.05, 0.06, 0.1, 0.85)
@@ -161,6 +168,28 @@ func _add_name():
 	label.position.y = [3.4, 4.2, 3.6, 7.8, 2.6][kind]
 	label.no_depth_test = false
 	add_child(label)
+	_name_label = label
+
+## The sign fades out a few seconds after the local hero first comes near
+func _fade_name(delta: float) -> void:
+	if _name_label == null or _name_done:
+		return
+	_name_check -= delta
+	if _name_check > 0.0 and _name_near < 0.0:
+		return
+	if _name_near < 0.0:
+		_name_check = 0.5
+		for p in get_tree().get_nodes_in_group("players"):
+			if p is Player and p.is_local_player and p.global_position.distance_to(global_position) < NAME_NEAR:
+				_name_near = 0.0
+				break
+		return
+	_name_near += delta
+	if _name_near > NAME_LINGER:
+		_name_done = true
+		var t = create_tween()
+		t.tween_property(_name_label, "modulate:a", 0.0, 1.0)
+		t.tween_callback(_name_label.queue_free)
 
 # ---------------------------------------------------------------- parts
 

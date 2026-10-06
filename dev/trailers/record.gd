@@ -21,6 +21,7 @@ func _process(_delta: float) -> bool:
 		root.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
 		root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 		root.content_scale_size = Vector2i(1280, 720)
+		root.content_scale_factor = 1.0  # SceneTransition may have applied the user's UI scale
 		# Loaded at run time: the director uses classes that need the autoloads
 		var director = load("res://dev/trailers/TrailerDirector.gd").new()
 		director.name = "TrailerDirector"

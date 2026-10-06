@@ -12,6 +12,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Peel Trap"
+	icon = "warning"
 	cooldown = 8.0
 	duration = 0.3
 	max_range = 6.0

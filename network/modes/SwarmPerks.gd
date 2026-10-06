@@ -25,7 +25,6 @@ const BUFFS = {
 	"b_cooldown": ["Zest", "Abilities recharge 20% faster", "cooldown", 0.20],
 	"b_dodge": ["Slippery peel", "6% chance to dodge a hit", "dodge", 0.06],
 	"b_shield": ["Wax coat", "+20 shield now and every wave", "shield", 20.0],
-	"b_stamina": ["Deep breath", "Sprinting costs 30% less stamina", "stamina", 0.30],
 	"b_juice": ["Fresh juice", "Heal to full right now", "instant", 1.0],
 	"b_healpack": ["Juicy", "Health packs heal 50% more", "heal", 0.5],
 }
@@ -40,17 +39,16 @@ const DEBUFFS = {
 	"d_range": ["Short barrel", "-15% gun range", "range", -0.15],
 	"d_reload": ["Butterfingers", "Reload 30% slower", "reload", -0.30],
 	"d_cooldown": ["Sleepy", "Abilities recharge 25% slower", "cooldown", -0.25],
-	"d_stamina": ["Out of breath", "Sprinting costs 40% more stamina", "stamina", -0.40],
 	"d_bruise": ["Bruised", "Lose 30% of your health now", "instant", -0.30],
 	"d_brittle": ["Brittle", "Your shield breaks now", "shield", 0.0],
 	"d_healpack": ["Bitter juice", "Health packs heal 30% less", "heal", -0.3],
 }
 
-## A glyph per stat for the cards and the perk list
+## An icon name (UITheme.icon) per stat for the cards and the perk list
 const ICONS = {
-	"health": "♥", "damage": "✦", "firerate": "»", "speed": "➜", "regen": "✿", "armor": "⛨",
-	"range": "⟷", "reload": "↻", "crit": "✸", "lifesteal": "❦", "thorns": "✷", "cooldown": "◔",
-	"dodge": "≋", "shield": "◈", "stamina": "∿", "instant": "✚", "heal": "✚",
+	"health": "heart", "damage": "sparkle", "firerate": "fast", "speed": "speed", "regen": "flower", "armor": "shield",
+	"range": "target", "reload": "refresh", "crit": "star", "lifesteal": "heart", "thorns": "diamond", "cooldown": "refresh",
+	"dodge": "speed", "shield": "shield", "stamina": "speed", "instant": "heart", "heal": "heart",
 }
 
 const BUFF_COLOR := Color(0.45, 1.0, 0.55)
@@ -69,7 +67,7 @@ static func stat(id: String) -> String:
 	return String(p[2]) if p.size() > 2 else ""
 
 static func icon(id: String) -> String:
-	return String(ICONS.get(stat(id), "•"))
+	return String(ICONS.get(stat(id), "dot"))
 
 ## Two cards [[buff, debuff], [buff, debuff]]: four different perks, no card that gives and takes
 ## the same stat

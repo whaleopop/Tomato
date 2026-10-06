@@ -7,6 +7,7 @@ const VALUE = 0.2
 
 func _init():
 	ability_name = "Spiky Skin"
+	icon = "star4"
 	cooldown = 0.0
 
 func _on_apply(entity):  # entity: Entity

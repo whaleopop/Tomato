@@ -130,10 +130,8 @@ func _half(root: Control, id: String, rect: Rect2, top: bool) -> void:
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tag.add_theme_font_override("font", UITheme.font_black())
 	tag.add_theme_color_override("font_color", Color(color, 0.8))
-	var icon = UITheme.create_hero_title(SwarmPerks.icon(id), col)
-	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	icon.add_theme_font_size_override("font_size", 92)
-	icon.add_theme_color_override("font_color", color.lightened(0.2))
+	var icon = UITheme.create_icon(SwarmPerks.icon(id), col, 72, color.lightened(0.2))
+	icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	if p.is_empty():
 		return
 	var name_label = UITheme.create_heading(tr(String(p[0])), col)

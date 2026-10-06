@@ -1,13 +1,13 @@
 ## Transparent 3D turntable that shows one character model over the UI background.
 ## Has its own World3D, so it never renders (or is lit by) the game world.
-extends SubViewportContainer
+extends HiResView
 class_name CharacterShowcase
 
 @export var rotation_speed: float = 0.6  # sway speed
 @export var sway_angle: float = 0.75     # radians left/right of the 3/4 front view (0 = spin)
 @export var target_height: float = 1.35
 
-var viewport: SubViewport
+
 var camera: Camera3D
 var turntable: Node3D
 var stage_material: StandardMaterial3D
@@ -36,15 +36,13 @@ var _dragging: bool = false
 var _idle: float = 99.0
 
 func _init():
-	stretch = true
+	super()
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	viewport = SubViewport.new()
 	viewport.own_world_3d = true
 	viewport.transparent_bg = true
 	viewport.msaa_3d = Viewport.MSAA_4X
 	viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
-	add_child(viewport)
 
 	var env = Environment.new()
 	env.background_mode = Environment.BG_CLEAR_COLOR

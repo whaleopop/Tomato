@@ -9,7 +9,7 @@ signal closed
 
 const TABS = ["Heroes", "Weapons", "Items", "Events", "How to play"]
 const HOWTO_TAB: int = 4
-const LIST_WIDTH = 270
+const LIST_WIDTH = 300
 const INFO_WIDTH = 410
 
 const WEAPON_BLURBS = {
@@ -27,16 +27,28 @@ const WEAPON_BLURBS = {
 	RangedWeapon.WeaponType.LAUNCHER: "Lobs grenades over cover. They blow up where they land.",
 }
 
+const SIDE: int = 28                 # the screen's side margin (the header's)
+const GAP: int = 20                  # between the list, the stage and the info panel
+const ROW_HEIGHT: int = 58
+
+var header: ScreenHeader
 var _tab_buttons: Array[Button] = []
 var _body: HBoxContainer
+var _list_scroll: ScrollContainer
 var _list_box: VBoxContainer
 var _info_box: VBoxContainer
 var _info_scroll: ScrollContainer
 var _showcase: CharacterShowcase
+var _stage_kicker: Label
+var _stage_name: Label
+var _stage_count: Label
 var _howto: Control
 var _entries: Array = []            # {title, subtitle, color, show: Callable, info: Callable}
 var _entry_buttons: Array[Button] = []
 var _tab: int = -1
+## Open on this tab at the entry with this title (set before adding it to the tree)
+var start_tab: int = 0
+var start_entry: String = ""
 
 func _ready():
 	# Already in the tree here: plain set_anchors_preset would keep the empty rect via offsets
@@ -44,55 +56,57 @@ func _ready():
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	UITheme.create_background(self)
 
-	var margin = UITheme.create_screen_margin(self, 32)
+	var margin = MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left", SIDE)
+	margin.add_theme_constant_override("margin_right", SIDE)
+	margin.add_theme_constant_override("margin_top", ScreenHeader.CONTENT_TOP)
+	margin.add_theme_constant_override("margin_bottom", 24)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(margin)
 	var column = VBoxContainer.new()
-	column.add_theme_constant_override("separation", 14)
+	column.add_theme_constant_override("separation", 18)
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_child(column)
 
-	# Header: back, title, tabs
-	var header = HBoxContainer.new()
-	header.add_theme_constant_override("separation", 18)
-	column.add_child(header)
-	var back = UITheme.create_button("←  BACK", header, Vector2(130, 46))
-	back.pressed.connect(close)
-	var titles = VBoxContainer.new()
-	titles.add_theme_constant_override("separation", 0)
-	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(titles)
-	var title = UITheme.create_title("GUIDE", titles)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	UITheme.create_label("Everything you can meet on the island", titles, UITheme.FONT_SMALL)
-
+	# Section tabs, the line about the guide at the other end
 	var tabs = HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 10)
 	column.add_child(tabs)
 	for i in TABS.size():
-		var tab_button = UITheme.create_button(TABS[i], tabs, Vector2(150, 44))
+		var tab_button = UITheme.create_tab(tr(TABS[i]).to_upper(), tabs, Vector2(150, 46))
+		tab_button.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # translated above
 		tab_button.pressed.connect(_show_tab.bind(i))
 		_tab_buttons.append(tab_button)
+	UITheme.create_spacer(true, tabs)
+	var about = UITheme.create_label("Everything you can meet on the island", tabs, UITheme.FONT_SMALL)
+	about.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	about.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 
-	# Body: list | 3D preview | details
+	# Body: list | 3D stage | details
 	_body = HBoxContainer.new()
 	_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_body.add_theme_constant_override("separation", 16)
+	_body.add_theme_constant_override("separation", GAP)
 	column.add_child(_body)
 
-	var list_panel = UITheme.create_panel(_body, 12)
+	var list_panel = UITheme.navy_panel(_body, 10)
 	list_panel.custom_minimum_size.x = LIST_WIDTH
-	var list_scroll = ScrollContainer.new()
-	list_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	list_panel.add_child(list_scroll)
+	_list_scroll = ScrollContainer.new()
+	_list_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	list_panel.add_child(_list_scroll)
+	var list_pad = MarginContainer.new()  # room for the rows' hover zoom inside the scroll
+	list_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+		list_pad.add_theme_constant_override(side, 6)
+	_list_scroll.add_child(list_pad)
 	_list_box = VBoxContainer.new()
 	_list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_list_box.add_theme_constant_override("separation", 6)
-	list_scroll.add_child(_list_box)
+	_list_box.add_theme_constant_override("separation", 8)
+	list_pad.add_child(_list_box)
 
-	_showcase = CharacterShowcase.new()
-	_showcase.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_showcase.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_body.add_child(_showcase)
+	_body.add_child(_build_stage())
 
-	var info_panel = UITheme.create_panel(_body, 20)
+	var info_panel = UITheme.navy_panel(_body, 22)
 	info_panel.custom_minimum_size.x = INFO_WIDTH
 	_info_scroll = ScrollContainer.new()
 	_info_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -106,9 +120,77 @@ func _ready():
 	_howto.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(_howto)
 
-	_show_tab(0)
+	# The shared top bar last: it draws over the content's shadows
+	header = ScreenHeader.make(self, "GUIDE", "HEROES · WEAPONS · LOOT", true)
+	header.back_pressed.connect(close)
+
+	show_entry(start_tab, start_entry)
 	modulate.a = 0.0
 	create_tween().tween_property(self, "modulate:a", 1.0, 0.25)
+
+## The middle: the entry's 3D model you can turn (drag) and zoom (wheel), its name on the stage
+## disc, arrows to the previous / next entry
+func _build_stage() -> Control:
+	var stage = Control.new()
+	stage.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stage.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stage.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_showcase = CharacterShowcase.new()
+	_showcase.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_showcase.interactive = true
+	stage.add_child(_showcase)
+
+	_stage_count = UITheme.create_label("", stage, UITheme.FONT_SMALL)
+	_stage_count.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_stage_count.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_stage_count.offset_top = 6
+	_stage_count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_stage_count.add_theme_font_override("font", UITheme.font_black())
+	_stage_count.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	_stage_count.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	_stage_count.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var names = VBoxContainer.new()
+	names.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	names.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	names.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	names.offset_bottom = -40  # on the stage disc, above the hint
+	names.add_theme_constant_override("separation", -4)
+	names.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stage.add_child(names)
+	_stage_kicker = UITheme.create_label("", names, 13)
+	_stage_kicker.uppercase = true
+	_stage_kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_stage_kicker.add_theme_font_override("font", UITheme.font_black())
+	_stage_kicker.add_theme_color_override("font_color", UITheme.GOLD)
+	_stage_kicker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_stage_name = UITheme.create_hero_title("", names)
+	_stage_name.uppercase = true
+	_stage_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_stage_name.add_theme_font_size_override("font_size", 40)
+	_stage_name.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
+	_stage_name.add_theme_constant_override("shadow_offset_y", 3)
+	_stage_name.add_theme_constant_override("shadow_outline_size", 4)
+	_stage_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	for step in [-1, 1]:
+		var arrow = UITheme.create_icon_chip("chevron_left" if step < 0 else "chevron_right", stage, Vector2(52, 72))
+		arrow.add_theme_font_override("font", UITheme.font_black())
+		arrow.add_theme_font_size_override("font_size", 38)
+		arrow.set_anchors_and_offsets_preset(Control.PRESET_CENTER_LEFT if step < 0 else Control.PRESET_CENTER_RIGHT)
+		arrow.grow_horizontal = Control.GROW_DIRECTION_END if step < 0 else Control.GROW_DIRECTION_BEGIN
+		arrow.grow_vertical = Control.GROW_DIRECTION_BOTH
+		arrow.pressed.connect(_step.bind(step))
+
+	var hint = UITheme.create_label("Drag to turn  ·  wheel to zoom  ·  double click to reset", stage, UITheme.FONT_SMALL)
+	hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	hint.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	hint.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	hint.offset_bottom = -10
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return stage
 
 func close():
 	closed.emit()
@@ -117,6 +199,10 @@ func close():
 func _unhandled_input(event: InputEvent):
 	if event.is_action_pressed("pause"):
 		close()
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("ui_right") or event.is_action_pressed("ui_left"):
+		var step = 1 if event.is_action_pressed("ui_right") else -1
+		_show_tab(wrapi(_tab + step, 0, TABS.size()))
 		get_viewport().set_input_as_handled()
 	elif _tab >= 0 and _tab < HOWTO_TAB and not _entries.is_empty():
 		var current = _selected_index()
@@ -132,7 +218,7 @@ func _unhandled_input(event: InputEvent):
 func _show_tab(index: int):
 	_tab = index
 	for i in _tab_buttons.size():
-		UITheme.style_selectable(_tab_buttons[i], i == index)
+		UITheme.set_tab_active(_tab_buttons[i], i == index)
 	var is_howto = index == HOWTO_TAB
 	_body.visible = not is_howto
 	_howto.visible = is_howto
@@ -148,44 +234,112 @@ func _show_tab(index: int):
 		3:
 			_entries = _event_entries()
 	for child in _list_box.get_children():
+		_list_box.remove_child(child)
 		child.queue_free()
 	_entry_buttons.clear()
+	var section = TABS[index]
 	for i in _entries.size():
 		var entry = _entries[i]
 		if entry.has("section"):
-			var caption = UITheme.create_caption(entry.section, _list_box)
-			caption.custom_minimum_size.y = 26
-			caption.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+			section = entry.section
+			_section(_list_box, entry.section).custom_minimum_size.y = 24 if i == 0 else 34
+		entry["group"] = section
 		_entry_buttons.append(_make_entry_button(entry, i))
+	_list_scroll.scroll_vertical = 0
 	_select_entry(0)
 
-func _make_entry_button(entry: Dictionary, index: int) -> Button:
-	var button = Button.new()
-	button.custom_minimum_size = Vector2(0, 56)
-	button.focus_mode = Control.FOCUS_NONE
-	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	button.pressed.connect(_select_entry.bind(index))
-	_list_box.add_child(button)
+## A tab and, on it, the entry titled `title` (an item name, a hero name...; "" = the first)
+func show_entry(tab: int, title: String = "") -> void:
+	_show_tab(clampi(tab, 0, TABS.size() - 1))
+	if title == "" or tab == HOWTO_TAB:
+		return
+	for i in _entries.size():
+		if String(_entries[i].get("title", "")) == title:
+			_select_entry(i)
+			return
 
-	var pad = MarginContainer.new()
-	pad.set_anchors_preset(Control.PRESET_FULL_RECT)
-	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for side in ["margin_left", "margin_right"]:
-		pad.add_theme_constant_override(side, 14)
-	button.add_child(pad)
+## The stage arrows: the previous / next entry, round the list
+func _step(step: int):
+	if _entries.is_empty():
+		return
+	_select_entry(wrapi(_selected_index() + step, 0, _entries.size()))
+
+## A list row in the main menu's look: a colored dot, the name over a short line, a chevron
+func _make_entry_button(entry: Dictionary, index: int) -> Button:
+	var button = UITheme.create_button("", _list_box, Vector2(0, ROW_HEIGHT))
+	button.pressed.connect(_select_entry.bind(index))
+
+	var dot = Panel.new()
+	dot.add_theme_stylebox_override("panel", UITheme.glow_box(entry.color, 0.5, 99, 6))
+	dot.custom_minimum_size = Vector2(10, 10)
+	dot.set_anchors_and_offsets_preset(Control.PRESET_CENTER_LEFT)
+	dot.offset_left = 16
+	dot.offset_right = 26
+	dot.offset_top = -5
+	dot.offset_bottom = 5
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(dot)
+
 	var rows = VBoxContainer.new()
+	rows.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	rows.offset_left = 38
+	rows.offset_right = -32
 	rows.alignment = BoxContainer.ALIGNMENT_CENTER
 	rows.add_theme_constant_override("separation", -2)
 	rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pad.add_child(rows)
+	button.add_child(rows)
 	var name_label = UITheme.create_heading(entry.title, rows)
-	name_label.add_theme_font_size_override("font_size", 17)
-	name_label.add_theme_color_override("font_color", entry.color.lightened(0.35))
+	name_label.uppercase = true
+	name_label.add_theme_font_override("font", UITheme.font_black())
+	name_label.add_theme_font_size_override("font_size", 16)
+	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var sub = UITheme.create_label(entry.subtitle, rows, UITheme.FONT_TINY)
 	sub.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	sub.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var chevron = Label.new()
+	chevron.text = "›"
+	chevron.add_theme_font_override("font", UITheme.font_black())
+	chevron.add_theme_font_size_override("font_size", 30)
+	chevron.set_anchors_and_offsets_preset(Control.PRESET_RIGHT_WIDE)
+	chevron.offset_left = -30
+	chevron.offset_right = -8
+	chevron.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	chevron.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	chevron.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(chevron)
+	button.set_meta("chevron", chevron)
+	_style_row(button, false)
 	return button
+
+## Navy like the main menu's rows; the selected one lit with a gold rim
+func _style_row(button: Button, selected: bool):
+	var normal: StyleBoxFlat
+	var hover: StyleBoxFlat
+	if selected:
+		normal = UITheme.navy_box(Color(0.11, 0.15, 0.26, 0.98), UITheme.GOLD, 12)
+		normal.set_border_width_all(2)
+		normal.shadow_color = Color(UITheme.GOLD, 0.22)
+		normal.shadow_size = 12
+		normal.shadow_offset = Vector2.ZERO
+		hover = normal
+	else:
+		normal = UITheme.navy_box(UITheme.NAVY, Color(1, 1, 1, 0.1), 12)
+		hover = UITheme.navy_box(UITheme.NAVY_HOVER, Color(UITheme.GOLD, 0.8), 12)
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", normal)
+	button.add_theme_stylebox_override("hover_pressed", hover)
+	var chevron: Label = button.get_meta("chevron", null)
+	if chevron:
+		chevron.add_theme_color_override("font_color", UITheme.GOLD if selected else UITheme.TEXT_MUTED)
+
+## Scrolls the list to a row (deferred: after the rows are laid out; a row of a tab left since is skipped)
+func _scroll_to(button):
+	if is_instance_valid(button) and button.is_inside_tree() and _list_scroll.is_ancestor_of(button):
+		_list_scroll.ensure_control_visible(button)
 
 func _selected_index() -> int:
 	for i in _entry_buttons.size():
@@ -198,20 +352,35 @@ func _select_entry(index: int):
 		return
 	for i in _entry_buttons.size():
 		var on = i == index
-		UITheme.style_selectable(_entry_buttons[i], on, _entries[i].color)
+		_style_row(_entry_buttons[i], on)
 		if on:
 			_entry_buttons[i].set_meta("selected", true)
 		elif _entry_buttons[i].has_meta("selected"):
 			_entry_buttons[i].remove_meta("selected")
+	if index < _entry_buttons.size():
+		_scroll_to.call_deferred(_entry_buttons[index])
 	var entry = _entries[index]
 	entry.show.call()
+	_stage_kicker.text = entry.subtitle
+	_stage_name.text = entry.title
+	_stage_name.add_theme_color_override("font_color", entry.color.lightened(0.35))
+	_stage_count.text = "%d / %d" % [index + 1, _entries.size()]
 	for child in _info_box.get_children():
+		_info_box.remove_child(child)
 		child.queue_free()
-	var title = UITheme.create_title(entry.title, _info_box)
+	var titles = VBoxContainer.new()
+	titles.add_theme_constant_override("separation", -2)
+	_info_box.add_child(titles)
+	_kicker(titles, entry.get("group", TABS[_tab]))
+	var title = UITheme.create_title(entry.title, titles)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	title.uppercase = true
+	title.add_theme_font_override("font", UITheme.font_black())
+	title.add_theme_font_size_override("font_size", 30)
 	title.add_theme_color_override("font_color", entry.color.lightened(0.3))
 	entry.info.call(_info_box)
 	_info_scroll.scroll_vertical = 0
+
 
 # ---------------------------------------------------------------- heroes
 
@@ -235,10 +404,10 @@ func _hero_entries() -> Array:
 
 func _hero_info(box: VBoxContainer, c: CharacterData, max_health: float, max_speed: float):
 	_paragraph(box, c.description)
-	UITheme.create_caption("Stats", box)
+	_section(box, "Stats")
 	_stat(box, "Health", "%d" % int(c.base_health), c.base_health / max_health, UITheme.ACCENT_SUCCESS)
 	_stat(box, "Speed", "%.1f" % c.base_speed, c.base_speed / max_speed, UITheme.ACCENT_INFO)
-	UITheme.create_caption("Abilities", box)
+	_section(box, "Abilities")
 	if c.active_ability:
 		_ability_card(box, c.active_ability, "Active · F", UITheme.ACCENT_SECONDARY,
 			tr("Cooldown: %d s") % int(round(c.active_ability.cooldown)))
@@ -247,7 +416,7 @@ func _hero_info(box: VBoxContainer, c: CharacterData, max_health: float, max_spe
 
 func _ability_card(box: VBoxContainer, data: AbilityData, kind: String, color: Color, footer: String):
 	var card = PanelContainer.new()
-	card.add_theme_stylebox_override("panel", UITheme.glass_box(Color(color, 0.08), Color(color, 0.35), 14, 14, 10))
+	card.add_theme_stylebox_override("panel", UITheme.navy_box(Color(0.08, 0.10, 0.18, 0.95), Color(color, 0.45), 12, 14, 10))
 	box.add_child(card)
 	var col = VBoxContainer.new()
 	col.add_theme_constant_override("separation", 4)
@@ -294,7 +463,7 @@ func _weapon_info(box: VBoxContainer, w: RangedWeapon, share: float):
 		UITheme.create_pill("Starting weapon", UITheme.ACCENT_PRIMARY, pills)
 	_paragraph(box, WEAPON_BLURBS.get(w.weapon_type, ""))
 
-	UITheme.create_caption("Stats", box)
+	_section(box, "Stats")
 	var per_shot = w.damage * w.pellet_count
 	var damage_text = ("%d × %d" % [int(w.damage), w.pellet_count]) if w.pellet_count > 1 else "%d" % int(w.damage)
 	_stat(box, "Damage per shot", damage_text, per_shot / 100.0, UITheme.ACCENT_DANGER)
@@ -619,14 +788,14 @@ func _drop_model() -> Node3D:
 
 func _build_howto() -> Control:
 	var row = HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
+	row.add_theme_constant_override("separation", GAP)
 
-	var controls = UITheme.create_panel(row, 22)
+	var controls = UITheme.navy_panel(row, 26)
 	controls.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var cbox = VBoxContainer.new()
-	cbox.add_theme_constant_override("separation", 8)
+	cbox.add_theme_constant_override("separation", 14)
 	controls.add_child(cbox)
-	UITheme.create_caption("Controls", cbox)
+	_panel_title(cbox, "How to play", "Controls")
 	# The keys as they are bound now (Settings -> Controls, Keybinds)
 	var K = func(action): return Keybinds.label(action)
 	var keys = [
@@ -640,7 +809,6 @@ func _build_howto() -> Control:
 		[K.call("inventory"), "Inventory"],
 		[K.call("use_heal"), "Use a health pack"],
 		[K.call("use_shield"), "Drink a shield"],
-		[K.call("sprint"), "Sprint (uses stamina)"],
 		[K.call("jump"), "Jump"],
 		[K.call("camera_mode"), "Third-person camera on / off"],
 		["RMB", "Aim over the shoulder (third person)"],
@@ -648,21 +816,27 @@ func _build_howto() -> Control:
 	]
 	var grid = GridContainer.new()
 	grid.columns = 2
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.add_theme_constant_override("h_separation", 16)
 	grid.add_theme_constant_override("v_separation", 8)
-	cbox.add_child(grid)
+	_scrolled(cbox).add_child(grid)
 	for k in keys:
-		var chip = UITheme.create_pill(k[0], UITheme.ACCENT_INFO, grid)
-		chip.size_flags_horizontal = Control.SIZE_SHRINK_END
-		chip.custom_minimum_size.x = 96
-		UITheme.create_label(k[1], grid)
+		_key_cap(k[0], grid)
+		var what = UITheme.create_label(k[1], grid, UITheme.FONT_SMALL)
+		what.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		what.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		what.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
 
-	var rules = UITheme.create_panel(row, 22)
+	var rules = UITheme.navy_panel(row, 26)
 	rules.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var rules_column = VBoxContainer.new()
+	rules_column.add_theme_constant_override("separation", 14)
+	rules.add_child(rules_column)
+	_panel_title(rules_column, "How to play", "How a match goes")
 	var rbox = VBoxContainer.new()
+	rbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rbox.add_theme_constant_override("separation", 10)
-	rules.add_child(rbox)
-	UITheme.create_caption("How a match goes", rbox)
+	_scrolled(rules_column).add_child(rbox)
 	for line in [
 		"Pick a landing spot, drop in from the meteor and grab what you find.",
 		"The zone closes in on a random spot: the edge glows first, then burns, then mountains rise and shove everyone inwards.",
@@ -681,6 +855,54 @@ func _build_howto() -> Control:
 	return row
 
 # ---------------------------------------------------------------- building blocks
+
+## A gold uppercase caption over a group (the list's sections, the info panel's "Stats")
+func _section(box: Control, text: String) -> Label:
+	var label = _kicker(box, text)
+	label.custom_minimum_size.y = 28
+	label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	return label
+
+## The small gold kicker over a title
+func _kicker(box: Control, text: String) -> Label:
+	var label = UITheme.create_label(text, box, UITheme.FONT_TINY)
+	label.uppercase = true
+	label.add_theme_font_override("font", UITheme.font_black())
+	label.add_theme_color_override("font_color", UITheme.GOLD)
+	return label
+
+## A panel's kicker over its white uppercase heading
+func _panel_title(box: Control, kicker: String, title: String):
+	var titles = VBoxContainer.new()
+	titles.add_theme_constant_override("separation", -2)
+	box.add_child(titles)
+	_kicker(titles, kicker)
+	var head = UITheme.create_heading(title, titles)
+	head.uppercase = true
+	head.add_theme_font_override("font", UITheme.font_black())
+	head.add_theme_font_size_override("font_size", 24)
+
+## A vertical scroll filling the rest of `box` (the How to play panels on small screens)
+func _scrolled(box: Control) -> ScrollContainer:
+	var scroll = ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_child(scroll)
+	return scroll
+
+## A key as a navy key cap with a gold rim ("W A S D", "F", "Esc")
+func _key_cap(text: String, parent: Control) -> PanelContainer:
+	var cap = PanelContainer.new()
+	cap.add_theme_stylebox_override("panel", UITheme.navy_box(Color(0.10, 0.13, 0.22, 0.98), Color(UITheme.GOLD, 0.5), 8, 12, 3))
+	cap.custom_minimum_size.x = 110
+	cap.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	parent.add_child(cap)
+	var label = UITheme.create_label(text, cap, 13)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_override("font", UITheme.font_black())
+	label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	return cap
 
 func _paragraph(box: Control, text: String, size: int = UITheme.FONT_NORMAL) -> Label:
 	var label = UITheme.create_label(text, box, size)
@@ -724,9 +946,9 @@ func _bullet(box: Control, text: String):
 	row.add_theme_constant_override("separation", 10)
 	box.add_child(row)
 	var dot = UITheme.create_label("•", row)
-	dot.add_theme_color_override("font_color", UITheme.ACCENT_PRIMARY)
+	dot.add_theme_color_override("font_color", UITheme.GOLD)
 	dot.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	var label = _paragraph(row, text)
+	var label = _paragraph(row, text, 15)
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 func _num(value: float) -> String:

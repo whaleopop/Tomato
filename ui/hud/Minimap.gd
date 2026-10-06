@@ -116,6 +116,28 @@ func _rebuild_texture():
 		img.fill_rect(Rect2i(int(p.x) - dot / 2, int(p.y) - dot / 2, dot, dot), color)
 	_tile_texture = ImageTexture.create_from_image(img)
 
+## Soft wedge in the camera's view direction (the locked camera can be rotated, the map is north-up)
+func _draw_view_wedge(origin: Vector2):
+	var cam = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var b = cam.global_transform.basis
+	var dir = Vector2(-b.z.x, -b.z.z)
+	if dir.length() < 0.2:  # looking (almost) straight down: the screen's up is the camera's up
+		dir = Vector2(b.y.x, b.y.z)
+	if dir.length() < 0.01:
+		return
+	var base = dir.angle()
+	var half = deg_to_rad(35.0)
+	var reach = 46.0
+	var pts = PackedVector2Array([origin])
+	var cols = PackedColorArray([Color(UITheme.ACCENT_PRIMARY, 0.25)])
+	for i in 9:
+		var a = base - half + half * 2.0 * i / 8.0
+		pts.append(origin + Vector2(cos(a), sin(a)) * reach)
+		cols.append(Color(UITheme.ACCENT_PRIMARY, 0.0))
+	draw_polygon(pts, cols)
+
 func _draw():
 	var rect = Rect2(Vector2.ZERO, size)
 	var frame = UITheme.glass_box(Color(0.03, 0.05, 0.10, 0.55), Color(1, 1, 1, 0.16), 24, 0, 0)
@@ -176,6 +198,7 @@ func _draw():
 	# Us: arrow pointing where we look
 	if tracked_player and is_instance_valid(tracked_player):
 		var mp = inset.position + _world_to_map(tracked_player.global_position) * scale_to_rect
+		_draw_view_wedge(mp)
 		var yaw = tracked_player.rotation.y
 		var fwd = Vector2(sin(yaw), cos(yaw))
 		var right = Vector2(fwd.y, -fwd.x)

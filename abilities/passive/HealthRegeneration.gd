@@ -8,6 +8,7 @@ var regen_interval: float = 1.0  # Heal every second
 
 func _init():
 	ability_name = "Health Regeneration"
+	icon = "plus"
 	cooldown = 0.0
 
 func update(delta: float, entity):  # entity: Entity

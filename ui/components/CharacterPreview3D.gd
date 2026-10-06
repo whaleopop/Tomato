@@ -1,5 +1,5 @@
 ## 3D character preview for UI (character selection, etc.)
-extends SubViewportContainer
+extends HiResView
 class_name CharacterPreview3D
 
 @export var character_data: Resource  # CharacterData resource
@@ -9,7 +9,7 @@ class_name CharacterPreview3D
 @export var camera_distance: float = 5.0
 @export var camera_height: float = 1.5
 
-var viewport: SubViewport
+
 var camera: Camera3D
 var character_instance: Node3D
 var environment: WorldEnvironment
@@ -18,11 +18,8 @@ var character_pivot: Node3D  # Pivot for rotation
 
 func _ready():
 	# Create viewport
-	viewport = SubViewport.new()
-	viewport.size = size
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	viewport.transparent_bg = true
-	add_child(viewport)
 
 	# Create environment with nice lighting
 	_setup_environment()
@@ -30,8 +27,8 @@ func _ready():
 	# Create camera
 	camera = Camera3D.new()
 	camera.position = Vector3(0, camera_height, camera_distance)
-	camera.look_at(Vector3(0, camera_height * 0.7, 0), Vector3.UP)
 	viewport.add_child(camera)
+	camera.look_at(Vector3(0, camera_height * 0.7, 0), Vector3.UP)
 
 	# Create pivot for character rotation
 	character_pivot = Node3D.new()
@@ -203,8 +200,7 @@ func _update_ability_demo(delta):
 
 ## Handle resize
 func _on_resized():
-	if viewport:
-		viewport.size = size
+	pass  # HiResView sizes the viewport
 
 ## Set rotation speed
 func set_rotation_speed(speed: float):

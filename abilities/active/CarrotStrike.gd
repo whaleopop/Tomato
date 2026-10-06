@@ -11,6 +11,7 @@ func aim_preview() -> Dictionary:
 func _init():
 	super()
 	ability_name = "Carrot Strike"
+	icon = "arrow_forward"
 	cooldown = 6.0
 
 func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity

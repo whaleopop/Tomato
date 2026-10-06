@@ -99,7 +99,7 @@ func send_ui_action(action: Dictionary):
 	_send_input_to_server(input_data)
 
 func _send_stop():
-	var input_data = {"timestamp": Time.get_ticks_msec(), "sequence": input_sequence, "rotation_y": player.rotation.y, "sprint": false}
+	var input_data = {"timestamp": Time.get_ticks_msec(), "sequence": input_sequence, "rotation_y": player.rotation.y}
 	input_sequence += 1
 	_send_input_to_server(input_data)
 	_apply_input_locally(input_data)
@@ -203,6 +203,44 @@ func _find_auto_target() -> Node3D:
 			return c[1]
 	return null
 
+## Who this trigger pull hits. A single bullet is resolved right here, by the shooter: the gun's
+## spread is rolled (CombatComponent.roll_shot_direction: accuracy, movement, bloom), that bullet
+## is traced from the muzzle and only what it really hits is reported - the cursor on an enemy is
+## no longer a sure hit. Its direction goes along ("shot_dir"): the local tracer follows it and the
+## server fires a miss along it instead of rolling again. Other fire modes keep the old rule: the
+## server shoots them itself, aimed at the target under the cursor (rewound to where we saw it).
+func _resolve_shot(input_data: Dictionary, combat: CombatComponent, aim: Dictionary) -> void:
+	var gun = combat.equipped_ranged_weapon if combat else null
+	if gun == null or gun.fire_mode != "single":
+		if aim.has("entity_id"):
+			input_data["hit_entity_id"] = aim.entity_id
+		return
+	if not combat.can_shoot():
+		return  # this pull doesn't fire here (cooldown, reload, empty): nothing to roll
+	var dir: Vector3 = combat.roll_shot_direction(input_data.target_position)
+	input_data["shot_dir"] = dir
+	var hit = _trace_shot(combat.muzzle_position(), dir, combat.reach()).get("collider")
+	if hit and hit != player and "entity_id" in hit:
+		input_data["hit_entity_id"] = hit.entity_id
+
+## The bullet's ray (HitscanSystem.shoot's layers), passing through the frozen copies of players the
+## server hides from us (ClientWorld._apply_hidden: invisible where we last saw them, still solid) -
+## a "hit" on one would hurt that hero wherever they really are
+func _trace_shot(from: Vector3, dir: Vector3, reach: float) -> Dictionary:
+	var world_3d = get_viewport().world_3d
+	if not world_3d:
+		return {}
+	var query = PhysicsRayQueryParameters3D.create(from, from + dir.normalized() * reach,
+		HitscanSystem.LAYER_PLAYERS | HitscanSystem.LAYER_ENEMIES | HitscanSystem.LAYER_ENVIRONMENT)
+	var exclude: Array[RID] = [player.get_rid()]
+	for _i in 4:
+		query.exclude = exclude
+		var hit = world_3d.direct_space_state.intersect_ray(query)
+		if hit.is_empty() or not (hit.collider is Node and hit.collider.get_meta("net_hidden", false)):
+			return hit
+		exclude.append(hit.rid)
+	return {}
+
 ## Get current aim position for crosshair
 func get_aim_position() -> Vector3:
 	return current_aim_position
@@ -228,7 +266,7 @@ func _mouse_target() -> Dictionary:
 		return target
 	target.position = result.position
 	var collider = result.get("collider")
-	if collider and collider != player and "entity_id" in collider:
+	if collider and collider != player and "entity_id" in collider and not collider.get_meta("net_hidden", false):
 		var eye = player.global_position + Vector3(0, 1.0, 0)
 		var body = collider.global_position + Vector3(0, 0.9, 0)
 		if not CoverSpawner.fire_blocked(world_3d, eye, body):
@@ -266,9 +304,6 @@ func _capture_and_send_input():
 
 	# Jump disabled for standard mode
 
-	# Capture sprint input (Shift)
-	input_data["sprint"] = Input.is_action_pressed("sprint")
-
 	# Attack: a click, or holding the button (the weapon's fire rate limits the rate)
 	var combat = player.get_component("CombatComponent")
 	var holding = Input.is_action_pressed("attack") and combat != null and combat.can_attack()
@@ -277,12 +312,11 @@ func _capture_and_send_input():
 		var aim = _mouse_target()
 		input_data["target_position"] = aim.position
 		# The client picks who it hit (server-authoritative damage checks it again)
-		if aim.has("entity_id"):
-			input_data["hit_entity_id"] = aim.entity_id
+		_resolve_shot(input_data, combat, aim)
 	elif _auto_target_ok(auto_target) and combat and combat.can_shoot() and not _using_consumable():
 		input_data["attack"] = true
 		input_data["target_position"] = auto_target.global_position + Vector3(0, 0.9, 0)
-		input_data["hit_entity_id"] = auto_target.entity_id
+		_resolve_shot(input_data, combat, {"position": input_data.target_position, "entity_id": auto_target.entity_id})
 
 	# Capture ability input (F/G/H/J)
 	for i in range(4):
@@ -355,10 +389,6 @@ func _apply_input_locally(input_data: Dictionary):
 			# No movement input - stop moving
 			movement.set_move_direction(Vector3.ZERO)
 
-		# Apply sprint
-		if input_data.has("sprint"):
-			movement.set_sprint(input_data.sprint)
-
 		if input_data.get("jump", false):
 			movement.jump()
 
@@ -372,6 +402,8 @@ func _apply_input_locally(input_data: Dictionary):
 				Sfx.own("empty")
 			_clicked_empty = gun != null and gun.current_ammo <= 0
 			if input_data.has("target_position"):
+				if input_data.get("shot_dir") is Vector3:
+					combat.preset_shot(input_data.shot_dir)  # the bullet _resolve_shot rolled and traced
 				combat.attack(input_data.target_position)
 	else:
 		_clicked_empty = false

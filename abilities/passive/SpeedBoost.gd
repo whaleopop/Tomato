@@ -7,6 +7,7 @@ var original_speed: float = -1.0  # -1 means not stored yet
 
 func _init():
 	ability_name = "Swift Movement"
+	icon = "speed"
 	cooldown = 0.0
 
 func _on_apply(entity):  # entity: Entity

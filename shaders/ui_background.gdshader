@@ -3,11 +3,11 @@ shader_type canvas_item;
 
 uniform vec4 base_top : source_color = vec4(0.035, 0.045, 0.10, 1.0);
 uniform vec4 base_bottom : source_color = vec4(0.02, 0.07, 0.07, 1.0);
-uniform vec4 blob_green : source_color = vec4(0.28, 0.85, 0.45, 1.0);
+uniform vec4 blob_green : source_color = vec4(0.22, 0.45, 0.95, 1.0);
 uniform vec4 blob_tomato : source_color = vec4(1.0, 0.36, 0.34, 1.0);
 uniform vec4 blob_corn : source_color = vec4(1.0, 0.78, 0.28, 1.0);
 uniform vec4 blob_beet : source_color = vec4(0.58, 0.32, 0.95, 1.0);
-uniform float intensity : hint_range(0.0, 1.5) = 0.55;
+uniform float intensity : hint_range(0.0, 1.5) = 0.42;
 uniform float speed : hint_range(0.0, 2.0) = 0.35;
 uniform float grain : hint_range(0.0, 0.2) = 0.035;
 

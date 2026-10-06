@@ -11,6 +11,7 @@ var _tick: float = 0.0
 
 func _init():
 	ability_name = "Photosynthesis"
+	icon = "flower"
 	cooldown = 0.0
 
 func update(delta: float, entity):  # entity: Entity

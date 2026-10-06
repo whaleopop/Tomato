@@ -7,6 +7,7 @@ const HEAL_COLOR = Color(0.45, 1.0, 0.5)
 const SHIELD_COLOR = Color(0.45, 0.75, 1.0)
 
 var inventory: InventoryComponent = null
+var progress_only: bool = false  # the use-progress bar instead of the chips (a second instance)
 
 func _ready():
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -26,12 +27,15 @@ func _draw():
 	if not inventory:
 		return
 	var font = UITheme.font_black()
-	var chip = Vector2(92, 40)
-	var gap = 10.0
-	var kinds = [["heal", "use_heal", HEAL_COLOR, "+"], ["shield", "use_shield", SHIELD_COLOR, "◆"]]
+	var chip = Vector2(88, 34)
+	var gap = 8.0
+	var kinds = [["heal", "use_heal", HEAL_COLOR, "heart"], ["shield", "use_shield", SHIELD_COLOR, "shield"]]
 	var total_w = kinds.size() * chip.x + (kinds.size() - 1) * gap
-	var x = (size.x - total_w) / 2.0
+	var x = size.x - total_w  # chips hug the right edge of their holder
 	var y = size.y - chip.y
+	if progress_only:
+		_draw_progress(font, y)
+		return
 	for k in kinds:
 		var count = inventory.consumable_count(k[0])
 		var active = inventory.using == k[0]
@@ -43,7 +47,7 @@ func _draw():
 		# key chip
 		var key = Keybinds.label(k[1])
 		var kw = font.get_string_size(key, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
-		var key_rect = Rect2(rect.position + Vector2(6, 8), Vector2(max(kw + 10, 24), 24))
+		var key_rect = Rect2(rect.position + Vector2(5, 5), Vector2(max(kw + 10, 24), 24))
 		draw_style_box(UITheme.glass_box(Color(1, 1, 1, 0.12 * alpha), Color(1, 1, 1, 0.2 * alpha), 6, 0, 0), key_rect)
 		draw_string(font, key_rect.position + Vector2((key_rect.size.x - kw) / 2.0, 17), key, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.9 * alpha))
 		# icon + count
@@ -54,14 +58,15 @@ func _draw():
 			var iw = ih * tex.get_width() / max(tex.get_height(), 1)
 			draw_texture_rect(tex, Rect2(Vector2(tx - 2, rect.position.y + (chip.y - ih) / 2.0), Vector2(min(iw, 26.0), ih)), false, Color(1, 1, 1, alpha))
 		else:
-			draw_string(font, Vector2(tx, rect.position.y + 27), k[3], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(col, alpha))
-		draw_string(font, Vector2(tx + (28 if _icons.has(k[0]) else 20), rect.position.y + 27), str(count), HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1, 1, 1, alpha))
+			draw_texture_rect(UITheme.icon(k[3]), Rect2(Vector2(tx, rect.position.y + (chip.y - 20.0) / 2.0), Vector2(20, 20)), false, Color(col, alpha))
+		draw_string(font, Vector2(tx + (24 if _icons.has(k[0]) else 20), rect.position.y + 24), str(count), HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(1, 1, 1, alpha))
 		x += chip.x + gap
 
-	# The one in progress: a bar over the chips with the time left
+## The one in progress: a bar with the time left (the context lane's first row)
+func _draw_progress(font: Font, _y: float):
 	if inventory.using != "":
 		var col = HEAL_COLOR if inventory.using == "heal" else SHIELD_COLOR
-		var bar = Rect2(Vector2((size.x - 240) / 2.0, y - 34), Vector2(240, 12))
+		var bar = Rect2(Vector2((size.x - 240) / 2.0, size.y - 12), Vector2(240, 12))
 		draw_style_box(UITheme.glass_box(Color(0, 0, 0, 0.55), Color(1, 1, 1, 0.15), 6, 0, 0), bar)
 		var p = clamp(inventory.use_progress(), 0.0, 1.0)
 		if p > 0.0:

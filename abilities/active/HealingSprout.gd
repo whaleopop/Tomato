@@ -12,6 +12,7 @@ const HEAL_TICKS: int = 6
 
 func _init():
 	ability_name = "Healing Sprout"
+	icon = "leaf"
 	cooldown = 12.0
 	duration = heal_duration
 

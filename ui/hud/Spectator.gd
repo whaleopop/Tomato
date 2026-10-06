@@ -17,12 +17,14 @@ var _names: Dictionary = {}   # player id -> nickname (lobby state + kill feed)
 
 func _ready():
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	add_theme_stylebox_override("panel", UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.82), Color(1, 1, 1, 0.12), 18, 18, 10))
+	# The menus' look: a navy bar with a soft gold rim, gold kicker, the name in black type
+	add_theme_stylebox_override("panel", UITheme.navy_box(Color(0.04, 0.055, 0.1, 0.92), Color(UITheme.GOLD, 0.4), 16, 18, 10))
 	var row = HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
 	add_child(row)
 
-	var prev = UITheme.create_button("‹", row, Vector2(46, 46))
+	var prev = UITheme.create_icon_chip("‹", row, Vector2(46, 46))
+	prev.add_theme_font_size_override("font_size", 26)
 	prev.pressed.connect(func(): step(-1))
 
 	var box = VBoxContainer.new()
@@ -31,6 +33,7 @@ func _ready():
 	row.add_child(box)
 	var cap = UITheme.create_caption("SPECTATING", box)
 	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.add_theme_color_override("font_color", UITheme.GOLD)
 	var line = HBoxContainer.new()
 	line.alignment = BoxContainer.ALIGNMENT_CENTER
 	line.add_theme_constant_override("separation", 8)
@@ -40,6 +43,7 @@ func _ready():
 	_dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	line.add_child(_dot)
 	_name_label = UITheme.create_heading("", line)
+	_name_label.add_theme_font_override("font", UITheme.font_black())
 	_hero_label = UITheme.create_label("", line, UITheme.FONT_SMALL)
 	_hero_label.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 	_hp_bar = UITheme.create_progress_bar(100, 100, UITheme.ACCENT_SUCCESS, box)
@@ -48,10 +52,13 @@ func _ready():
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 
-	var next = UITheme.create_button("›", row, Vector2(46, 46))
+	var next = UITheme.create_icon_chip("›", row, Vector2(46, 46))
+	next.add_theme_font_size_override("font_size", 26)
 	next.pressed.connect(func(): step(1))
 
 	var leave = UITheme.create_button("MENU", row, Vector2(110, 46))
+	leave.add_theme_font_override("font", UITheme.font_black())
+	leave.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	leave.pressed.connect(func(): leave_pressed.emit())
 
 	var network_manager = get_node_or_null("/root/NetworkManager")

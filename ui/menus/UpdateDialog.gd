@@ -72,34 +72,68 @@ func _ready():
 	add_child(dim)
 	var center = CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(center)
-	var panel = UITheme.create_panel(center, 30)
+	# The main menu's card: navy, a gold kicker over the white title, the versions as pills
+	var panel = UITheme.navy_panel(center, 28)
 	var col = VBoxContainer.new()
-	col.custom_minimum_size = Vector2(560, 0)
-	col.add_theme_constant_override("separation", 14)
+	col.custom_minimum_size = Vector2(580, 0)
+	col.add_theme_constant_override("separation", 16)
 	panel.add_child(col)
-	_title = UITheme.create_title("UPDATE AVAILABLE", col)
-	_title.add_theme_font_override("font", UITheme.font_black())
-	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var version = UITheme.create_heading("%s  →  %s" % [MainMenu.VERSION, release.get("tag", "")], col)
-	version.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	version.add_theme_color_override("font_color", UITheme.ACCENT_PRIMARY)
-	var notes = UITheme.create_label(_short_notes(String(release.get("notes", ""))), col, UITheme.FONT_SMALL)
-	notes.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	notes.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
+	var titles = UITheme.create_screen_title("UPDATE AVAILABLE", "New version", col)
+	_title = titles.get_child(titles.get_child_count() - 1)
+	_title.add_theme_font_size_override("font_size", 34)
+	var versions = HBoxContainer.new()
+	versions.add_theme_constant_override("separation", 10)
+	col.add_child(versions)
+	var old_pill = UITheme.create_pill(MainMenu.VERSION, UITheme.TEXT_MUTED, versions)
+	old_pill.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	var arrow = UITheme.create_icon("chevron_right", versions, 28, UITheme.GOLD)
+	arrow.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var new_pill = UITheme.create_pill(String(release.get("tag", "")), UITheme.GOLD, versions)
+	new_pill.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	var notes_text = _short_notes(String(release.get("notes", "")))
+	if notes_text != "":
+		# What's new: the release notes in a dark inset, scrolled when long
+		var kicker = UITheme.create_label("What's new", col, 12)
+		kicker.uppercase = true
+		kicker.add_theme_font_override("font", UITheme.font_black())
+		kicker.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+		var inset = PanelContainer.new()
+		var inset_box = UITheme.navy_box(Color(0.02, 0.03, 0.06, 0.85), Color(1, 1, 1, 0.08), 12, 16, 12)
+		inset_box.shadow_size = 0
+		inset.add_theme_stylebox_override("panel", inset_box)
+		col.add_child(inset)
+		var scroll = ScrollContainer.new()
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		scroll.custom_minimum_size.y = clampf(notes_text.split("\n").size() * 23.0 + 4.0, 48.0, 220.0)
+		inset.add_child(scroll)
+		var notes = UITheme.create_label(notes_text, scroll, UITheme.FONT_SMALL)
+		notes.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		notes.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		notes.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # written by the release
+		notes.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
 	_info = UITheme.create_label(tr("Download: %.0f MB") % (release.get("size", 0) / 1048576.0), col, UITheme.FONT_SMALL)
-	_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_bar = UITheme.create_progress_bar(1.0, 0.0, UITheme.ACCENT_PRIMARY, col)
+	_info.add_theme_font_override("font", UITheme.font_bold())
+	_info.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
+	_bar = UITheme.create_progress_bar(1.0, 0.0, UITheme.GOLD, col)
 	_bar.custom_minimum_size = Vector2(0, 10)
 	_bar.visible = false
 	var row = HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 16)
+	row.add_theme_constant_override("separation", 14)
 	col.add_child(row)
-	_later_button = UITheme.create_button("LATER", row, Vector2(170, 54))
+	_later_button = UITheme.create_button("LATER", row, Vector2(170, 68))
+	_later_button.add_theme_font_override("font", UITheme.font_black())
 	_later_button.pressed.connect(queue_free)
-	_update_button = UITheme.create_primary_button("UPDATE", row, Vector2(220, 58))
+	_update_button = UITheme.create_play_button("UPDATE", "Download and restart", row)
+	_update_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_update_button.pressed.connect(_download)
+
+## Esc = LATER (not while it downloads)
+func _unhandled_input(event: InputEvent):
+	if event.is_action_pressed("ui_cancel") and _later_button and not _later_button.disabled:
+		get_viewport().set_input_as_handled()
+		queue_free()
 
 func _short_notes(text: String) -> String:
 	var lines = text.strip_edges().split("\n")

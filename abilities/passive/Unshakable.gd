@@ -7,6 +7,7 @@ const VALUE = true
 
 func _init():
 	ability_name = "Unshakable"
+	icon = "locked"
 	cooldown = 0.0
 
 func _on_apply(entity):  # entity: Entity

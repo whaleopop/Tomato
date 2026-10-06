@@ -78,7 +78,7 @@ func _sync_clients():
 				continue
 			var last = sent.get(player_id)
 			var slow_known = last != null and last[1] == slow_hash[player_id] and full.tick - int(last[0]) < SLOW_EVERY
-			if slow_known or (not own and (data.has("hits") or data.has("stamina"))):
+			if slow_known or (not own and (data.has("hits") or data.has("dealt"))):
 				data = data.duplicate()
 			if slow_known:
 				for k in SLOW_KEYS:
@@ -87,7 +87,7 @@ func _sync_clients():
 				sent[player_id] = [full.tick, slow_hash[player_id]]
 			if not own:
 				data.erase("hits")  # who shot them is only for their own client
-				data.erase("stamina")  # and how out of breath they are
+				data.erase("dealt")  # same for their hitmarker
 			state.players[player_id] = data
 		server.send_world_state_to(peer_id, state)
 

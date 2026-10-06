@@ -24,6 +24,8 @@ func _ready():
 	get_tree().root.theme = UITheme.get_theme()
 	GameSettings.load_and_apply()
 	_create_overlay()
+	get_tree().root.size_changed.connect(func(): UIScale.apply(get_tree().root))
+	UIScale.apply(get_tree().root)
 
 func _create_overlay():
 	color_rect = ColorRect.new()

@@ -6,6 +6,7 @@ var health_bonus: float = 20.0
 
 func _init(p_bonus: float = 20.0):
 	ability_name = "Tough Skin"
+	icon = "gem"
 	cooldown = 0.0
 	health_bonus = p_bonus
 

@@ -1,6 +1,8 @@
 ## Lobby / spawn selection: players (left), hex map (center), spawn info + READY (right).
 ## The map is a 3D diorama (HexMap3DView) by default; the flat HexMapView is one click away.
 ## Both get the same tiles / reserved / selection, map_view answers the questions.
+## Looks like the main menu: the screen header (the mode as its kicker), navy panels and rows,
+## the gold READY and a gold countdown over the map.
 extends Control
 class_name SpawnSelectMenu
 
@@ -10,6 +12,8 @@ signal ready_toggled(is_ready: bool)
 const INVALID = Vector2i(-9999, -9999)
 const BIOME_NAMES = ["Grass", "Forest", "Desert", "Rock", "Water", "Shallow water", "Swamp", "Beach", "Mountain",
 	"Flower meadow", "Frost", "Tall grass", "Mushroom grove", "Brambles"]
+const GOLD_TEXT = Color(0.10, 0.06, 0.0)  # dark text on the gold button
+const SIDE_WIDTH = 300
 
 # UI elements
 var map_view: HexMapView = null
@@ -23,9 +27,11 @@ var players_list: VBoxContainer = null
 var players_count: Label = null
 var status_label: Label = null
 var map_spinner: Control = null
+var header: ScreenHeader = null
 var _hover_card: ParallaxCard = null
-var _mode_holder: HBoxContainer = null
-var _mode_shown: String = ""  # the hero card of the player row under the mouse
+var _mode_holder: VBoxContainer = null
+var _mode_shown: String = ""  # the mode shown in the header / the mode block
+var _info_kicker: Label = null
 
 # State
 var selected_spawn: Vector2i = INVALID
@@ -39,66 +45,73 @@ func _ready():
 		_create_ui()
 
 func _create_ui():
+	# The plain backdrop: the 3D map is this screen's scene (a second 3D garden behind it would
+	# only cost frames while the host builds the match)
 	UITheme.create_background(self)
 
-	var margin = UITheme.create_screen_margin(self, 28)
-	var root = VBoxContainer.new()
-	root.add_theme_constant_override("separation", 16)
-	margin.add_child(root)
+	var margin = MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.offset_top = ScreenHeader.CONTENT_TOP
+	margin.offset_left = ScreenHeader.SIDE_MARGIN
+	margin.offset_right = -ScreenHeader.SIDE_MARGIN
+	margin.offset_bottom = -24
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(margin)
 
-	# ---- Header
-	var header = HBoxContainer.new()
-	header.add_theme_constant_override("separation", 14)
-	root.add_child(header)
-
-	var back_btn = UITheme.create_button("←  BACK", header, Vector2(130, 46))
-	back_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	back_btn.pressed.connect(_on_back_pressed)
-
-	var title_box = VBoxContainer.new()
-	title_box.add_theme_constant_override("separation", 0)
-	header.add_child(title_box)
-	var title = UITheme.create_title("PICK YOUR LANDING SPOT", title_box)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	status_label = UITheme.create_label("Click a free hex, then press READY", title_box, UITheme.FONT_SMALL)
-	status_label.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
-	# The match mode the host picked (GameModes; clients learn it with the lobby state)
-	UITheme.create_spacer(true, header).mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_mode_holder = HBoxContainer.new()
-	_mode_holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	header.add_child(_mode_holder)
-	_refresh_mode()
-
-	# ---- Body
 	var body = HBoxContainer.new()
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_theme_constant_override("separation", 20)
-	root.add_child(body)
-
+	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_child(body)
 	body.add_child(_create_left_panel())
 	body.add_child(_create_center_panel())
 	body.add_child(_create_right_panel())
 
+	# ---- The bar every screen has: back to the hero pick, the mode the host picked as the kicker
+	# (clients learn it with the lobby state), settings without a scene reload (we are in a lobby)
+	header = ScreenHeader.make(self, "PICK YOUR LANDING SPOT", "")
+	header.back_pressed.connect(_on_back_pressed)
+	header.add_settings_chip(false)
+	_refresh_mode()
+
+## A small gold uppercase kicker (the template's section label)
+func _kicker(text: String, parent: Control) -> Label:
+	var label = UITheme.create_label(text, parent, 12)
+	label.uppercase = true
+	label.add_theme_font_override("font", UITheme.font_black())
+	label.add_theme_color_override("font_color", UITheme.GOLD)
+	return label
+
 func _create_left_panel() -> Control:
-	var card = UITheme.create_panel(null, 20)
-	card.custom_minimum_size.x = 290
+	var card = UITheme.navy_panel(null, 18)
+	card.custom_minimum_size.x = SIDE_WIDTH
 
 	var box = VBoxContainer.new()
-	box.add_theme_constant_override("separation", 10)
+	box.add_theme_constant_override("separation", 12)
 	card.add_child(box)
 
 	var head = HBoxContainer.new()
 	box.add_child(head)
-	UITheme.create_caption("Players", head).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_kicker("Players", head).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	players_count = UITheme.create_label("", head, UITheme.FONT_TINY)
+	players_count.add_theme_font_override("font", UITheme.font_bold())
+	players_count.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
 
+	var scroll = ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	box.add_child(scroll)
 	players_list = VBoxContainer.new()
+	players_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	players_list.add_theme_constant_override("separation", 8)
-	box.add_child(players_list)
+	scroll.add_child(players_list)
+
+	var hint = UITheme.create_label("Hover a player to see their hero", box, UITheme.FONT_TINY)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 	return card
 
 func _create_center_panel() -> Control:
-	var card = UITheme.create_panel(null, 14)
+	var card = UITheme.navy_panel(null, 12)
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	map_view = HexMapView.new()
@@ -112,7 +125,7 @@ func _create_center_panel() -> Control:
 	card.add_child(map_3d)
 	map_view.visible = false
 
-	# 3D / 2D switch and the camera hint in the map's corners
+	# 3D / 2D switch and the camera hint in the map's corners, the status at the bottom
 	var corners = VBoxContainer.new()
 	corners.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(corners)
@@ -124,11 +137,28 @@ func _create_center_panel() -> Control:
 	map_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	map_hint.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	map_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	map_hint.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+	map_hint.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
+	map_hint.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
+	map_hint.add_theme_constant_override("shadow_offset_y", 1)
 	map_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	view_button = UITheme.create_button("2D MAP", top_row, Vector2(120, 38))
+	view_button = UITheme.create_button("2D MAP", top_row, Vector2(120, 40))
+	view_button.add_theme_font_override("font", UITheme.font_black())
+	view_button.add_theme_font_size_override("font_size", 15)
 	view_button.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	view_button.pressed.connect(_toggle_map_view)
+	UITheme.create_spacer(true, corners).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var status_row = CenterContainer.new()
+	status_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	corners.add_child(status_row)
+	var status_box = PanelContainer.new()
+	status_box.add_theme_stylebox_override("panel", UITheme.navy_box(Color(0.03, 0.045, 0.09, 0.88), Color(UITheme.GOLD, 0.45), 999, 22, 8))
+	status_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	status_row.add_child(status_box)
+	status_label = UITheme.create_label("Click a free hex, then press READY", status_box, UITheme.FONT_SMALL)
+	status_label.add_theme_font_override("font", UITheme.font_bold())
+	status_label.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	# Overlays on top of the map (spinner while waiting, countdown)
 	var overlay = CenterContainer.new()
@@ -147,29 +177,43 @@ func _create_center_panel() -> Control:
 
 	countdown_label = UITheme.create_hero_title("", stack)
 	countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	countdown_label.add_theme_font_size_override("font_size", 96)
+	countdown_label.add_theme_font_override("font", UITheme.font_black())
+	countdown_label.add_theme_font_size_override("font_size", 120)
+	countdown_label.add_theme_color_override("font_color", UITheme.GOLD)
+	countdown_label.add_theme_color_override("font_outline_color", Color(0.10, 0.06, 0.0, 0.85))
+	countdown_label.add_theme_constant_override("outline_size", 14)
+	countdown_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
+	countdown_label.add_theme_constant_override("shadow_offset_y", 6)
+	countdown_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	countdown_label.visible = false
 	return card
 
 func _create_right_panel() -> Control:
-	var card = UITheme.create_panel(null, 24)
-	card.custom_minimum_size.x = 300
+	var card = UITheme.navy_panel(null, 20)
+	card.custom_minimum_size.x = SIDE_WIDTH
 
 	var box = VBoxContainer.new()
-	box.add_theme_constant_override("separation", 12)
+	box.add_theme_constant_override("separation", 10)
 	card.add_child(box)
 
-	UITheme.create_caption("Landing spot", box)
-	info_label = UITheme.create_heading("Nothing selected", box)
-	info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info_label.custom_minimum_size.y = 70
+	# The match mode the host picked (GameModes; clients learn it with the lobby state)
+	_mode_holder = VBoxContainer.new()
+	_mode_holder.add_theme_constant_override("separation", 6)
+	box.add_child(_mode_holder)
 
 	UITheme.create_separator(box)
-	UITheme.create_caption("Legend", box)
+	_info_kicker = _kicker("Landing spot", box)
+	info_label = UITheme.create_heading("Nothing selected", box)
+	info_label.add_theme_font_override("font", UITheme.font_black())
+	info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info_label.custom_minimum_size.y = 52
+
+	UITheme.create_separator(box)
+	_kicker("Legend", box)
 	var legend = GridContainer.new()
 	legend.columns = 2
 	legend.add_theme_constant_override("h_separation", 14)
-	legend.add_theme_constant_override("v_separation", 6)
+	legend.add_theme_constant_override("v_separation", 5)
 	box.add_child(legend)
 	for biome in [0, 1, 2, 7, 6, 3, 8, 4, 9, 10, 11, 12, 13]:
 		_add_legend_item(legend, HexMapView.BIOME_COLORS[biome], BIOME_NAMES[biome])
@@ -183,6 +227,7 @@ func _create_right_panel() -> Control:
 	hint.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 
 	ready_button = UITheme.create_primary_button("READY", box, Vector2(0, 60))
+	ready_button.add_theme_font_size_override("font_size", 24)
 	ready_button.pressed.connect(_on_ready_pressed)
 	ready_button.disabled = true
 	return card
@@ -193,15 +238,18 @@ func _add_legend_item(parent: Control, color: Color, text: String):
 	parent.add_child(row)
 
 	var swatch = Panel.new()
-	swatch.custom_minimum_size = Vector2(14, 14)
+	swatch.custom_minimum_size = Vector2(12, 12)
 	swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var box = StyleBoxFlat.new()
 	box.bg_color = color
-	box.set_corner_radius_all(4)
+	box.set_corner_radius_all(3)
+	box.border_color = Color(color.lightened(0.4), 0.6)
+	box.set_border_width_all(1)
 	swatch.add_theme_stylebox_override("panel", box)
 	row.add_child(swatch)
 
-	UITheme.create_label(text, row, UITheme.FONT_TINY)
+	var label = UITheme.create_label(text, row, UITheme.FONT_TINY)
+	label.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
 
 ## Map data arrived (from the server or the host's own world)
 func setup(grid_data: Dictionary, p_reserved_spawns: Array, player_id: int):
@@ -256,6 +304,7 @@ func _on_hex_pressed(coords: Vector2i):
 	for view in _views():
 		view.set_selected(coords)
 	info_label.text = _describe(coords)
+	info_label.add_theme_color_override("font_color", UITheme.GOLD)
 	ready_button.disabled = false
 	spawn_confirmed.emit(coords)
 
@@ -278,7 +327,7 @@ func _on_ready_pressed():
 		show_status("Waiting for the other players...")
 	else:
 		ready_button.text = "READY"
-		UITheme.set_accent(ready_button, UITheme.ACCENT_PRIMARY)
+		UITheme.set_accent(ready_button, UITheme.GOLD, GOLD_TEXT)
 		show_status("Click a free hex, then press READY")
 
 	ready_toggled.emit(is_ready)
@@ -301,6 +350,7 @@ func clear_selection(message: String = ""):
 		for view in _views():
 			view.set_selected(INVALID)
 	info_label.text = ""
+	info_label.remove_theme_color_override("font_color")
 	ready_button.disabled = true
 	if is_ready:
 		_on_ready_pressed()
@@ -318,6 +368,7 @@ func update_reserved_spawns(new_reserved: Array):
 		for view in _views():
 			view.set_reserved(filtered)
 
+## The mode in the header's kicker and as the right panel's first block (its color, name and line)
 func _refresh_mode():
 	var mode = GameModes.current()
 	if mode == _mode_shown or not _mode_holder:
@@ -326,8 +377,26 @@ func _refresh_mode():
 	for c in _mode_holder.get_children():
 		c.queue_free()
 	var info = GameModes.info(mode)
-	var pill = UITheme.create_pill(info.name, info.color, _mode_holder)
-	pill.tooltip_text = tr(info.short)
+	if header:
+		header.set_title("PICK YOUR LANDING SPOT", String(info.name))
+	_kicker("Mode", _mode_holder)
+	var line = HBoxContainer.new()
+	line.add_theme_constant_override("separation", 10)
+	_mode_holder.add_child(line)
+	var gem = Panel.new()
+	gem.custom_minimum_size = Vector2(14, 14)
+	gem.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	gem.add_theme_stylebox_override("panel", UITheme.glow_box(info.color, 0.6, 99, 6))
+	line.add_child(gem)
+	var name_lbl = UITheme.create_heading(String(info.name), line)
+	name_lbl.add_theme_font_override("font", UITheme.font_black())
+	name_lbl.add_theme_color_override("font_color", Color(info.color).lightened(0.3))
+	name_lbl.uppercase = true
+	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var short = UITheme.create_label(String(info.short), _mode_holder, UITheme.FONT_TINY)
+	short.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	short.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
 	if mode == GameModes.CTF:
 		show_status("Teams start at their base: the spot you pick is ignored")
 
@@ -347,27 +416,16 @@ func update_players_list(players_data: Dictionary):
 		var row = PanelContainer.new()
 		row.mouse_filter = Control.MOUSE_FILTER_STOP
 		var is_me = player_id == my_player_id
-		var fill = Color(UITheme.ACCENT_PRIMARY, 0.12) if is_me else Color(1, 1, 1, 0.05)
-		row.add_theme_stylebox_override("panel", UITheme.glass_box(fill, Color(1, 1, 1, 0.08), 14, 12, 8))
+		var rim = Color(UITheme.GOLD, 0.7) if is_me else Color(1, 1, 1, 0.1)
+		var normal_box = UITheme.navy_box(UITheme.NAVY_HOVER if is_me else UITheme.NAVY, rim, 12, 10, 8)
+		var hover_box = UITheme.navy_box(UITheme.NAVY_HOVER, Color(UITheme.GOLD, 0.95), 12, 10, 8)
+		row.add_theme_stylebox_override("panel", normal_box)
 		players_list.add_child(row)
 
 		var hbox = HBoxContainer.new()
 		hbox.add_theme_constant_override("separation", 10)
 		hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(hbox)
-
-		var dot = Panel.new()
-		dot.custom_minimum_size = Vector2(10, 10)
-		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		var dot_box = StyleBoxFlat.new()
-		dot_box.bg_color = UITheme.ACCENT_SUCCESS if player_ready else Color(1, 1, 1, 0.25)
-		dot_box.set_corner_radius_all(99)
-		if player_ready:
-			dot_box.shadow_color = Color(UITheme.ACCENT_SUCCESS, 0.6)
-			dot_box.shadow_size = 5
-		dot.add_theme_stylebox_override("panel", dot_box)
-		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		hbox.add_child(dot)
 
 		# The hero's portrait (like the shop's chips); hover the row for the hero's card
 		var hero: CharacterData = CharacterRegistry.get_by_name(String(data.get("character", "")))
@@ -379,13 +437,14 @@ func update_players_list(players_data: Dictionary):
 		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var frame = PanelContainer.new()
 		var accent = hero.color if hero else Color(1, 1, 1, 0.3)
-		frame.add_theme_stylebox_override("panel", UITheme.glass_box(Color(accent, 0.18), Color(accent.lightened(0.3), 0.8), 12, 2, 2))
+		frame.add_theme_stylebox_override("panel", UITheme.glass_box(Color(accent, 0.18), Color(accent.lightened(0.3), 0.8), 10, 2, 2))
 		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		frame.add_child(portrait)
 		hbox.add_child(frame)
 		if hero:
+			var portrait_ref = weakref(portrait)  # the list is rebuilt with every lobby state
 			ItemRenderer.get_instance(get_tree()).hero(hero.character_name, String(wear.get("skin", "")), String(wear.get("hat", "")),
-				func(tex): if is_instance_valid(portrait): portrait.texture = HeroChips._crop(tex, false))
+				func(tex): if portrait_ref.get_ref(): portrait_ref.get_ref().texture = HeroChips._crop(tex, false))
 
 		var names = VBoxContainer.new()
 		names.add_theme_constant_override("separation", -2)
@@ -395,28 +454,49 @@ func update_players_list(players_data: Dictionary):
 		hbox.add_child(names)
 		var name_lbl = UITheme.create_label(data.get("name", tr("Player %d") % player_id), names, UITheme.FONT_SMALL)
 		name_lbl.clip_text = true
+		name_lbl.add_theme_font_override("font", UITheme.font_black())
 		name_lbl.add_theme_color_override("font_color", UITheme.TEXT_PRIMARY)
+		name_lbl.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
 		var hero_lbl = UITheme.create_label(hero.character_name if hero else "Choosing a hero...", names, UITheme.FONT_TINY)
 		hero_lbl.clip_text = true
 		hero_lbl.add_theme_color_override("font_color", hero.color.lightened(0.35) if hero else UITheme.TEXT_MUTED)
 
+		var pill: Control = null
+		if is_me:
+			pill = UITheme.create_pill("You", UITheme.GOLD, hbox)
+		elif player_id == 1:
+			pill = UITheme.create_pill("Host", UITheme.ACCENT_INFO, hbox)
+		if pill:
+			pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+		# Ready: a glowing mint dot, waiting: a dim one
+		var dot = Panel.new()
+		dot.custom_minimum_size = Vector2(10, 10)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		var dot_box = StyleBoxFlat.new()
+		dot_box.bg_color = UITheme.ACCENT_SUCCESS if player_ready else Color(1, 1, 1, 0.22)
+		dot_box.set_corner_radius_all(99)
+		if player_ready:
+			dot_box.shadow_color = Color(UITheme.ACCENT_SUCCESS, 0.6)
+			dot_box.shadow_size = 5
+		dot.add_theme_stylebox_override("panel", dot_box)
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hbox.add_child(dot)
+
 		if hero:
 			row.mouse_default_cursor_shape = Control.CURSOR_HELP
-			row.mouse_entered.connect(_show_hero_card.bind(row, hero, wear, String(data.get("name", ""))))
-			row.mouse_exited.connect(_hide_hero_card)
+			row.mouse_entered.connect(func():
+				row.add_theme_stylebox_override("panel", hover_box)
+				_show_hero_card(row, hero, wear, String(data.get("name", ""))))
+			row.mouse_exited.connect(func():
+				if is_instance_valid(row):
+					row.add_theme_stylebox_override("panel", normal_box)
+				_hide_hero_card())
 			row.gui_input.connect(func(event):
 				if event is InputEventMouseMotion and is_instance_valid(_hover_card):
 					var p = event.position / row.size
 					_hover_card._target = Vector2(p.x - 0.5, p.y - 0.5) * 2.0)
-
-		var pill: Control = null
-		if is_me:
-			pill = UITheme.create_pill("You", UITheme.ACCENT_PRIMARY, hbox)
-		elif player_id == 1:
-			pill = UITheme.create_pill("Host", UITheme.ACCENT_SECONDARY, hbox)
-		if pill:
-			pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-			pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	players_count.text = tr("%d / %d ready") % [ready_count, players_data.size()]
 
@@ -437,11 +517,12 @@ func _show_hero_card(row: Control, hero: CharacterData, wear: Dictionary, player
 	add_child(card)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE  # the row keeps the hover
 	var at = row.global_position - global_position + Vector2(row.size.x + 40, row.size.y / 2.0 - card.card_size.y / 2.0)
-	at.y = clamp(at.y, 20.0, size.y - card.card_size.y - 20.0)
+	at.y = clamp(at.y, ScreenHeader.CONTENT_TOP, size.y - card.card_size.y - 20.0)
 	card.position = at
 	card.modulate.a = 0.0
 	card.create_tween().tween_property(card, "modulate:a", 1.0, 0.12)
-	ItemRenderer.get_instance(get_tree()).hero(hero.character_name, skin, hat, func(tex): if is_instance_valid(card): card.set_art(tex))
+	var card_ref = weakref(card)  # gone again if the mouse moved on before the picture
+	ItemRenderer.get_instance(get_tree()).hero(hero.character_name, skin, hat, func(tex): if card_ref.get_ref(): card_ref.get_ref().set_art(tex))
 	_hover_card = card
 
 func _hide_hero_card():

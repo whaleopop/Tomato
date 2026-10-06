@@ -6,6 +6,7 @@ var dodge_chance: float = 0.15  # 15% chance to dodge attacks
 
 func _init():
 	ability_name = "Dodge Chance"
+	icon = "fast"
 	cooldown = 0.0
 
 func _on_apply(entity):  # entity: Entity

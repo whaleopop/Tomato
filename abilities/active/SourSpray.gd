@@ -14,6 +14,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Sour Spray"
+	icon = "sparkle"
 	cooldown = 9.0
 	duration = 0.4
 

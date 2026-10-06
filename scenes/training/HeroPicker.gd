@@ -1,5 +1,6 @@
-## Training ground hero picker (Tab): every hero as a shop card (ParallaxCard), portraits come
-## from ItemRenderer in what the hero wears. Clicking one reloads the arena with that hero
+## Training ground hero picker (Tab): the main menu's top bar (BACK closes) over every hero as a
+## shop card (ParallaxCard), portraits from ItemRenderer in what
+## the hero wears. Clicking one reloads the arena with that hero
 ## (TrainingGround._switch_to). Esc / Tab close it; while open the game gets no input.
 extends Control
 class_name HeroPicker
@@ -13,31 +14,47 @@ func _ready():
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	add_to_group("blocks_game_input")  # clicking a card must not fire
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	# A dark wash over the arena, the main menu's top bar (BACK closes) and the cards under it
 	var shade = ColorRect.new()
-	shade.color = Color(0.02, 0.03, 0.06, 0.72)
+	shade.color = Color(0.02, 0.03, 0.07, 0.78)
 	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(shade)
+	var header = ScreenHeader.make(self, "CHOOSE YOUR VEGGIE", "TRAINING GROUND")
+	header.back_pressed.connect(queue_free)
 
+	var area = Control.new()
+	area.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	area.offset_top = ScreenHeader.CONTENT_TOP - 20
+	area.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(area)
 	var center = CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(center)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	area.add_child(center)
 	var column = VBoxContainer.new()
-	column.add_theme_constant_override("separation", 6)
+	column.add_theme_constant_override("separation", 4)
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	center.add_child(column)
-	var title = UITheme.create_title("CHOOSE YOUR VEGGIE", column)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var hint = UITheme.create_label("Click a card to play it   ·   Tab / Esc  -  close", column, UITheme.FONT_NORMAL)
+	var hint_pill = PanelContainer.new()
+	hint_pill.add_theme_stylebox_override("panel", UITheme.navy_box(UITheme.NAVY, Color(1, 1, 1, 0.1), 99, 18, 6))
+	hint_pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	hint_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(hint_pill)
+	var hint = UITheme.create_label("Click a card to play it   ·   Tab / Esc  -  close", hint_pill, UITheme.FONT_SMALL)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_override("font", UITheme.font_bold())
 	hint.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
 
 	var pad = MarginContainer.new()
 	for side in ["margin_left", "margin_top", "margin_right", "margin_bottom"]:
-		pad.add_theme_constant_override(side, 30)  # room for the hover zoom and the tilt
+		pad.add_theme_constant_override(side, 26)  # room for the hover zoom and the tilt
+	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(pad)
 	var grid = GridContainer.new()
 	grid.columns = COLUMNS
 	grid.add_theme_constant_override("h_separation", 16)
 	grid.add_theme_constant_override("v_separation", 16)
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pad.add_child(grid)
 
 	var current = ""

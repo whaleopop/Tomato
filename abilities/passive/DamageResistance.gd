@@ -6,6 +6,7 @@ var resistance_percent: float = 0.1  # 10% resistance
 
 func _init(p_resistance: float = 0.1):
 	ability_name = "Damage Resistance"
+	icon = "shield"
 	cooldown = 0.0
 	resistance_percent = p_resistance
 

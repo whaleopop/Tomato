@@ -11,6 +11,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Turnip Toss"
+	icon = "target"
 	cooldown = 9.0
 	duration = 0.8
 	max_range = 8.0

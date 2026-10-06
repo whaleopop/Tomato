@@ -110,11 +110,6 @@ func party_action(path: String, body: Dictionary = {}) -> Dictionary:
 		party_changed.emit(res)
 	return res
 
-## The hero we play (others see it in the party bar and our profile; a party member queues with it)
-func set_hero(hero: String) -> void:
-	if logged_in:
-		request(HTTPClient.METHOD_POST, "/profile/hero", {"hero": hero})
-
 ## One JSON request; always returns a Dictionary with "ok" (and "error" when not ok).
 ## A "profile" in the answer replaces the mirrored one.
 func request(method: int, path: String, body: Dictionary = {}) -> Dictionary:

@@ -10,6 +10,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Tomato Splash"
+	icon = "burst"
 	cooldown = 8.0
 	duration = 0.5
 	max_range = 9.0  # a throw, not a sniper: clamped towards the cursor

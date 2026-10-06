@@ -11,6 +11,7 @@ var original_damage: float = -1.0
 
 func _init():
 	ability_name = "Balanced"
+	icon = "infinity"
 	cooldown = 0.0
 
 func _on_apply(entity):  # entity: Entity

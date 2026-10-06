@@ -13,6 +13,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Grape Decoy"
+	icon = "swap"
 	cooldown = 12.0
 	duration = 0.2
 

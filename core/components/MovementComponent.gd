@@ -5,11 +5,8 @@ class_name MovementComponent
 signal movement_started
 signal movement_stopped
 signal direction_changed(new_direction: Vector3)
-signal sprint_started
-signal sprint_stopped
 
 const DEFAULT_SPEED: float = 7.0  # Slightly faster base speed
-const SPRINT_MULTIPLIER: float = 1.5
 const DEFAULT_ACCELERATION: float = 30.0  # Faster acceleration
 const DEFAULT_FRICTION: float = 25.0  # Faster stopping
 const DEFAULT_AIR_CONTROL: float = 0.3  # Reduced control in air
@@ -29,7 +26,6 @@ var velocity: Vector3 = Vector3.ZERO
 var vertical_velocity: float = 0.0
 var is_moving: bool = false
 var is_grounded: bool = true
-var is_sprinting: bool = false
 var _jump_requested: bool = false
 var _dash_velocity: Vector3 = Vector3.ZERO
 var _dash_time: float = 0.0
@@ -37,19 +33,6 @@ var _dash_time: float = 0.0
 ## read the same map, so the prediction agrees with the server.
 var terrain_multiplier: float = 1.0
 var terrain_biome: int = -1  # the tile under the feet (BiomeRules: grip here, effects in StatusComponent)
-
-## Stamina: sprinting (Shift while moving) drains it, it comes back after a short rest. Run dry
-## and you can't sprint until it is back to STAMINA_RESTART. Simulated the same way on the server
-## and the owning client (the same inputs); the server's value comes back in the player state
-## ("stamina") and corrects the client when they drift apart.
-const STAMINA_MAX: float = 100.0
-const STAMINA_DRAIN: float = 44.0       # per second of sprinting: ~2.3 s from full
-const STAMINA_REGEN: float = 20.0       # per second once resting
-const STAMINA_REGEN_DELAY: float = 0.8  # seconds after the last sprint before it refills
-const STAMINA_RESTART: float = 30.0     # after running dry, sprinting comes back at this much
-var stamina: float = STAMINA_MAX
-var exhausted: bool = false
-var _stamina_rest: float = 0.0
 
 func _init(p_entity = null):  # p_entity: Entity
 	entity = p_entity
@@ -86,14 +69,6 @@ func dash(p_velocity: Vector3, time: float):
 func is_dashing() -> bool:
 	return _dash_time > 0.0
 
-func set_sprint(sprinting: bool):
-	if is_sprinting != sprinting:
-		is_sprinting = sprinting
-		if sprinting:
-			sprint_started.emit()
-		else:
-			sprint_stopped.emit()
-
 func update(delta: float):
 	if not enabled or not entity:
 		return
@@ -129,8 +104,7 @@ func _update_character_body(delta: float):
 		_update_terrain(body)
 	var inventory = entity.get_component("InventoryComponent") if entity.has_method("get_component") else null
 	var busy = inventory != null and inventory.using != ""  # drinking a shield / using a pack
-	var running = _update_stamina(delta) and not busy
-	var current_speed = speed * (SPRINT_MULTIPLIER if running else 1.0) * terrain_multiplier
+	var current_speed = speed * terrain_multiplier
 	if busy:
 		current_speed *= InventoryComponent.USE_MOVE_FACTOR
 	if status:
@@ -244,28 +218,6 @@ func _update_simple(delta: float):
 	entity.global_position += velocity * delta
 
 	# Rotation handled by PlayerInputHandler (looks at mouse cursor)
-
-## Spends / refills stamina; true while actually sprinting (held, moving, not out of breath)
-func _update_stamina(delta: float) -> bool:
-	var running = is_sprinting and not exhausted and stamina > 0.0 and move_direction.length_squared() > 0.01
-	if running:
-		stamina = max(0.0, stamina - STAMINA_DRAIN * delta * (float(entity.get_meta("stamina_factor", 1.0)) if entity else 1.0))
-		_stamina_rest = 0.0
-		if stamina <= 0.0:
-			exhausted = true
-	else:
-		_stamina_rest += delta
-		if _stamina_rest >= STAMINA_REGEN_DELAY:
-			stamina = min(STAMINA_MAX, stamina + STAMINA_REGEN * delta)
-		if exhausted and stamina >= STAMINA_RESTART:
-			exhausted = false
-	return running
-
-## The server's stamina for our own predicted hero: taken when we drifted apart noticeably
-func sync_stamina(value: float, p_exhausted: bool) -> void:
-	if abs(value - stamina) > 12.0 or p_exhausted != exhausted:
-		stamina = value
-		exhausted = p_exhausted
 
 func get_velocity() -> Vector3:
 	return Vector3(velocity.x, vertical_velocity, velocity.z)

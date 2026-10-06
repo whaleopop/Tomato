@@ -14,6 +14,7 @@ const DROP_HEIGHT: float = 12.0
 
 func _init():
 	ability_name = "Newton's Apple"
+	icon = "arrow_down"
 	cooldown = 9.0
 	duration = 0.2
 	max_range = 9.0

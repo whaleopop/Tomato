@@ -6,6 +6,7 @@ var damage_multiplier: float = 1.15  # 15% increase
 
 func _init():
 	ability_name = "Sharp Kernels"
+	icon = "burst"
 	cooldown = 0.0
 
 func _on_apply(entity):  # entity: Entity

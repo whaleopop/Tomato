@@ -265,7 +265,10 @@ func _process(_delta: float):
 	_update_interact_prompt()
 
 func _update_interact_prompt():
+	var hud = get_tree().get_first_node_in_group("player_hud")
 	if is_opened or is_opening or is_falling:
+		if hud:
+			hud.clear_interact(self)
 		if interact_prompt:
 			interact_prompt.queue_free()
 			interact_prompt = null
@@ -280,11 +283,21 @@ func _update_interact_prompt():
 			break
 
 	if not local_player:
+		if hud:
+			hud.clear_interact(self)
 		if interact_prompt and interact_prompt.visible:
 			interact_prompt.visible = false
 		return
 
 	var dist = global_position.distance_to(local_player.global_position)
+
+	if hud and hud.has_method("set_interact"):
+		# The HUD's context lane shows "[E] Open" (no 3D label over the hero's head)
+		if dist <= INTERACT_RANGE:
+			hud.set_interact(self, "[%s] %s" % [Keybinds.label("interact"), tr("Open")])
+		else:
+			hud.clear_interact(self)
+		return
 
 	if dist <= INTERACT_RANGE:
 		if not interact_prompt:

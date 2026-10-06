@@ -18,3 +18,6 @@ __pycache__/
 
 # Local runs of the online backend (tools/server/backend)
 /tools/server/backend/data/
+
+# Downloaded asset candidates waiting for review (asset-scout agent)
+/art/incoming/

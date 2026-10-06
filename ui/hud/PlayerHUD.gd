@@ -1,5 +1,8 @@
-## Main player HUD: health (top-left), minimap (top-right), weapons (bottom-left),
-## abilities (bottom-center), ammo (bottom-right), crosshair, alerts and the elimination screen.
+## Main player HUD, four corners on a 22 px margin: vitals card (bottom-left: portrait, HP, shield,
+## heal / shield chips), a column top-right (minimap, alive / kills / zone time, zone + event lines,
+## kill feed), alerts + the mode panel (top-center), abilities with a context lane above them
+## (use progress, status, hints, "[E] Open"; bottom-center), ammo (bottom-right), crosshair and the
+## elimination screen. A red edge vignette follows the missing HP under 30%.
 extends Control
 class_name PlayerHUD
 
@@ -24,48 +27,71 @@ var _known_names: Dictionary = {}   # player id -> nickname, from the kills so f
 
 var player: Player = null
 
-var _hero_card_small: ParallaxCard = null  # permanent small card bottom-left
+var context_lane: VBoxContainer = null  # bottom center above the ability bar: use progress, status, hints
+var top_center: VBoxContainer = null    # alerts (+ ModeView's panel in the other modes)
+var top_right: VBoxContainer = null     # minimap, stats pill, zone / event lines, kill feed
+var kills_label: Label = null
+var stats_pill: PanelContainer = null
+var hitmarker: Hitmarker = null
+var kill_cards: KillCards = null
+var zone_time_label: Label = null
+var _low_vignette: TextureRect = null   # red edges, alpha follows the missing HP under 30%
+var _use_progress: ConsumableBar = null
+var _kills_timer: float = 0.0
 
 func _ready():
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_to_group("player_hud")  # CameraController's view switch shows an alert
 
+	_create_low_vignette()
+
 	health_bar = HealthBar.new()
 	health_bar.name = "HealthBar"
-	_place(health_bar, Control.PRESET_TOP_LEFT, Vector2(20, 20))
+	health_bar.add_to_group("hud_health_bar")
+	health_bar.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	health_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	health_bar.offset_left = UITheme.MARGIN_MEDIUM
+	health_bar.offset_bottom = -UITheme.MARGIN_MEDIUM
 	add_child(health_bar)
+	health_bar.percent_changed.connect(_on_hp_percent)
+
+	# Top right: minimap, a stats pill, the zone / event lines, then the kill feed
+	top_right = VBoxContainer.new()
+	top_right.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	top_right.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	top_right.offset_right = -UITheme.MARGIN_MEDIUM
+	top_right.offset_top = UITheme.MARGIN_MEDIUM
+	top_right.custom_minimum_size.x = 208
+	top_right.add_theme_constant_override("separation", 8)
+	top_right.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(top_right)
 
 	minimap = Minimap.new()
 	minimap.name = "Minimap"
-	minimap.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	minimap.offset_left = -228
-	minimap.offset_right = -20
-	minimap.offset_top = 20
-	minimap.offset_bottom = 228
-	add_child(minimap)
+	top_right.add_child(minimap)
 
-	var alive_holder = PanelContainer.new()
-	alive_holder.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0, 0, 0, 0.35), Color(1, 1, 1, 0.14), 99, 14, 4))
-	alive_holder.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	alive_holder.offset_left = -228
-	alive_holder.offset_right = -20
-	alive_holder.offset_top = 236
-	alive_holder.offset_bottom = 266
-	alive_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(alive_holder)
-	alive_label = UITheme.create_label("", alive_holder, UITheme.FONT_SMALL)
-	alive_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	alive_label.add_theme_font_override("font", UITheme.font_black())
+	stats_pill = PanelContainer.new()
+	stats_pill.add_theme_stylebox_override("panel", UITheme.glass_box(UITheme.GLASS_TINT_HUD, Color(1, 1, 1, 0.08), UITheme.CORNER_RADIUS_SMALL, 12, 6))
+	stats_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	top_right.add_child(stats_pill)
+	var stats = HBoxContainer.new()
+	stats.add_theme_constant_override("separation", 12)
+	stats.alignment = BoxContainer.ALIGNMENT_CENTER
+	stats.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stats_pill.add_child(stats)
+	var alive_box = _stat_cell(stats, "leaf")  # TrainingGround hides this cell
+	alive_label = alive_box.get_child(1)
+	kills_label = _stat_cell(stats, "skull").get_child(1)
+	zone_time_label = _stat_cell(stats, "timer").get_child(1)
 
 	add_child(Scoreboard.new())  # hold Tab: everyone with kills and ping
+	# zone / event lines are made in _create_zone_timer / _create_event_timer (they go in the column)
+	_create_zone_timer()
+	_create_event_timer()
 	kill_feed = KillFeed.new()
 	kill_feed.name = "KillFeed"
-	kill_feed.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	kill_feed.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	kill_feed.offset_left = -460
-	kill_feed.offset_right = -20
-	kill_feed.offset_top = 276
-	add_child(kill_feed)
+	kill_feed.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_right.add_child(kill_feed)
 
 	ability_bar = AbilityBar.new()
 	ability_bar.name = "AbilityBar"
@@ -78,44 +104,68 @@ func _ready():
 
 	consumable_bar = ConsumableBar.new()
 	consumable_bar.name = "ConsumableBar"
-	consumable_bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	consumable_bar.offset_left = -160
-	consumable_bar.offset_right = 160
-	consumable_bar.offset_top = -196
-	consumable_bar.offset_bottom = -106
-	add_child(consumable_bar)
+	consumable_bar.set_anchors_preset(Control.PRESET_FULL_RECT)  # the heal / shield chips live in the vitals card
+	health_bar.chips_holder.add_child(consumable_bar)
 
 	ammo_display = AmmoDisplay.new()
 	ammo_display.name = "AmmoDisplay"
 	ammo_display.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	ammo_display.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	ammo_display.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	ammo_display.offset_left = -230
-	ammo_display.offset_right = -20
-	ammo_display.offset_top = -130
-	ammo_display.offset_bottom = -20
-	add_child(ammo_display)
+	ammo_display.offset_left = -442
+	ammo_display.offset_right = -UITheme.MARGIN_MEDIUM
+	ammo_display.offset_bottom = -UITheme.MARGIN_MEDIUM
+	add_child(ammo_display)  # _ready builds the slot strip and the card
+	weapon_slots_ui = ammo_display.weapon_slots_ui
 
-	_create_weapon_slots_ui()
 	_create_crosshair()
-	_create_hero_card_small()
+	hitmarker = Hitmarker.new()
+	crosshair.add_child(hitmarker)
 
+	# The kill card flies into the skull of the stats pill; it lands above the context lane
+	kill_cards = KillCards.new()
+	kill_cards.name = "KillCards"
+	kill_cards.kills_anchor = kills_label.get_parent()
+	kill_cards.lane_bottom = 260.0
+	kill_cards.on_arrive = _on_kill_card_arrived
+	add_child(kill_cards)
+
+	# Top center: the mode panel (ModeView puts it here) and the alerts under it
+	top_center = VBoxContainer.new()
+	top_center.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	top_center.grow_horizontal = Control.GROW_DIRECTION_BOTH  # stay centered as it grows
+	top_center.offset_top = UITheme.MARGIN_MEDIUM
+	top_center.add_theme_constant_override("separation", 8)
+	top_center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(top_center)
 	alert_holder = CenterContainer.new()
-	alert_holder.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	alert_holder.grow_horizontal = Control.GROW_DIRECTION_BOTH  # stay centered as it grows
-	alert_holder.offset_top = 104
 	alert_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(alert_holder)
+	top_center.add_child(alert_holder)
 	alert_list = VBoxContainer.new()
 	alert_list.alignment = BoxContainer.ALIGNMENT_BEGIN
 	alert_list.add_theme_constant_override("separation", 6)
 	alert_list.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	alert_holder.add_child(alert_list)
 
-	_create_hidden_hint()
-	_create_zone_timer()
-	_create_event_timer()
+	# Bottom center, above the ability bar: one lane for everything that comes and goes
+	context_lane = VBoxContainer.new()
+	context_lane.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	context_lane.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	context_lane.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	context_lane.offset_bottom = -108  # the ability bar's top (-100) and a gap
+	context_lane.alignment = BoxContainer.ALIGNMENT_END
+	context_lane.add_theme_constant_override("separation", 8)
+	context_lane.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(context_lane)
+	_use_progress = ConsumableBar.new()
+	_use_progress.progress_only = true
+	_use_progress.custom_minimum_size = Vector2(260, 40)
+	_use_progress.visible = false
+	context_lane.add_child(_use_progress)
 	_create_buff_pill()
+	_create_hidden_hint()
+	_create_reload_hint()
+	_create_interact_hint()
 
 	for c in [health_bar, ammo_display]:
 		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -153,31 +203,97 @@ func setup(p_player: Player, hex_grid: HexGrid = null):
 	var inventory = player.get_component("InventoryComponent")
 	if inventory:
 		consumable_bar.setup(inventory)
+		_use_progress.inventory = inventory  # no icons needed for the bar
 	if combat:
-		ammo_display.setup(combat, inventory)
-	if inventory:
-		inventory.weapon_equipped.connect(func(_w, _s): _update_weapon_slots_display(inventory))
-		inventory.weapon_slot_changed.connect(func(_s): _update_weapon_slots_display(inventory))
-		_update_weapon_slots_display(inventory)
+		ammo_display.setup(combat, inventory)  # also drives the slot strip
 
 	crosshair.player = player
+	hitmarker.player = player
+	kill_cards.player = player
 	kill_feed.my_id = player.entity_id
 	aim_overlay.player = player
 	damage_indicator.track(player)
 	minimap.track(player)
 	if hex_grid:
 		minimap.setup_grid(hex_grid)
-	_setup_hero_card(player)
 	_animate_hero_card_intro(player)
 
 func _process(delta: float):
 	if player and is_instance_valid(player):
 		minimap.update_player_position(player.global_position)
 	_update_alive_count()
+	_update_kills(delta)
 	_update_hidden_hint()
 	_update_zone_timer(delta)
 	_update_event_timer(delta)
 	_update_buff_pill()
+	_update_reload_hint()
+	_update_interact_hint()
+	_use_progress.visible = _use_progress.inventory != null and _use_progress.inventory.using != "" and death_screen == null
+
+# ---------------------------------------------------------------- corners
+
+## One "icon + number" cell of the stats pill; the number label is child 1
+func _stat_cell(parent: Control, icon_name: String) -> HBoxContainer:
+	var cell = HBoxContainer.new()
+	cell.add_theme_constant_override("separation", 5)
+	cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(cell)
+	var icon = UITheme.create_icon(icon_name, cell, 18.0, UITheme.TEXT_SECONDARY)
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var label = UITheme.create_label("0", cell, UITheme.FONT_HEADING)
+	label.add_theme_font_override("font", UITheme.font_black())
+	return cell
+
+var _kills_shown: int = 0
+
+## A kill card landed in the counter: the number catches up and the pill punches
+func _on_kill_card_arrived() -> void:
+	_kills_timer = 0.0
+	_kills_shown += 1
+	kills_label.text = str(maxi(_kills_shown, int(_my_stats().get("kills", 0))))
+	stats_pill.pivot_offset = stats_pill.size * 0.5
+	var t = create_tween()
+	t.tween_property(stats_pill, "scale", Vector2.ONE * 1.25, 0.001)
+	t.tween_property(stats_pill, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+## My eliminations (the stats are in the synced player state, so fog can't hide them)
+func _update_kills(delta: float) -> void:
+	_kills_timer -= delta
+	if _kills_timer > 0.0:
+		return
+	_kills_timer = 0.25
+	# never drops back: offline the stat doesn't count, online it already includes the card's kill
+	_kills_shown = maxi(_kills_shown, int(_my_stats().get("kills", 0)))
+	kills_label.text = str(_kills_shown)
+	if zone_time_label:
+		zone_time_label.text = "%d:%02d" % [int(ceil(_zone_left)) / 60, int(ceil(_zone_left)) % 60] if _zone_kind != "" else "-:--"
+
+## A red wash on the screen edges, stronger the less HP is left (under 30%); no pulse
+func _create_low_vignette() -> void:
+	var grad = GradientTexture2D.new()
+	grad.fill = GradientTexture2D.FILL_RADIAL
+	grad.fill_from = Vector2(0.5, 0.5)
+	grad.fill_to = Vector2(1.0, 0.5)  # offset 1.0 = the left / right edge midpoints
+	grad.gradient = Gradient.new()
+	grad.gradient.set_color(0, Color(UITheme.ACCENT_DANGER, 0.0))
+	grad.gradient.set_color(1, Color(UITheme.ACCENT_DANGER, 0.9))
+	grad.gradient.set_offset(0, 0.55)
+	grad.gradient.set_offset(1, 0.85)
+	_low_vignette = TextureRect.new()
+	_low_vignette.texture = grad
+	_low_vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_low_vignette.stretch_mode = TextureRect.STRETCH_SCALE
+	_low_vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_low_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_low_vignette.modulate.a = 0.0
+	add_child(_low_vignette)
+
+func _on_hp_percent(percent: float) -> void:
+	var health = health_bar.health_component
+	var dead = death_screen != null or (health != null and health.is_dead)
+	var missing = clampf((HealthBar.LOW_PERCENT - percent) / HealthBar.LOW_PERCENT, 0.0, 1.0)
+	_low_vignette.modulate.a = 0.0 if dead else missing * 0.6
 
 # ---------------------------------------------------------------- zone countdown
 
@@ -187,24 +303,22 @@ var _zone_kind: String = ""
 var _zone_left: float = 0.0
 
 func _create_zone_timer():
-	var holder = CenterContainer.new()
-	holder.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	holder.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	holder.offset_top = 22
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(holder)
 	zone_pill = PanelContainer.new()
 	zone_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	zone_pill.visible = false
-	holder.add_child(zone_pill)
-	zone_label = UITheme.create_heading("", zone_pill)
-	zone_label.add_theme_font_size_override("font_size", 17)
+	top_right.add_child(zone_pill)
+	zone_label = UITheme.create_label("", zone_pill, UITheme.FONT_SMALL)
+	zone_label.add_theme_font_override("font", UITheme.font_black())
+	zone_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	zone_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	zone_label.custom_minimum_size.x = 184
 
 ## A step of the zone (NetworkManager.zone_changed, on the host and on clients)
 func _on_zone_changed(kind: String, _coords: Array, seconds: float, center: Vector2i, radius: int):
 	_zone_kind = kind
 	_zone_left = seconds
 	minimap.set_zone(kind, center, radius)
+	_punch(zone_pill)  # one punch on a phase change instead of an idle pulse
 	match kind:
 		"warn", "core_warn":
 			Sfx.ui("zone_warn")
@@ -243,11 +357,7 @@ func _update_zone_timer(delta: float):
 		"core_burn":
 			text = tr("The core burns: %d s") % secs
 			color = UITheme.ACCENT_DANGER
-	var urgent = _zone_kind in ["burn", "core_burn"] or (_zone_kind in ["warn", "core_warn"] and _zone_left < 5.0)
-	var box = UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.8), Color(color, 0.85), 99, 20, 6)
-	box.shadow_color = Color(color, 0.25 + (0.35 * (0.5 + 0.5 * sin(Time.get_ticks_msec() / 110.0)) if urgent else 0.0))
-	box.shadow_size = 12
-	zone_pill.add_theme_stylebox_override("panel", box)
+	zone_pill.add_theme_stylebox_override("panel", _line_box(color))
 	zone_label.text = text
 	zone_label.add_theme_color_override("font_color", color.lightened(0.35))
 	zone_pill.visible = text != ""
@@ -261,18 +371,15 @@ var _event_left: float = 0.0
 var _event_style: String = ""
 
 func _create_event_timer():
-	var holder = CenterContainer.new()
-	holder.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	holder.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	holder.offset_top = 62  # under the zone countdown
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(holder)
-	event_pill = PanelContainer.new()
+	event_pill = PanelContainer.new()  # under the zone line, only while an event runs
 	event_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	event_pill.visible = false
-	holder.add_child(event_pill)
-	event_label = UITheme.create_heading("", event_pill)
-	event_label.add_theme_font_size_override("font_size", 15)
+	top_right.add_child(event_pill)
+	event_label = UITheme.create_label("", event_pill, UITheme.FONT_SMALL)
+	event_label.add_theme_font_override("font", UITheme.font_black())
+	event_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	event_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	event_label.custom_minimum_size.x = 184
 
 ## A map event (NetworkManager.map_event): alert, a countdown while it runs, minimap hints
 func _on_map_event(kind: String, data: Dictionary, elapsed: float):
@@ -345,8 +452,7 @@ func _update_event_timer(delta: float):
 			color = UITheme.ACCENT_SUCCESS
 		"center_shift":
 			text = tr("The zone center moves in %d s") % secs
-	var box = UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.78), Color(color, 0.8), 99, 16, 5)
-	event_pill.add_theme_stylebox_override("panel", box)
+	event_pill.add_theme_stylebox_override("panel", _line_box(color))
 	event_label.text = text
 	event_label.add_theme_color_override("font_color", color.lightened(0.35))
 	event_pill.visible = text != ""
@@ -357,17 +463,11 @@ var buff_pill: PanelContainer = null
 var buff_label: Label = null
 
 func _create_buff_pill():
-	var holder = CenterContainer.new()
-	holder.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	holder.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	holder.offset_top = -196  # above the bush hint
-	holder.offset_bottom = -156
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(holder)
 	buff_pill = PanelContainer.new()
 	buff_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	buff_pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	buff_pill.visible = false
-	holder.add_child(buff_pill)
+	context_lane.add_child(buff_pill)
 	buff_label = UITheme.create_label("", buff_pill, UITheme.FONT_SMALL)
 	buff_label.add_theme_font_override("font", UITheme.font_black())
 
@@ -391,10 +491,7 @@ func _update_buff_pill():
 		_:
 			buff_label.text = tr("Full shield!")
 	buff_label.add_theme_color_override("font_color", color.lightened(0.4))
-	var box = UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.8), Color(color, 0.85), 99, 18, 6)
-	box.shadow_color = Color(color, 0.3)
-	box.shadow_size = 10
-	buff_pill.add_theme_stylebox_override("panel", box)
+	buff_pill.add_theme_stylebox_override("panel", _line_box(color))
 	buff_pill.visible = true
 
 ## No bonus running: what an ability did to us (StatusComponent), if anything
@@ -427,7 +524,7 @@ func _show_status_pill():
 		return
 	buff_label.text = text
 	buff_label.add_theme_color_override("font_color", color.lightened(0.35))
-	buff_pill.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.8), Color(color, 0.85), 99, 18, 6))
+	buff_pill.add_theme_stylebox_override("panel", _line_box(color))
 	buff_pill.visible = true
 
 # ---------------------------------------------------------------- hidden in a bush
@@ -435,21 +532,98 @@ func _show_status_pill():
 var hidden_hint: Control = null
 
 func _create_hidden_hint():
-	var holder = CenterContainer.new()
-	holder.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	holder.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	holder.offset_top = -152  # above the ability bar
-	holder.offset_bottom = -112
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(holder)
 	var pill = PanelContainer.new()
-	pill.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0.05, 0.16, 0.08, 0.8), Color(UITheme.ACCENT_SUCCESS, 0.7), 99, 18, 6))
+	pill.add_theme_stylebox_override("panel", _line_box(UITheme.ACCENT_SUCCESS))
 	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holder.add_child(pill)
+	pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	context_lane.add_child(pill)
 	var label = UITheme.create_label("HIDDEN IN A BUSH - shooting gives you away", pill, UITheme.FONT_SMALL)
 	label.add_theme_color_override("font_color", UITheme.ACCENT_SUCCESS.lightened(0.35))
-	hidden_hint = holder
+	hidden_hint = pill
 	hidden_hint.visible = false
+
+# ---------------------------------------------------------------- reload / interact hints
+
+var reload_hint: PanelContainer = null
+var reload_label: Label = null
+var interact_hint: PanelContainer = null
+var interact_label: Label = null
+var _interact_source: Object = null
+
+## A quiet dark line with a thin color edge on the left (no glow): the lane's and the column's pills
+func _line_box(color: Color) -> StyleBoxFlat:
+	var box = UITheme.glass_box(UITheme.GLASS_TINT_HUD, Color(1, 1, 1, 0.08), UITheme.CORNER_RADIUS_SMALL, 14, 6)
+	box.border_width_left = 3
+	box.border_color = Color(color, 0.9)
+	return box
+
+## One punch (scale up and back) on a control that just changed
+func _punch(control: Control) -> void:
+	if not control or not control.visible:
+		return
+	control.pivot_offset = control.size / 2.0
+	var tween = create_tween()
+	tween.tween_property(control, "scale", Vector2(1.08, 1.08), 0.08)
+	tween.tween_property(control, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func _create_reload_hint():
+	reload_hint = PanelContainer.new()
+	reload_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	reload_hint.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	reload_hint.visible = false
+	context_lane.add_child(reload_hint)
+	reload_label = UITheme.create_label("", reload_hint, UITheme.FONT_NORMAL)
+	reload_label.add_theme_font_override("font", UITheme.font_black())
+
+## "[R] RELOAD" when the magazine runs low and there is ammo to put in; "No ammo" when there is none
+func _update_reload_hint():
+	var combat = player.get_component("CombatComponent") if player and is_instance_valid(player) else null
+	var weapon = combat.equipped_ranged_weapon if combat else null
+	var text = ""
+	var color = UITheme.ACCENT_WARNING
+	if weapon and not combat.is_reloading and death_screen == null:
+		var inventory = player.get_component("InventoryComponent")
+		var endless = player.has_meta("endless_ammo")
+		var reserve = inventory.get_ammo_count(weapon.ammo_type) if inventory else 0
+		if weapon.current_ammo <= 0 and reserve <= 0 and not endless:
+			text = tr("No ammo")
+			color = UITheme.ACCENT_DANGER
+		elif weapon.current_ammo <= weapon.magazine_size * 0.25 and (reserve > 0 or endless):
+			text = "[%s] %s" % [Keybinds.label("reload"), tr("Reload").to_upper()]
+			color = UITheme.ACCENT_DANGER if weapon.current_ammo <= 0 else UITheme.ACCENT_WARNING
+	reload_hint.visible = text != ""
+	if text != "":
+		reload_label.text = text
+		reload_label.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # translated above
+		reload_label.add_theme_color_override("font_color", color.lightened(0.3))
+		reload_hint.add_theme_stylebox_override("panel", _line_box(color))
+
+func _create_interact_hint():
+	interact_hint = PanelContainer.new()
+	interact_hint.add_theme_stylebox_override("panel", _line_box(UITheme.ACCENT_PRIMARY))
+	interact_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	interact_hint.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	interact_hint.visible = false
+	context_lane.add_child(interact_hint)
+	interact_label = UITheme.create_label("", interact_hint, UITheme.FONT_NORMAL)
+	interact_label.add_theme_font_override("font", UITheme.font_black())
+	interact_label.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # the caller translates
+
+## A container in reach asks for the "[E] Open" line (LootContainer); the nearest asker wins
+func set_interact(source: Object, text: String) -> void:
+	_interact_source = source
+	interact_label.text = text
+	interact_hint.visible = true
+
+func clear_interact(source: Object) -> void:
+	if source == _interact_source:
+		_interact_source = null
+		interact_hint.visible = false
+
+func _update_interact_hint():
+	if interact_hint.visible and (_interact_source == null or not is_instance_valid(_interact_source) or death_screen != null):
+		_interact_source = null
+		interact_hint.visible = false
 
 func _update_hidden_hint():
 	var fog = get_tree().get_first_node_in_group("visibility_system") as VisibilitySystem
@@ -460,6 +634,66 @@ func _update_hidden_hint():
 # ---------------------------------------------------------------- match end
 
 var result_screen: Control = null
+var _result_box: VBoxContainer = null   # the result card's column
+var _reward_cols: Array = []             # its coins / mastery columns
+
+const RESULT_WIDTH: int = 540
+
+## A full-screen dark wash with a soft vignette (the main menu's shade); `stop` eats the clicks
+func _wash(parent: Control, color: Color, stop: bool) -> void:
+	var dim = ColorRect.new()
+	dim.color = color
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP if stop else Control.MOUSE_FILTER_IGNORE
+	parent.add_child(dim)
+	var vignette = TextureRect.new()
+	var grad = GradientTexture2D.new()
+	grad.fill = GradientTexture2D.FILL_RADIAL
+	grad.fill_from = Vector2(0.5, 0.5)
+	grad.fill_to = Vector2(1.05, 1.05)
+	grad.gradient = Gradient.new()
+	grad.gradient.set_color(0, Color(0.01, 0.02, 0.05, 0.0))
+	grad.gradient.set_color(1, Color(0.01, 0.02, 0.05, 0.7))
+	vignette.texture = grad
+	vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	vignette.stretch_mode = TextureRect.STRETCH_SCALE
+	vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(vignette)
+
+## A full-screen card just went up: the HUD goes over the other UI added after it (mode panels,
+## training notes) and the Tab scoreboard stays over the card
+func _bring_screen_forward() -> void:
+	var parent = get_parent()
+	if parent:
+		parent.move_child(self, -1)
+		for c in parent.get_children():  # an open pause menu / inventory stays on top
+			if c != self and c is CanvasItem and c.visible and c.is_in_group("blocks_game_input"):
+				parent.move_child(c, -1)
+	for c in get_children():
+		if c is Scoreboard:
+			move_child(c, -1)
+
+## The small gold uppercase line over a title
+func _kicker(text: String, parent: Control, centered: bool = false) -> Label:
+	var k = UITheme.create_label(text, parent, 13)
+	k.uppercase = true
+	k.add_theme_font_override("font", UITheme.font_black())
+	k.add_theme_color_override("font_color", UITheme.GOLD)
+	if centered:
+		k.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	return k
+
+## A big Nunito black uppercase title with a dark drop shadow
+func _big_title(text: String, parent: Control, color: Color, font_size: int = 52) -> Label:
+	var t = UITheme.create_hero_title(text, parent)
+	t.uppercase = true
+	t.add_theme_font_size_override("font_size", font_size)
+	t.add_theme_color_override("font_color", color)
+	t.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
+	t.add_theme_constant_override("shadow_offset_y", 4)
+	t.add_theme_constant_override("shadow_outline_size", 6)
+	return t
 
 func _on_match_ended(winner_id: int, winner_name: String):
 	if result_screen:
@@ -481,19 +715,32 @@ func _on_match_ended(winner_id: int, winner_name: String):
 	result_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
 	result_screen.add_to_group("blocks_game_input")  # clicking the button must not fire
 	add_child(result_screen)
+	_bring_screen_forward()
 
-	var dim = ColorRect.new()
-	dim.color = Color(0.02, 0.08, 0.04, 0.35) if i_won else Color(0.05, 0.03, 0.1, 0.45)
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	result_screen.add_child(dim)
+	# The main menu's look: a dark wash, a navy card, a gold kicker over the big title
+	_wash(result_screen, Color(0.10, 0.07, 0.0, 0.42) if i_won else Color(0.02, 0.03, 0.07, 0.55), true)
 	var center = CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	result_screen.add_child(center)
-	var card = UITheme.create_panel(center, 30)
-	card.tint = UITheme.GLASS_TINT_DARK
+	var card = UITheme.navy_panel(center, 32)
+	card.custom_minimum_size.x = RESULT_WIDTH
+	if i_won:
+		var gold_box = UITheme.navy_box(Color(0.045, 0.06, 0.11, 0.94), Color(UITheme.GOLD, 0.7), 16, 32, 32)
+		gold_box.shadow_color = Color(UITheme.GOLD, 0.28)
+		gold_box.shadow_size = 28
+		card.add_theme_stylebox_override("panel", gold_box)
 	var box = VBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
 	card.add_child(box)
+	_result_box = box
+	if i_won:
+		var crown = UITheme.create_icon("crown", box, 38, UITheme.GOLD)
+		crown.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		var bob = crown.create_tween().set_loops()
+		bob.tween_property(crown, "modulate", Color(1.15, 1.1, 0.9), 0.9).set_trans(Tween.TRANS_SINE)
+		bob.tween_property(crown, "modulate", Color.WHITE, 0.9).set_trans(Tween.TRANS_SINE)
+	_kicker(String(GameModes.info(GameModes.current()).name), box, true)
 
 	var sub_text = "Last veggie standing - the island is yours!" if i_won else (tr("%s is the last one standing") % winner_text if winner_id != 0 else "Nobody survived the harvest")
 	match GameModes.current():
@@ -511,13 +758,34 @@ func _on_match_ended(winner_id: int, winner_name: String):
 		GameModes.KOTH:
 			if winner_id > 0:
 				sub_text = "You ruled the hill!" if i_won else tr("%s ruled the hill") % winner_text
-	var title = UITheme.create_title(title_text_override if title_text_override != "" else ("VICTORY!" if i_won else "MATCH OVER"), box)
+	var title = _big_title(title_text_override if title_text_override != "" else ("VICTORY!" if i_won else "MATCH OVER"), box, UITheme.GOLD if i_won else UITheme.TEXT_TITLE, 60)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_color_override("font_color", (UITheme.ACCENT_SUCCESS if i_won else UITheme.ACCENT_WARNING).lightened(0.25))
-	var sub = UITheme.create_label(sub_text, box)
+	if i_won:
+		title.add_theme_color_override("font_shadow_color", Color(UITheme.GOLD, 0.35))
+		title.add_theme_constant_override("shadow_outline_size", 18)
+		title.add_theme_constant_override("shadow_offset_y", 0)
+	var sub = UITheme.create_label(sub_text, box, UITheme.FONT_NORMAL)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_reward_row(box, i_won)
-	var leave = UITheme.create_primary_button("BACK TO MENU", box, Vector2(300, 56))
+	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sub.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
+	# Coins on the left, mastery on the right (one column each keeps the card short)
+	var cols = HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 20)
+	box.add_child(cols)
+	_reward_cols = []
+	for i in 2:
+		var col = VBoxContainer.new()
+		col.add_theme_constant_override("separation", 8)
+		col.custom_minimum_size.x = 320
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cols.add_child(col)
+		_reward_cols.append(col)
+	_reward_row(_reward_cols[0], i_won, _reward_cols[1])
+	for col in _reward_cols:
+		col.visible = col.get_child_count() > 0
+	cols.visible = _reward_cols[0].visible or _reward_cols[1].visible
+	UITheme.create_spacer(false, box).custom_minimum_size.y = 4
+	var leave = UITheme.create_play_button("BACK TO MENU", "NEXT MATCH FROM THE MENU", box)
 	leave.pressed.connect(_on_leave_pressed)
 
 	card.scale = Vector2(0.8, 0.8)
@@ -541,7 +809,7 @@ func _update_alive_count():
 			var h = p.get_component("HealthComponent") if p.has_method("get_component") else null
 			if h and not h.is_dead:
 				alive += 1
-	alive_label.text = tr("%d  ALIVE") % alive
+	alive_label.text = str(alive)
 
 ## Short banner under the top edge ("The edges are crumbling!"); up to three stack
 func show_alert(text: String, color: Color = UITheme.ACCENT_WARNING):
@@ -549,14 +817,22 @@ func show_alert(text: String, color: Color = UITheme.ACCENT_WARNING):
 	if shown.size() >= 3:
 		shown[0].queue_free()
 	var pill = PanelContainer.new()
-	var pill_box = UITheme.glass_box(Color(0.05, 0.07, 0.12, 0.85), Color(color, 0.8), 99, 22, 8)
-	pill_box.shadow_color = Color(color, 0.35)
-	pill_box.shadow_size = 14
+	var pill_box = _line_box(color)  # icon + a 3px color bar, no glow
+	pill_box.content_margin_left = 16
+	pill_box.content_margin_right = 18
+	pill_box.content_margin_top = 8
+	pill_box.content_margin_bottom = 8
 	pill.add_theme_stylebox_override("panel", pill_box)
 	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	alert_list.add_child(pill)
-	var label = UITheme.create_heading(text, pill)
+	var line = HBoxContainer.new()
+	line.add_theme_constant_override("separation", 10)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pill.add_child(line)
+	var icon = UITheme.create_icon("burst", line, 20.0, color.lightened(0.3))
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var label = UITheme.create_heading(text, line)
 	label.add_theme_color_override("font_color", color.lightened(0.3))
 
 	pill.modulate.a = 0.0
@@ -575,43 +851,59 @@ func _on_player_died():
 	death_screen = Control.new()
 	death_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(death_screen)
+	_bring_screen_forward()
 
-	var dim = ColorRect.new()
-	dim.color = Color(0.12, 0.0, 0.02, 0.3)
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	death_screen.add_child(dim)
+	_wash(death_screen, Color(0.07, 0.01, 0.03, 0.5), false)
 
 	var center = CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	death_screen.add_child(center)
 
-	var card = UITheme.create_panel(center, 30)
-	card.tint = UITheme.GLASS_TINT_DARK
+	var card = UITheme.navy_panel(center, 28)
 	var row = HBoxContainer.new()
 	row.add_theme_constant_override("separation", 28)
 	card.add_child(row)
 	# Who took us out: their hero card and how they stand (filled by _fill_killer_card)
 	_killer_slot = VBoxContainer.new()
-	_killer_slot.add_theme_constant_override("separation", 10)
+	_killer_slot.add_theme_constant_override("separation", 8)
+	_killer_slot.alignment = BoxContainer.ALIGNMENT_CENTER
+	_killer_slot.custom_minimum_size.x = 210
 	row.add_child(_killer_slot)
+	var divider = ColorRect.new()
+	divider.color = Color(1, 1, 1, 0.08)
+	divider.custom_minimum_size.x = 1
+	divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(divider)
 
 	var box = VBoxContainer.new()
-	box.add_theme_constant_override("separation", 14)
-	box.custom_minimum_size.x = 340
+	box.add_theme_constant_override("separation", 12)
+	box.custom_minimum_size.x = 360
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_child(box)
-	var title = UITheme.create_title("ELIMINATED", box)
-	title.add_theme_color_override("font_color", UITheme.ACCENT_DANGER.lightened(0.2))
-	var sub = UITheme.create_label("You got mashed. Better luck next harvest!", box)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_kicker(String(GameModes.info(GameModes.current()).name), box)
+	_big_title("ELIMINATED", box, UITheme.ACCENT_DANGER.lightened(0.25), 52)
+	var sub = UITheme.create_label("You got mashed. Better luck next harvest!", box, UITheme.FONT_NORMAL)
 	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_reward_row(box, false)
+	sub.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
+	UITheme.create_spacer(false, box).custom_minimum_size.y = 4
 
-	var watch = UITheme.create_primary_button("SPECTATE", box, Vector2(300, 56))
+	var watch = UITheme.create_play_button("SPECTATE", "WATCH WHO IS STILL STANDING", box)
 	watch.pressed.connect(_start_spectating)
-	var leave = UITheme.create_button("BACK TO MENU", box, Vector2(300, 50))
+	var leave = UITheme.create_menu_row("BACK TO MENU", "", box)
 	leave.pressed.connect(_on_leave_pressed)
+	# The coins and the mastery of the match in a third column (only in a real match)
+	var divider_right = divider.duplicate()
+	row.add_child(divider_right)
+	var side = VBoxContainer.new()
+	side.add_theme_constant_override("separation", 8)
+	side.custom_minimum_size.x = 320
+	side.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_child(side)
+	_reward_row(side, false)
+	if side.get_child_count() == 0:
+		side.queue_free()
+		divider_right.queue_free()
 
 	_fill_killer_card()
 	# The camera goes to whoever did it right away; the bar comes with SPECTATE
@@ -626,9 +918,10 @@ func _on_player_died():
 	spectator.leave_pressed.connect(_on_leave_pressed)
 	spectator._names = _known_names.duplicate()
 	spectator.start(player, int(_death_info.get("killer_id", 0)))
-	for c in [ability_bar, crosshair, aim_overlay, weapon_slots_ui, consumable_bar]:
+	for c in [ability_bar, crosshair, aim_overlay, weapon_slots_ui, consumable_bar, context_lane, health_bar, ammo_display]:
 		if c:
 			c.visible = false
+	_low_vignette.modulate.a = 0.0
 	if ammo_display:
 		ammo_display.modulate.a = 0.0  # it shows itself again on every update
 
@@ -642,25 +935,33 @@ func _show_respawn_countdown():
 	death_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
 	death_screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(death_screen)
-	var dim = ColorRect.new()
-	dim.color = Color(0.15, 0.0, 0.02, 0.28)
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	death_screen.add_child(dim)
+	_bring_screen_forward()
+	_wash(death_screen, Color(0.07, 0.01, 0.03, 0.3), false)
 	var center = CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	death_screen.add_child(center)
+	# A small navy card: the title, the seconds in gold and a gold bar running down
+	var card = UITheme.navy_panel(center, 26)
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.custom_minimum_size.x = 340
 	var box = VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	center.add_child(box)
-	var title = UITheme.create_title("DOWN!", box)
+	card.add_child(box)
+	_kicker(String(GameModes.info(GameModes.current()).name), box, true)
+	var title = _big_title("DOWN!", box, UITheme.ACCENT_DANGER.lightened(0.25), 48)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_color_override("font_color", UITheme.ACCENT_DANGER.lightened(0.2))
 	var count = UITheme.create_heading("", box)
 	count.name = "Count"
 	count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	count.add_theme_font_override("font", UITheme.font_black())
+	count.add_theme_color_override("font_color", UITheme.GOLD)
 	_respawn_left = float(GameModes.info(GameModes.current()).respawn)
+	var bar = UITheme.create_progress_bar(maxf(_respawn_left, 0.01), _respawn_left, UITheme.GOLD, box)
+	bar.custom_minimum_size = Vector2(0, 8)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.create_tween().tween_property(bar, "value", 0.0, maxf(_respawn_left, 0.01))
 	var t = create_tween().set_loops(int(ceil(_respawn_left)))
 	count.text = tr("Back in %d s") % int(ceil(_respawn_left))
 	t.tween_interval(1.0)
@@ -668,13 +969,16 @@ func _show_respawn_countdown():
 		_respawn_left -= 1.0
 		if is_instance_valid(count):
 			count.text = tr("Back in %d s") % int(max(ceil(_respawn_left), 0)))
+	card.pivot_offset = Vector2(170, 90)
+	card.scale = Vector2(0.9, 0.9)
+	card.create_tween().tween_property(card, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 ## Back in the fight (respawning modes): the countdown goes, the camera comes back to us
 func _on_player_revived():
 	if death_screen and is_instance_valid(death_screen):
 		death_screen.queue_free()
 	death_screen = null
-	for c in [ability_bar, crosshair, aim_overlay, weapon_slots_ui, consumable_bar]:
+	for c in [ability_bar, crosshair, aim_overlay, weapon_slots_ui, consumable_bar, context_lane, health_bar, ammo_display]:
 		if c:
 			c.visible = true
 	if ammo_display:
@@ -719,22 +1023,22 @@ func _fill_killer_card():
 	if killer_id == 0:
 		if info.has("npc"):
 			var weed = String(info["npc"])
-			UITheme.create_caption("Eliminated by", _killer_slot).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			var who = UITheme.create_heading(weed, _killer_slot)
+			_kicker("Eliminated by", _killer_slot, true)
+			var who = _big_title(weed, _killer_slot, Color.WHITE, 30)
 			who.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			who.add_theme_color_override("font_color", Weed.KINDS.get(weed, {}).get("color", Color.WHITE).lightened(0.2))
 			var note = UITheme.create_label("A weed. Watch the bushes.", _killer_slot, UITheme.FONT_SMALL)
 			note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			note.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
 			return
-		var lbl = UITheme.create_heading("The island got you", _killer_slot)
-		lbl.add_theme_color_override("font_color", UITheme.ACCENT_WARNING)
+		var lbl = _big_title("The island got you", _killer_slot, UITheme.ACCENT_WARNING, 26)
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		return
 	var hero_name = String(info.get("killer_hero", ""))
 	var hero: CharacterData = CharacterRegistry.get_by_name(hero_name) if hero_name != "" else null
 	var wear: Dictionary = info.get("killer_wear", {})
-	var cap = UITheme.create_caption("Eliminated by", _killer_slot)
-	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_kicker("Eliminated by", _killer_slot, true)
 	if hero:
 		var skin = String(wear.get("skin", ""))
 		var hat = String(wear.get("hat", ""))
@@ -747,9 +1051,11 @@ func _fill_killer_card():
 		hero_card.show_wear_mastery(wear)  # the killer's level and rank come with what they wear
 		hero_card.always_live = true
 		hero_card.custom_minimum_size = hero_card.card_size
+		hero_card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		_killer_slot.add_child(hero_card)
 		ItemRenderer.get_instance(get_tree()).hero(hero.character_name, skin, hat, func(tex): if is_instance_valid(hero_card): hero_card.set_art(tex))
 	var name_lbl = UITheme.create_heading(String(info.get("killer_name", "")), _killer_slot)
+	name_lbl.add_theme_font_override("font", UITheme.font_black())
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_lbl.add_theme_color_override("font_color", KillFeed.hero_color(hero_name))
 	var facts: Array = []
@@ -759,9 +1065,20 @@ func _fill_killer_card():
 	if info.has("killer_health"):
 		facts.append(tr("%d / %d HP left") % [int(info["killer_health"]), int(info.get("killer_max_health", 0))])
 	facts.append(tr("Kills: %d") % int(info.get("killer_kills", 0)))
+	# The facts as small navy chips under the card
+	var chips = HFlowContainer.new()
+	chips.alignment = FlowContainer.ALIGNMENT_CENTER
+	chips.add_theme_constant_override("h_separation", 6)
+	chips.add_theme_constant_override("v_separation", 6)
+	chips.custom_minimum_size.x = 210
+	_killer_slot.add_child(chips)
 	for f in facts:
-		var l = UITheme.create_label(f, _killer_slot, UITheme.FONT_SMALL)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var chip = PanelContainer.new()
+		chip.add_theme_stylebox_override("panel", UITheme.navy_box(UITheme.NAVY, Color(1, 1, 1, 0.1), 99, 10, 3))
+		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chips.add_child(chip)
+		var l = UITheme.create_label(f, chip, UITheme.FONT_TINY)
+		l.add_theme_font_override("font", UITheme.font_bold())
 		l.add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
 
 # ---------------------------------------------------------------- coins
@@ -769,7 +1086,7 @@ func _fill_killer_card():
 var _rewarded: bool = false
 
 ## Coins for the match (once: at elimination or at the end), shown on the card
-func _reward_row(box: Control, won: bool) -> void:
+func _reward_row(box: Control, won: bool, mastery_box: Control = null) -> void:
 	if _rewarded or not _is_real_match():
 		return
 	_rewarded = true
@@ -777,24 +1094,52 @@ func _reward_row(box: Control, won: bool) -> void:
 	if won:
 		stats["place"] = 1
 	var lines = PlayerProfile.match_reward(stats)
+	_build_reward_rows(box, lines)
+	Sfx.ui("coins")
+	_mastery_rows(mastery_box if mastery_box else box, stats)
+
+## The coins as navy rows (what for, how much of it, gold +coins at the end) and a gold total;
+## the coins go to the profile here (PlayerProfile.add_coins)
+func _build_reward_rows(box: Control, lines: Array) -> void:
 	var total = 0
-	var table = GridContainer.new()
-	table.columns = 3
-	table.add_theme_constant_override("h_separation", 22)
-	table.add_theme_constant_override("v_separation", 2)
-	table.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	box.add_child(table)
+	_kicker("Rewards", box)
+	var list = VBoxContainer.new()
+	list.add_theme_constant_override("separation", 4)
+	box.add_child(list)
 	for line in lines:
 		total += int(line[2])
-		UITheme.create_label(line[0], table, UITheme.FONT_SMALL).add_theme_color_override("font_color", UITheme.TEXT_SECONDARY)
-		UITheme.create_label(line[1], table, UITheme.FONT_SMALL)
-		var coins_label = UITheme.create_label("+%d" % int(line[2]), table, UITheme.FONT_SMALL)
-		coins_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+		var row = _navy_row(list)
+		var what = UITheme.create_label(line[0], row, UITheme.FONT_SMALL)
+		what.add_theme_font_override("font", UITheme.font_bold())
+		what.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var detail = UITheme.create_label(line[1], row, UITheme.FONT_SMALL)
+		detail.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
+		var coins_row = UITheme.create_icon_label("coin", "+%d" % int(line[2]), row, UITheme.FONT_SMALL, UITheme.GOLD)
+		coins_row.custom_minimum_size.x = 64
+		coins_row.alignment = BoxContainer.ALIGNMENT_END
+		var coins_label: Label = coins_row.get_meta("label")
+		coins_label.add_theme_font_override("font", UITheme.font_black())
 	PlayerProfile.add_coins(total)
-	Sfx.ui("coins")
-	var pill = UITheme.create_pill(tr("+%d coins") % total, Color(1.0, 0.8, 0.3), box)
-	pill.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_mastery_rows(box, stats)
+	var sum = _navy_row(list, true)
+	var sum_label = UITheme.create_label(tr("+%d coins") % total, sum, UITheme.FONT_NORMAL)
+	sum_label.uppercase = true
+	sum_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sum_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	sum_label.add_theme_font_override("font", UITheme.font_black())
+	sum_label.add_theme_color_override("font_color", UITheme.GOLD)
+
+## One row of a navy list (an HBox inside a navy box); `gold` gives it the gold rim
+func _navy_row(parent: Control, gold: bool = false) -> HBoxContainer:
+	var panel = PanelContainer.new()
+	var fill = Color(0.16, 0.12, 0.03, 0.85) if gold else UITheme.NAVY
+	panel.add_theme_stylebox_override("panel", UITheme.navy_box(fill, Color(UITheme.GOLD, 0.6) if gold else Color(1, 1, 1, 0.08), 10, 14, 6))
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(panel)
+	var row = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(row)
+	return row
 
 ## Mastery XP for the hero and the guns used (Mastery.gd): bars, level-ups and what got unlocked
 func _mastery_rows(box: Control, stats: Dictionary) -> void:
@@ -807,28 +1152,40 @@ func _mastery_rows(box: Control, stats: Dictionary) -> void:
 	guns.sort_custom(func(a, b): return report.weapons[a][2] > report.weapons[b][2])
 	for t in guns.slice(0, 3):
 		rows.append([tr(RangedWeapon.create_weapon(t).item_name), report.weapons[t]])
+	_build_mastery_rows(box, rows, report.unlocked)
+
+## The mastery list: [display name, [before, after, xp]] rows and the ranks unlocked
+func _build_mastery_rows(box: Control, rows: Array, unlocked: Array) -> void:
 	if rows.is_empty():
 		return
-	UITheme.create_separator(box)
+	_kicker("Mastery", box)
+	var list = VBoxContainer.new()
+	list.add_theme_constant_override("separation", 4)
+	box.add_child(list)
 	for r in rows:
 		var before: Dictionary = r[1][0]
 		var after: Dictionary = r[1][1]
-		var line = HBoxContainer.new()
-		line.add_theme_constant_override("separation", 10)
-		box.add_child(line)
+		var line = _navy_row(list)
 		var name_label = UITheme.create_label(r[0], line, UITheme.FONT_SMALL)
-		name_label.custom_minimum_size.x = 130
-		var lvl_text = tr("Lv %d") % after.level if before.level == after.level else tr("Lv %d → %d") % [before.level, after.level]
+		name_label.add_theme_font_override("font", UITheme.font_bold())
+		name_label.custom_minimum_size.x = 120
+		name_label.clip_text = true
+		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		var lvl_text = tr("Lv %d") % after.level if before.level == after.level else tr("Lv %d  ›  %d") % [before.level, after.level]
 		var lvl = UITheme.create_label(lvl_text, line, UITheme.FONT_SMALL)
 		lvl.custom_minimum_size.x = 92
 		lvl.add_theme_font_override("font", UITheme.font_black())
 		lvl.add_theme_color_override("font_color", Mastery.tier_color(after.tier).lightened(0.2) if after.tier >= 0 else UITheme.TEXT_PRIMARY)
 		var bar = UITheme.create_progress_bar(float(after.need), float(after.need if after.max else after.into), Mastery.tier_color(after.tier) if after.tier >= 0 else UITheme.ACCENT_INFO, line)
-		bar.custom_minimum_size = Vector2(150, 8)
+		bar.custom_minimum_size = Vector2(120, 8)
+		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var xp = UITheme.create_label("+%d XP" % int(r[1][2]), line, UITheme.FONT_SMALL)
+		xp.custom_minimum_size.x = 64
+		xp.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		xp.add_theme_font_override("font", UITheme.font_black())
 		xp.add_theme_color_override("font_color", UITheme.ACCENT_INFO.lightened(0.3))
-	for u in report.unlocked:
+	for u in unlocked:
 		var rank: int = u[1]
 		var unlock = UITheme.create_pill(tr("Unlocked: %s — %s") % [tr(u[0]), tr(Mastery.TIER_NAMES[rank])], Mastery.tier_color(rank), box)
 		unlock.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -880,12 +1237,33 @@ func _create_crosshair():
 
 class Crosshair extends Control:
 	var player: Player = null
+	var _spread_px: float = 11.0  # single guns: the ring is as wide as the bullets may stray at the cursor
 
 	func _ready():
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	func _process(_delta):
+	func _process(delta):
+		var want = _spread_ring()
+		_spread_px = lerpf(_spread_px, want, 1.0 - exp(-delta * 18.0))
 		queue_redraw()
+
+	## How wide (px) a single bullet may stray where the cursor is: CombatComponent.current_spread
+	## (accuracy, movement, bloom) at the aim point's distance, projected to the screen
+	func _spread_ring() -> float:
+		if not player or not is_instance_valid(player):
+			return 11.0
+		var combat = player.get_component("CombatComponent")
+		var handler = player.get_node_or_null("InputHandler") as PlayerInputHandler
+		var camera = get_viewport().get_camera_3d()
+		if not combat or not handler or not camera or not combat.equipped_ranged_weapon:
+			return 11.0
+		var aim: Vector3 = handler.get_aim_position()
+		if aim == Vector3.ZERO or camera.is_position_behind(aim):
+			return 11.0
+		var reach = combat.muzzle_position().distance_to(aim) * combat.current_spread()
+		var side = camera.global_transform.basis.x
+		var px = camera.unproject_position(aim).distance_to(camera.unproject_position(aim + side * reach))
+		return clampf(px, 9.0, 120.0)
 
 	func _draw():
 		if not player or not is_instance_valid(player):
@@ -948,8 +1326,10 @@ class Crosshair extends Control:
 				draw_polyline(pts, shadow, 5.0, true)
 				draw_polyline(pts, hc, 2.5, true)
 				draw_circle(p, 3.0, hc)
-			_:  # single shots: ring + ticks
-				var r3 = 11.0 * grow
+			_:  # single shots: ring + ticks, as wide as the bullets may stray (it opens up while
+				# you run or hold the trigger and closes when you stop - fire then)
+				# (no `grow`: current_spread already widens it by the quake's spread_factor)
+				var r3 = maxf(_spread_px, 9.0)
 				draw_arc(p, r3, 0, TAU, 32, shadow, 4.0, true)
 				draw_arc(p, r3, 0, TAU, 32, col, 2.0, true)
 				for v in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
@@ -961,168 +1341,9 @@ class Crosshair extends Control:
 
 # ---------------------------------------------------------------- weapon slots
 
-func _create_weapon_slots_ui():
-	weapon_slots_ui = HBoxContainer.new()
-	weapon_slots_ui.name = "WeaponSlots"
-	weapon_slots_ui.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	weapon_slots_ui.offset_left = 20
-	weapon_slots_ui.offset_right = 380
-	weapon_slots_ui.offset_top = -98
-	weapon_slots_ui.offset_bottom = -20
-	weapon_slots_ui.add_theme_constant_override("separation", 8)
-	weapon_slots_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(weapon_slots_ui)
-
-	for i in range(InventoryComponent.MAX_WEAPON_SLOTS):
-		weapon_slots_ui.add_child(_create_weapon_slot(i))
-
-func _create_weapon_slot(index: int) -> PanelContainer:
-	var slot = PanelContainer.new()
-	slot.name = "WeaponSlot_%d" % (index + 1)
-	slot.custom_minimum_size = Vector2(80, 78)  # room for "ПИСТОЛЕТ"
-	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	slot.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0, 0, 0, 0.3), Color(1, 1, 1, 0.1), 16, 6, 6))
-
-	var box = VBoxContainer.new()
-	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_theme_constant_override("separation", 2)
-	slot.add_child(box)
-
-	var number_label = UITheme.create_label(str(index + 1), box, UITheme.FONT_TINY)
-	number_label.name = "NumberLabel"
-	number_label.add_theme_color_override("font_color", UITheme.TEXT_MUTED)
-
-	var icon = Panel.new()
-	icon.name = "WeaponIcon"
-	icon.custom_minimum_size = Vector2(30, 14)
-	icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	box.add_child(icon)
-	# The gun's own picture (ItemRenderer, in its finish); the color bar stands in until it's there
-	var pic = TextureRect.new()
-	pic.name = "WeaponPic"
-	pic.custom_minimum_size = Vector2(66, 30)
-	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pic.visible = false
-	box.add_child(pic)
-
-	var name_label = UITheme.create_label("", box, 9)
-	name_label.name = "WeaponName"
-	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.clip_text = true
-	name_label.add_theme_font_override("font", UITheme.font_black())
-	return slot
-
-func _update_weapon_slots_display(inventory: InventoryComponent):
-	for i in range(InventoryComponent.MAX_WEAPON_SLOTS):
-		var slot_panel = weapon_slots_ui.get_node_or_null("WeaponSlot_%d" % (i + 1))
-		if not slot_panel:
-			continue
-
-		var weapon = inventory.get_weapon_in_slot(i)
-		var is_selected = i == inventory.current_weapon_slot and weapon != null
-		var color = _get_weapon_color(weapon.weapon_type) if weapon else Color(1, 1, 1, 0.15)
-
-		if is_selected:
-			var glow = UITheme.glow_box(Color(UITheme.ACCENT_SECONDARY, 0.22), 0.35, 16, 10)
-			glow.set_content_margin_all(6)  # same as the other slots: the name needs the width
-			slot_panel.add_theme_stylebox_override("panel", glow)
-		elif weapon:
-			slot_panel.add_theme_stylebox_override("panel", UITheme.glass_box(Color(1, 1, 1, 0.07), Color(1, 1, 1, 0.16), 16, 6, 6))
-		else:
-			slot_panel.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0, 0, 0, 0.25), Color(1, 1, 1, 0.07), 16, 6, 6))
-
-		var icon = slot_panel.find_child("WeaponIcon", true, false) as Panel
-		if icon:
-			var icon_box = StyleBoxFlat.new()
-			icon_box.bg_color = color
-			icon_box.set_corner_radius_all(5)
-			icon.add_theme_stylebox_override("panel", icon_box)
-		var pic = slot_panel.find_child("WeaponPic", true, false) as TextureRect
-		if pic:
-			pic.visible = false
-			if icon:
-				icon.visible = true
-			if weapon:
-				pic.set_meta("weapon", weapon)
-				ItemRenderer.get_instance(get_tree()).icon_for(weapon, func(tex):
-					if is_instance_valid(pic) and pic.get_meta("weapon", null) == weapon:
-						pic.texture = tex
-						pic.visible = true
-						if is_instance_valid(icon):
-							icon.visible = false)
-			else:
-				pic.set_meta("weapon", null)
-
-		var name_label = slot_panel.find_child("WeaponName", true, false) as Label
-		if name_label:
-			name_label.text = tr(weapon.item_name, "short").substr(0, 9).to_upper() if weapon else ""
-
-func _get_weapon_color(weapon_type: RangedWeapon.WeaponType) -> Color:
-	match weapon_type:
-		RangedWeapon.WeaponType.PISTOL:
-			return Color("9aa7c7")
-		RangedWeapon.WeaponType.SHOTGUN:
-			return Color("e0915a")
-		RangedWeapon.WeaponType.SNIPER:
-			return Color("6fd08c")
-		RangedWeapon.WeaponType.RIFLE:
-			return Color("7ab8ff")
-		RangedWeapon.WeaponType.FLAMETHROWER:
-			return Color("ff7a45")
-		RangedWeapon.WeaponType.SMG:
-			return Color("f2a65a")
-		RangedWeapon.WeaponType.HAND_CANNON:
-			return Color("ff8f6b")
-		RangedWeapon.WeaponType.MARKSMAN:
-			return Color("f5d76e")
-		RangedWeapon.WeaponType.MINIGUN:
-			return Color("5fd3a6")
-		RangedWeapon.WeaponType.DOUBLE_BARREL:
-			return Color("63d6b0")
-		RangedWeapon.WeaponType.JAM_BLASTER:
-			return Color("b48cff")
-		RangedWeapon.WeaponType.LAUNCHER:
-			return Color("ffd24a")
-		_:
-			return Color(0.6, 0.6, 0.6)
-
 # ---------------------------------------------------------------- hero card
 
-func _create_hero_card_small() -> void:
-	_hero_card_small = ParallaxCard.new()
-	_hero_card_small.card_size = Vector2(110, 153)
-	_hero_card_small.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	_hero_card_small.offset_left = 20
-	_hero_card_small.offset_bottom = -108  # just above the weapon slots row
-	_hero_card_small.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hero_card_small.visible = false
-	add_child(_hero_card_small)
-
-func _setup_hero_card(p: Player) -> void:
-	if not _hero_card_small or not p:
-		return
-	var data: CharacterData = p.get_meta("character_data", null) if p.has_meta("character_data") else null
-	if not data and p.has_method("get_component"):
-		pass  # data lives on Player directly after setup_character
-	# Player stores it as player.character_data after setup_character
-	if "character_data" in p:
-		data = p.character_data
-	if not data:
-		return
-	var wear = PlayerProfile.equipped_for(data.character_name)
-	_hero_card_small.title = tr(data.character_name)
-	_hero_card_small.subtitle = Cosmetics.TIER_NAMES[Cosmetics.tier_of(Cosmetics.hero_id(data.character_name))]
-	_hero_card_small.accent = data.color
-	_hero_card_small.live = ["hero", [data.character_name, wear.skin, wear.hat]]
-	_hero_card_small.show_hero_mastery(data.character_name)
-	if _hero_card_small.mastery >= 0:
-		_hero_card_small.subtitle = Mastery.tier_name(_hero_card_small.mastery)
-	_hero_card_small.always_live = true
-	_hero_card_small.refresh()
-	_hero_card_small.visible = true
-
+## (The permanent corner card is the portrait in the vitals card now: HealthBar)
 func _animate_hero_card_intro(p: Player) -> void:
 	if not p:
 		return

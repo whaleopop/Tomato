@@ -12,7 +12,6 @@ const ACTIONS = [
 	["move_down", "Move back"],
 	["move_left", "Move left"],
 	["move_right", "Move right"],
-	["sprint", "Sprint"],
 	["jump", "Jump"],
 	["attack", "Shoot"],
 	["reload", "Reload"],
@@ -141,6 +140,10 @@ static func _same(a: InputEvent, b: InputEvent) -> bool:
 	if a is InputEventMouseButton and b is InputEventMouseButton:
 		return a.button_index == b.button_index
 	return false
+
+## Still on its default key (the settings mark rebound keys gold)
+static func is_default(action: String) -> bool:
+	return _is_default(action)
 
 static func _is_default(action: String) -> bool:
 	var now = InputMap.action_get_events(action)

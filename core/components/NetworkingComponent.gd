@@ -23,6 +23,7 @@ const MAX_EXTRAPOLATION_TIME: float = 0.2  # Max 200ms of extrapolation to preve
 var last_velocity: Vector3 = Vector3.ZERO
 var last_sync_timestamp: int = 0
 var last_update_time: float = 0.0  # Track when we last received an update
+var _last_dealt_n: int = 0  # ServerPlayer's "dealt" counter already shown
 var _last_hit_id: int = 0  # ServerPlayer's hit ids already shown
 var target_position: Vector3 = Vector3.ZERO  # Target position for interpolation
 var target_rotation: Vector3 = Vector3.ZERO  # Target rotation for interpolation
@@ -318,17 +319,22 @@ func _apply_component_sync_data(data: Dictionary):
 						_last_hit_id = int(h[0])
 						health.hit_from.emit(Vector3(float(h[1]), entity.global_position.y, float(h[2])), float(h[3]))
 
+	# Our hits the server confirmed: the crosshair hitmarker
+	if data.has("dealt") and _is_local():
+		var dealt = data["dealt"]
+		if int(dealt[0]) > _last_dealt_n:
+			_last_dealt_n = int(dealt[0])
+			var cmb = entity.get_component("CombatComponent")
+			if cmb:
+				cmb.hit_marker.emit(float(dealt[1]), true)
+
 	# Stun, blind, stealth, knockback: the server's word, also for our own predicted player
 	var status = entity.get_component("StatusComponent")
 	if status and (data.has("fx") or data.has("health")):
 		status.from_sync(data.get("fx", {}), _is_local())
 
-	# Movement (the local player's movement is predicted locally; stamina is checked against the server's)
+	# Movement (the local player's movement is predicted locally)
 	if _is_local():
-		if data.has("stamina"):
-			var movement = entity.get_component("MovementComponent")
-			if movement:
-				movement.sync_stamina(float(data["stamina"][0]), bool(data["stamina"][1]))
 		return
 	if data.has("velocity"):
 		var movement = entity.get_component("MovementComponent")

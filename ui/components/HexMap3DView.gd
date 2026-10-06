@@ -3,7 +3,7 @@
 ## wooden plinth. Same interface as HexMapView (tiles / reserved / selected, hex_clicked / hex_hovered),
 ## so SpawnSelectMenu drives both. Own World3D, like CharacterShowcase.
 ## Drag to turn, right / middle drag to move, wheel to zoom, double click to reset, click to pick.
-extends SubViewportContainer
+extends HiResView
 class_name HexMap3DView
 
 signal hex_clicked(coords: Vector2i)
@@ -30,7 +30,7 @@ var selected: Vector2i = INVALID
 var hovered: Vector2i = INVALID
 var accent: Color = Color(0.52, 0.91, 0.42)
 
-var viewport: SubViewport
+
 var camera: Camera3D
 var _island: Node3D           # rebuilt by set_tiles
 var _reserved_node: Node3D    # rebuilt by set_reserved
@@ -57,16 +57,14 @@ var _press_pos: Vector2 = Vector2.ZERO
 var _dragged: bool = false
 
 func _init():
-	stretch = true
+	super()
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 
-	viewport = SubViewport.new()
 	viewport.own_world_3d = true
 	viewport.transparent_bg = true
 	viewport.msaa_3d = Viewport.MSAA_4X
 	viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
-	add_child(viewport)
 
 	var env = Environment.new()
 	env.background_mode = Environment.BG_CLEAR_COLOR
@@ -577,8 +575,9 @@ func _update_fit():
 func pick(screen_pos: Vector2) -> Vector2i:
 	if tiles.is_empty():
 		return INVALID
-	var from = camera.project_ray_origin(screen_pos)
-	var dir = camera.project_ray_normal(screen_pos)
+	var vp_pos := to_vp(screen_pos)
+	var from = camera.project_ray_origin(vp_pos)
+	var dir = camera.project_ray_normal(vp_pos)
 	if dir.y >= -0.01:
 		return INVALID
 	var top_limit = 3.0 * HexTile.TERRACE_STEP * H_SCALE + MOUNTAIN_PEAK + 1.0

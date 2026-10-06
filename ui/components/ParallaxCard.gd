@@ -5,10 +5,18 @@
 ## With `live` set, the card under the mouse shows a real 3D model (ItemRenderer.live_begin)
 ## that turns with the tilt; `always_live` keeps it (the shop's big card). The tilted card is
 ## drawn over a bigger area than the control (OVERSCAN), so its near edge is never cut off.
+## Drag: give the card a `drag_payload` and it can be picked up - the card itself flies under the
+## mouse in 3D (CardDragPreview: it leans into the motion), the slot it left stays faded until it
+## is dropped. Drop targets get {"card_drag": true, "payload": drag_payload, "card": self}
+## (_can_drop_data / _drop_data, or set_drag_forwarding, or a DropPad). While any card is in
+## the air the others stay calm (no live model, no lift), so hovering them on the way is harmless.
+## `pop()` flips / bounces the card in (the shop's big card after a purchase).
 extends Control
 class_name ParallaxCard
 
 signal pressed
+signal drag_started
+signal drag_ended(dropped: bool)
 
 const MAX_TILT: float = 0.38      # radians
 const OVERSCAN: float = 0.4       # extra drawing area around the card for the tilt
@@ -47,9 +55,13 @@ var _sub_label: Label
 var _frame: Panel
 var _lock: Label
 var _hover: bool = false
+## Anything (a card key, a dictionary): set it and the card can be dragged (null = it can't)
+var drag_payload = null
+var _dragging: bool = false
 var _target := Vector2.ZERO       # tilt the mouse asks for (-1..1)
 var _tilt := Vector2.ZERO
 var _lift: float = 0.0
+var _punch := Vector2.ONE         # extra scale for pop() (the hover scale is set every frame)
 
 func _ready():
 	custom_minimum_size = card_size
@@ -85,6 +97,8 @@ func _ready():
 	_view.material = _material
 	add_child(_view)
 	mouse_entered.connect(func():
+		if _drag_in_air():
+			return  # a card flying over it: no live model, no lift
 		_hover = true
 		z_index = 10  # over the neighbours while it turns
 		_start_live())
@@ -105,6 +119,19 @@ func _start_live() -> void:
 	var tex = ItemRenderer.get_instance(get_tree()).live_begin(self, live[0], live[1])
 	if _art_rect:
 		_art_rect.texture = tex
+
+## Some card (this one or another) is being dragged right now
+func _drag_in_air() -> bool:
+	var vp = get_viewport()
+	return vp != null and vp.gui_is_dragging()
+
+## Bounce the card in: `flip` turns it over from edge-on (a bought card), else a quick swell
+func pop(flip: bool = true) -> void:
+	if not is_inside_tree():
+		return
+	_punch = Vector2(0.05, 1.04) if flip else Vector2.ONE * 1.14
+	var t = create_tween()
+	t.tween_property(self, "_punch", Vector2.ONE, 0.5 if flip else 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func _stop_live() -> void:
 	if not _live_on:
@@ -275,6 +302,36 @@ func set_art(texture: Texture2D) -> void:
 	if _art_rect and not _live_on:
 		_art_rect.texture = art
 
+## The card's own picture (its SubViewport, drawn at 2x): the drag preview shows it
+func card_texture() -> Texture2D:
+	return _viewport.get_texture() if _viewport else null
+
+func is_dragging() -> bool:
+	return _dragging
+
+func _get_drag_data(at_position: Vector2):
+	if drag_payload == null:
+		return null
+	_dragging = true
+	_hover = false
+	_target = Vector2.ZERO
+	z_index = 0
+	if not always_live:
+		_stop_live()  # the flying copy shows the card's picture
+	set_drag_preview(CardDragPreview.make(self, at_position))
+	modulate.a = 0.3                  # the slot it left
+	drag_started.emit()
+	Sfx.ui("ui_hover")
+	return {"card_drag": true, "payload": drag_payload, "card": self}
+
+func _notification(what: int):
+	if what == NOTIFICATION_DRAG_END and _dragging:
+		_dragging = false
+		var ok = get_viewport().gui_is_drag_successful()
+		var t = create_tween()
+		t.tween_property(self, "modulate:a", 1.0, 0.2)
+		drag_ended.emit(ok)
+
 func _gui_input(event: InputEvent):
 	if event is InputEventMouseMotion:
 		var p = event.position / size
@@ -299,5 +356,5 @@ func _process(delta: float):
 		if not node.has_meta("rest"):
 			node.set_meta("rest", node.position)
 		node.position = node.get_meta("rest") + _tilt * float(layer[1])
-	scale = Vector2.ONE * (1.0 + 0.04 * _lift)
+	scale = Vector2.ONE * (1.0 + 0.04 * _lift) * _punch
 	pivot_offset = size / 2.0

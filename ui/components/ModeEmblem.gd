@@ -1,5 +1,6 @@
-## The drawn emblem of a match mode (ModeCard): a shrinking hex island, a dandelion, a waving flag,
-## a crown on a platform - lines and shapes in one style, softly animated, with a glow under them.
+## The drawn emblem of a match mode (ModeCard, the ModeSelect strip): a shrinking hex island, a
+## dandelion, a waving flag, a crown on a platform - lines and shapes in one style, softly
+## animated, with a glow under them. Any size: the line widths follow it (drawn for DESIGN_SIZE).
 extends Control
 class_name ModeEmblem
 
@@ -8,6 +9,12 @@ var color: Color = Color(1, 1, 1)
 var pulse: float = 0.0      # 0..1: the chosen card's emblem moves a little more
 
 const INK := Color(1.0, 0.98, 0.94)
+const DESIGN_SIZE: float = 320.0   # the line widths below are for an emblem this big
+
+var _k: float = 1.0                # this emblem's size over DESIGN_SIZE
+
+func _init():
+	mouse_filter = Control.MOUSE_FILTER_IGNORE  # a picture: clicks go to the card / tile under it
 
 func _process(_delta: float):
 	queue_redraw()
@@ -15,6 +22,7 @@ func _process(_delta: float):
 func _draw():
 	var c = size * 0.5
 	var r = min(size.x, size.y) * 0.5
+	_k = r * 2.0 / DESIGN_SIZE
 	var t = Time.get_ticks_msec() / 1000.0
 	match mode:
 		GameModes.BR:
@@ -26,12 +34,13 @@ func _draw():
 		GameModes.KOTH:
 			_crown(c, r, t)
 
-## A line twice: wide and faint (the glow), then the line itself
+## A line twice: wide and faint (the glow), then the line itself (width at DESIGN_SIZE)
 func _line(points: PackedVector2Array, col: Color, width: float, closed: bool = false) -> void:
 	if closed:
 		points.append(points[0])
-	draw_polyline(points, Color(color, 0.25), width * 2.6, true)
-	draw_polyline(points, col, width, true)
+	var w = width * _k
+	draw_polyline(points, Color(color, 0.25), w * 2.6, true)
+	draw_polyline(points, col, w, true)
 
 func _hex(center: Vector2, radius: float, rot: float = 0.0, squash: float = 1.0) -> PackedVector2Array:
 	var pts = PackedVector2Array()
@@ -82,7 +91,7 @@ func _dandelion(c: Vector2, r: float, t: float) -> void:
 		_line(PackedVector2Array([p1, p2]), Color(INK, 0.9), 5.0)
 		draw_circle(p2, r * 0.035, color.lightened(0.35))
 	draw_circle(head, r * 0.21, Color(color, 0.3))
-	draw_arc(head, r * 0.2, 0.0, TAU, 40, INK, 10.0, true)
+	draw_arc(head, r * 0.2, 0.0, TAU, 40, INK, 10.0 * _k, true)
 	draw_circle(head, r * 0.08, color.lightened(0.3))
 
 # Capture the flag: a pole on a base hex, the flag waving

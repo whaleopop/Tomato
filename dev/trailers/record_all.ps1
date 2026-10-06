@@ -21,7 +21,7 @@ if (-not $ffmpeg) {
 # Movie Maker records at the project's viewport size and writes MJPEG: both come from this
 # temporary override (record.gd scales the 1280x720 UI up to it); the MP4 is compressed afterwards
 $override = Join-Path $root "override.cfg"
-Set-Content $override "[display]`nwindow/size/viewport_width=$Width`nwindow/size/viewport_height=$Height`n`n[editor]`nmovie_writer/mjpeg_quality=0.95`n"
+Set-Content $override "[display]`nwindow/size/viewport_width=$Width`nwindow/size/viewport_height=$Height`nwindow/size/mode=0`n`n[editor]`nmovie_writer/mjpeg_quality=0.95`n"
 try {
     foreach ($reel in $Reels) {
         $avi = Join-Path $out "$reel.avi"

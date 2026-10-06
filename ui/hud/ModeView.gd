@@ -34,16 +34,23 @@ func _ready():
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)  # in the tree already: plain anchors would keep the 0x0 size
 	mode = GameModes.current()
-	var holder = CenterContainer.new()
-	holder.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	holder.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	holder.offset_top = 16
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(holder)
 	_panel = PanelContainer.new()
-	_panel.add_theme_stylebox_override("panel", UITheme.glass_box(Color(0.04, 0.06, 0.1, 0.78), Color(GameModes.info(mode).color, 0.6), 16, 18, 8))
+	_panel.add_theme_stylebox_override("panel", UITheme.glass_box(UITheme.GLASS_TINT_HUD, Color(GameModes.info(mode).color, 0.6), UITheme.CORNER_RADIUS_SMALL, 18, 8))
 	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holder.add_child(_panel)
+	# PlayerHUD's top-center column stacks it over the alerts; a bare parent gets its own holder
+	var column = get_parent().get("top_center") if get_parent() else null
+	if column is VBoxContainer:
+		_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		column.add_child(_panel)
+		column.move_child(_panel, 0)
+	else:
+		var holder = CenterContainer.new()
+		holder.set_anchors_preset(Control.PRESET_CENTER_TOP)
+		holder.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		holder.offset_top = UITheme.MARGIN_MEDIUM
+		holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(holder)
+		holder.add_child(_panel)
 	var box = VBoxContainer.new()
 	box.add_theme_constant_override("separation", 2)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -61,10 +68,10 @@ func _ready():
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint.add_theme_color_override("font_color", Color(1.0, 0.85, 0.35))
 	_hint.visible = false
-	# The scoreboard (King of the Hill) on the left, under the health card
+	# The scoreboard (King of the Hill) in the top-left corner
 	_board = VBoxContainer.new()
 	_board.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	_board.position = Vector2(20, 150)
+	_board.position = Vector2(UITheme.MARGIN_MEDIUM, UITheme.MARGIN_MEDIUM)
 	_board.add_theme_constant_override("separation", 4)
 	_board.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_board)
@@ -364,12 +371,13 @@ func _perk_list(taken: Array) -> void:
 		var p = SwarmPerks.get_perk(String(id))
 		if p.is_empty():
 			continue
-		var text = "%s  %s" % [SwarmPerks.icon(id), tr(String(p[0]))]
+		var text = tr(String(p[0]))
 		if counts[id] > 1:
 			text += "  ×%d" % counts[id]
-		var row = UITheme.create_label(text, _board, UITheme.FONT_SMALL)
-		row.add_theme_font_override("font", UITheme.font_black())
-		row.add_theme_color_override("font_color", SwarmPerks.BUFF_COLOR if SwarmPerks.is_buff(id) else SwarmPerks.DEBUFF_COLOR)
+		var pcol = SwarmPerks.BUFF_COLOR if SwarmPerks.is_buff(id) else SwarmPerks.DEBUFF_COLOR
+		var row = UITheme.create_icon_label(SwarmPerks.icon(id), text, _board, UITheme.FONT_SMALL, pcol)
+		var row_label: Label = row.get_meta("label")
+		row_label.add_theme_font_override("font", UITheme.font_black())
 		row.tooltip_text = tr(String(p[1]))
 
 func _unhandled_input(event: InputEvent):

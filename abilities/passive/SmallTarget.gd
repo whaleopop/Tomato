@@ -7,6 +7,7 @@ const VALUE = 0.75
 
 func _init():
 	ability_name = "Small Target"
+	icon = "search"
 	cooldown = 0.0
 
 func _on_apply(entity):  # entity: Entity

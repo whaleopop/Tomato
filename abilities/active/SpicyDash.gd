@@ -5,6 +5,7 @@ class_name SpicyDash
 func _init():
 	super()
 	ability_name = "Spicy Dash"
+	icon = "speed"
 	cooldown = 5.0
 
 func _on_activate(entity, target_position: Vector3) -> bool:  # entity: Entity

@@ -4,6 +4,8 @@ class_name Ability
 
 var ability_name: String = ""
 var description: String = ""
+## Icon name for UITheme.icon (art/ui/icons, art/ui/kenney); "" = the HUD shows the initial letter
+var icon: String = ""
 var cooldown: float = 5.0
 var enabled: bool = true
 ## True while replaying someone else's cast on a client (AbilityComponent.play_remote_cast):

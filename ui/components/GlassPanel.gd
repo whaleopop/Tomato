@@ -16,7 +16,7 @@ const GLASS_SHADER = preload("res://shaders/ui_glass.gdshader")
 	set(value):
 		corner_radius = value
 		_apply_styles()
-@export var tint: Color = Color(0.07, 0.09, 0.16, 0.42):
+@export var tint: Color = Color(0.04, 0.055, 0.10, 0.62):
 	set(value):
 		tint = value
 		_apply_styles()
@@ -88,9 +88,24 @@ func _apply_styles():
 	_frame.add_theme_stylebox_override("panel", frame_box)
 
 	_material.set_shader_parameter("tint_color", tint)
-	_material.set_shader_parameter("blur_lod", blur)
+	_update_blur()
+
+## The blur is a mip level in physical pixels: add log2 of the render scale to keep the frost
+## the same strength on 4K
+func _update_blur() -> void:
+	if _material == null:
+		return
+	var k := maxf(UIScale.render_scale(self), 1.0)
+	_material.set_shader_parameter("blur_lod", clampf(blur + log(k) / log(2.0), 0.0, 7.0))
 
 func _notification(what: int):
+	if what == NOTIFICATION_ENTER_TREE:
+		if not get_tree().root.size_changed.is_connected(_update_blur):
+			get_tree().root.size_changed.connect(_update_blur)
+		_update_blur()
+	elif what == NOTIFICATION_EXIT_TREE:
+		if get_tree() and get_tree().root.size_changed.is_connected(_update_blur):
+			get_tree().root.size_changed.disconnect(_update_blur)
 	if what == NOTIFICATION_SORT_CHILDREN:
 		var full = Rect2(Vector2.ZERO, size)
 		for layer in [_shadow, _backdrop, _frame]:

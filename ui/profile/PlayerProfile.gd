@@ -56,6 +56,9 @@ static var hero_xp: Dictionary = {}        # hero name -> mastery XP (Mastery.gd
 static var weapon_xp: Dictionary = {}      # "weapon type" -> mastery XP
 static var nickname: String = ""
 static var online: bool = false  # the server's profile (Online.gd), not user://profile.cfg
+## The hero the player picked last (CharacterSelect, HeroLineup): the main menu's dais shows them
+## in it, a party member queues with it (server: member_hero). "" before any hero is ever chosen.
+static var preferred_hero: String = ""
 
 ## The server's profile (every answer of the backend carries it)
 static func apply_remote(p: Dictionary) -> void:
@@ -72,6 +75,7 @@ static func apply_remote(p: Dictionary) -> void:
 	hero_xp = p.get("hero_xp", {})
 	weapon_xp = p.get("weapon_xp", {})
 	nickname = String(p.get("nickname", ""))
+	preferred_hero = String(p.get("selected_hero", ""))
 
 ## Tell the server (online only); its answer brings the profile back
 static func _remote(path: String, body: Dictionary) -> void:
@@ -99,6 +103,7 @@ static func load_profile() -> void:
 	hero_xp = cfg.get_value("mastery", "heroes", {})
 	weapon_xp = cfg.get_value("mastery", "weapons", {})
 	nickname = String(cfg.get_value("account", "nickname", ""))
+	preferred_hero = String(cfg.get_value("account", "preferred_hero", ""))
 
 static func save() -> void:
 	if online:
@@ -113,6 +118,7 @@ static func save() -> void:
 	cfg.set_value("mastery", "heroes", hero_xp)
 	cfg.set_value("mastery", "weapons", weapon_xp)
 	cfg.set_value("account", "nickname", nickname)
+	cfg.set_value("account", "preferred_hero", preferred_hero)
 	cfg.save(PATH)
 
 static func get_coins() -> int:
@@ -263,6 +269,25 @@ static func choose_starters(heroes: Array) -> void:
 
 static func owns_hero(hero: String) -> bool:
 	return owns(Cosmetics.hero_id(hero))
+
+## The hero to show / queue with by default: the one picked last if we still own it, else the
+## first we own, else "" (a fresh profile before `choose_starters`)
+static func preferred_hero_or_first() -> String:
+	load_profile()
+	if preferred_hero != "" and owns_hero(preferred_hero):
+		return preferred_hero
+	var owned_list = owned_heroes()
+	return owned_list[0] if not owned_list.is_empty() else ""
+
+## Remember the hero picked in CharacterSelect / HeroLineup (CharacterSelect._on_select_pressed
+## calls this instead of Online.set_hero directly, so it also survives offline and a restart)
+static func set_preferred_hero(hero: String) -> void:
+	load_profile()
+	if hero == preferred_hero:
+		return
+	preferred_hero = hero
+	save()
+	_remote("/profile/hero", {"hero": hero})
 
 static func owned_heroes() -> Array:
 	load_profile()

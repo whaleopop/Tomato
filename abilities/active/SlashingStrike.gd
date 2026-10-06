@@ -11,6 +11,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Slashing Strike"
+	icon = "star4"
 	cooldown = 4.0
 	duration = 0.5
 

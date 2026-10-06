@@ -74,6 +74,7 @@ func _ready():
 	health = HealthComponent.new(self, cfg().health)
 	health.died.connect(_on_died)
 	health.damage_taken.connect(_on_hurt)
+	JuiceSplatter.watch(self, health)
 	_rng.seed = npc_id * 7919
 	_build_look()
 	home = global_position

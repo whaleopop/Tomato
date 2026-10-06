@@ -25,6 +25,7 @@ func _ready():
 		health.died.connect(_on_died)
 		# Floating numbers: hits and real heals (regeneration ticks are too small to show)
 		health.damage_taken.connect(func(amount, _source): AbilityFX.number(self, -amount, Color(1.0, 0.42, 0.35)))
+		JuiceSplatter.watch(self, health)
 		var born = Time.get_ticks_msec()
 		health.healed.connect(func(amount):
 			# not the max-health bonus of a passive while the hero is being set up

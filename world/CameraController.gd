@@ -391,15 +391,15 @@ func _calculate_look_ahead_offset() -> Vector3:
 
 func _input(event: InputEvent):
 	if not third_person and locked_active() and event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-		camera_angle -= event.relative.x * LOCKED_SENSITIVITY
+		camera_angle -= event.screen_relative.x * LOCKED_SENSITIVITY
 		target_angle = camera_angle  # no easing: the hero and the view turn at once
-		aim_distance = clamp(aim_distance - event.relative.y * AIM_DISTANCE_PER_PX, AIM_DISTANCE_MIN, aim_distance_max())
+		aim_distance = clamp(aim_distance - event.screen_relative.y * AIM_DISTANCE_PER_PX, AIM_DISTANCE_MIN, aim_distance_max())
 		return
 	if third_person:
 		if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 			var k = TPS_SENSITIVITY * (0.6 if _tps_aiming else 1.0)
-			camera_angle -= event.relative.x * k
-			tps_pitch = clamp(tps_pitch - event.relative.y * k, TPS_PITCH_MIN, TPS_PITCH_MAX)
+			camera_angle -= event.screen_relative.x * k
+			tps_pitch = clamp(tps_pitch - event.screen_relative.y * k, TPS_PITCH_MIN, TPS_PITCH_MAX)
 		return
 	# No zooming and no mouse-button turning: the view turns with Q / E and the cursor at the screen edge
 

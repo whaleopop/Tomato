@@ -18,7 +18,9 @@ static var player_name: String = ""
 static var last_server_ip: String = "127.0.0.1"
 static var last_server_port: int = 7777
 static var third_person: bool = false  # CameraController's view (V)
-static var camera_locked: bool = true  # top-down view turns with the hero (CameraController.locked)
+static var ui_scale: float = 1.0  # UIScale preset
+static var juice_splatter: bool = true  # juice sprays, stains and footprints on hits (JuiceSplatter)
+static var camera_locked: bool = true # top-down view turns with the hero (CameraController.locked)
 
 static func load_and_apply():
 	var cfg = ConfigFile.new()
@@ -34,10 +36,12 @@ static func load_and_apply():
 		if int(cfg.get_value("meta", "version", 1)) < 2:
 			vsync = false
 		language = cfg.get_value("interface", "language", language)
+		ui_scale = clampf(float(cfg.get_value("interface", "ui_scale", ui_scale)), 0.8, 1.5)
 		player_name = cfg.get_value("player", "name", player_name)
 		last_server_ip = cfg.get_value("network", "last_ip", last_server_ip)
 		last_server_port = cfg.get_value("network", "last_port", last_server_port)
 		third_person = cfg.get_value("video", "third_person", third_person)
+		juice_splatter = cfg.get_value("video", "juice_splatter", juice_splatter)
 		camera_locked = cfg.get_value("controls", "camera_locked", camera_locked)
 	Locale.setup(language)
 	apply()
@@ -53,8 +57,9 @@ static func apply():
 	var mode = DisplayServer.window_get_mode()
 	var is_full = mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
 	if fullscreen != is_full:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen else DisplayServer.WINDOW_MODE_WINDOWED)
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen else DisplayServer.WINDOW_MODE_MAXIMIZED)
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if vsync else DisplayServer.VSYNC_DISABLED)
+	UIScale.apply(Engine.get_main_loop().root)
 
 static func save():
 	var cfg = ConfigFile.new()
@@ -66,8 +71,10 @@ static func save():
 	cfg.set_value("video", "fullscreen", fullscreen)
 	cfg.set_value("video", "vsync", vsync)
 	cfg.set_value("video", "third_person", third_person)
+	cfg.set_value("video", "juice_splatter", juice_splatter)
 	cfg.set_value("controls", "camera_locked", camera_locked)
 	cfg.set_value("interface", "language", language)
+	cfg.set_value("interface", "ui_scale", ui_scale)
 	cfg.set_value("player", "name", player_name)
 	cfg.set_value("network", "last_ip", last_server_ip)
 	cfg.set_value("network", "last_port", last_server_port)

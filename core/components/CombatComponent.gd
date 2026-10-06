@@ -7,6 +7,7 @@ signal attack_started
 signal attack_finished
 signal weapon_changed(new_weapon)
 signal target_hit(target, damage: float)  # target: Entity
+signal hit_marker(amount: float, confirmed: bool)  # own hit for the crosshair: predicted (0, false) / server-confirmed (dmg, true)
 signal shot_fired(from: Vector3, to: Vector3, hit: bool)
 signal reload_started
 signal reload_finished
@@ -29,9 +30,30 @@ var muzzle_offset: Vector3 = Vector3(0.28, 0.66, 0.6)
 func _init(p_entity = null):  # p_entity: Entity
 	entity = p_entity
 
+## Spread of single bullets (current_spread): the gun's base spread ((1 - accuracy) * 0.15),
+## tighter standing still, wider on the move, plus bloom - shots fired back to back (less than
+## BLOOM_HOLD apart: automatics held down) widen the next ones, a short pause settles it. So a
+## pistol, the hand cannon and the marksman stay precise, a rifle / SMG / minigun spray when held
+## and are accurate in bursts. The shooter's client rolls it for its own bullets
+## (PlayerInputHandler._resolve_shot) - the hit is where the bullet goes, not just the cursor.
+const BLOOM_PER_SHOT: float = 0.15  # of the gun's base spread, per shot
+const BLOOM_MAX: float = 1.0
+const BLOOM_HOLD: float = 0.17      # seconds after a shot before the bloom settles (inputs go at 30 Hz: a rifle's 0.1 s shots land 0.1-0.133 apart)
+const BLOOM_RECOVER: float = 4.0    # per second, once settling
+const MOVE_SPREAD: float = 0.35     # extra spread (of the base) at full walking speed
+const STILL_SPREAD: float = 0.75    # standing still: the base spread shrinks to this
+var bloom: float = 0.0
+var _since_shot: float = 99.0
+## The next single bullet's direction, rolled already (preset_shot): attack() fires along it
+var _preset_dir: Vector3 = Vector3.ZERO
+
 func update(delta: float):
 	if not enabled:
 		return
+
+	_since_shot += delta
+	if _since_shot > BLOOM_HOLD:
+		bloom = maxf(0.0, bloom - BLOOM_RECOVER * delta)
 
 	if attack_cooldown > 0.0:
 		attack_cooldown -= delta
@@ -91,6 +113,8 @@ func credited_weapon() -> int:
 	return -1
 
 func attack(target_position: Vector3, target_entity = null) -> bool:  # target_entity: Entity
+	var preset = _preset_dir  # one shot only, fired or not
+	_preset_dir = Vector3.ZERO
 	if not can_attack():
 		return false
 	var inventory = entity.get_component("InventoryComponent") if entity and entity.has_method("get_component") else null
@@ -106,7 +130,7 @@ func attack(target_position: Vector3, target_entity = null) -> bool:  # target_e
 	# NEW: Check for equipped ranged weapon first (new weapon system)
 	if equipped_ranged_weapon:
 		damage = equipped_ranged_weapon.damage * get_damage_multiplier()
-		var success = _perform_hitscan_attack(target_position, damage)
+		var success = _perform_hitscan_attack(target_position, damage, preset)
 		is_attacking = false
 		attack_finished.emit()
 		return success
@@ -150,8 +174,42 @@ func attack(target_position: Vector3, target_entity = null) -> bool:  # target_e
 
 	return true
 
-## Perform hitscan ranged attack
-func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
+## The muzzle in the world (the right hand at the front of the body)
+func muzzle_position() -> Vector3:
+	return _get_muzzle_position()
+
+## The next single bullet goes along `direction` (already rolled: the client resolving its own
+## bullet, the server taking the client's direction for a miss) instead of rolling the spread
+## again. Used by the next attack() only.
+func preset_shot(direction: Vector3) -> void:
+	_preset_dir = direction.normalized() if direction.length_squared() > 0.0001 else Vector3.ZERO
+
+## Where a single bullet fired now toward `target_position` really goes: the spread rolled
+## (current_spread) and the shot counted for the bloom. Call it once per shot that fires.
+func roll_shot_direction(target_position: Vector3) -> Vector3:
+	var accuracy = equipped_ranged_weapon.accuracy if equipped_ranged_weapon else 0.95
+	return _apply_accuracy((target_position - _get_muzzle_position()).normalized(), accuracy)
+
+## How far (in radians, about) a single bullet fired now may stray from the aim line - nothing
+## rolled, nothing counted (the crosshair draws it). accuracy < 0: the gun in hand.
+func current_spread(accuracy: float = -1.0) -> float:
+	if accuracy < 0.0:
+		accuracy = equipped_ranged_weapon.accuracy if equipped_ranged_weapon else 0.95
+	var base = (1.0 - accuracy) * 0.15
+	var spread = base
+	if base > 0.0:
+		var movement = entity.get_component("MovementComponent") if entity and entity.has_method("get_component") else null
+		var moving = 0.0
+		if movement:
+			moving = clampf(Vector2(movement.velocity.x, movement.velocity.z).length() / maxf(movement.speed, 0.1), 0.0, 1.0)
+		spread = base * (lerpf(STILL_SPREAD, 1.0 + MOVE_SPREAD, moving) + bloom)
+	# Earthquake (MapEvents): everybody's aim shakes, even a sniper's
+	if MapEvents.spread_factor > 1.0:
+		spread = max(spread, 0.012) * MapEvents.spread_factor
+	return spread
+
+## Perform hitscan ranged attack. preset_dir: a single bullet's direction rolled already (preset_shot)
+func _perform_hitscan_attack(target_position: Vector3, damage: float, preset_dir: Vector3 = Vector3.ZERO) -> bool:
 	if not entity or not is_instance_valid(entity):
 		print("[CombatComponent] ERROR: entity invalid")
 		return false
@@ -259,7 +317,7 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 			var accuracy = 0.95
 			if equipped_ranged_weapon:
 				accuracy = equipped_ranged_weapon.accuracy
-			var spread_dir = _apply_accuracy(direction, accuracy)
+			var spread_dir = preset_dir if preset_dir != Vector3.ZERO else _apply_accuracy(direction, accuracy)
 			hit_result = HitscanSystem.shoot(
 				world_3d, muzzle_pos, spread_dir,
 				attack_range, damage, entity
@@ -269,7 +327,7 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 				if actual_dmg > 0:
 					target_hit.emit(hit_result.get("collider"), actual_dmg)
 					apply_on_hit(hit_result.get("collider"))
-			end_pos = hit_result.get("position", muzzle_pos + direction * attack_range)
+			end_pos = hit_result.get("position", muzzle_pos + spread_dir * attack_range)  # a miss: where the bullet went
 			_create_shot_effects(muzzle_pos, hit_result, style)
 			shot_fired.emit(muzzle_pos, end_pos, hit_result.get("hit", false))
 
@@ -283,6 +341,7 @@ func _perform_hitscan_attack(target_position: Vector3, damage: float) -> bool:
 			landed = true
 		if landed:
 			Sfx.own("hit")
+			hit_marker.emit(0.0, false)
 
 	# Add bullet trail to visibility system
 	_add_visibility_trail(muzzle_pos, end_pos)
@@ -368,20 +427,22 @@ func _blast_later(pos: Vector3, radius: float, damage: float, delay: float) -> v
 		if status and d > 0.05:
 			status.push(off.normalized() * 6.0, 0.2)
 
-## Apply accuracy spread to direction
+## Roll the spread (current_spread) around `direction` and count the shot for the bloom
 func _apply_accuracy(direction: Vector3, accuracy: float) -> Vector3:
-	var spread = (1.0 - accuracy) * 0.15
-	# Earthquake (MapEvents): everybody's aim shakes, even a sniper's
-	if MapEvents.spread_factor > 1.0:
-		spread = max(spread, 0.012) * MapEvents.spread_factor
+	var spread = current_spread(accuracy)
+	if accuracy < 1.0:
+		if _since_shot < BLOOM_HOLD:
+			bloom = minf(bloom + BLOOM_PER_SHOT, BLOOM_MAX)
+		_since_shot = 0.0
 	if spread <= 0.0:
 		return direction
-	var random_spread = Vector3(
-		randf_range(-spread, spread),
-		randf_range(-spread, spread),
-		randf_range(-spread, spread)
-	)
-	return (direction + random_spread).normalized()
+	# Uniform over a disc around the aim line (the old cube leaned towards the diagonals and tilted shots up / down)
+	var side = direction.cross(Vector3.UP)
+	side = side.normalized() if side.length_squared() > 0.0001 else Vector3.RIGHT
+	var up = side.cross(direction).normalized()
+	var r = spread * sqrt(randf())
+	var a = randf() * TAU
+	return (direction + side * (cos(a) * r) + up * (sin(a) * r * 0.35)).normalized()
 
 ## Perform flamethrower attack
 func _perform_flamethrower_attack(muzzle_pos: Vector3, direction: Vector3, damage: float):
@@ -431,8 +492,9 @@ func _perform_flamethrower_attack(muzzle_pos: Vector3, direction: Vector3, damag
 		# Apply damage
 		var health = player.get_component("HealthComponent")
 		if health:
-			health.take_damage(damage, entity)
-			target_hit.emit(player, damage)
+			var flame_dealt = health.take_damage(damage, entity)
+			if flame_dealt > 0:
+				target_hit.emit(player, flame_dealt)
 
 	# Leave fire trail if enabled
 	if equipped_ranged_weapon and equipped_ranged_weapon.fire_trail_enabled:
@@ -535,7 +597,8 @@ func _create_shot_effects(muzzle_pos: Vector3, hit_result: Dictionary, weapon_ty
 		return
 
 	var parent = _effects_parent()
-	var hit_pos = hit_result.get("position", muzzle_pos + (entity.global_position - muzzle_pos).normalized() * 50)
+	# A miss has no "position", only where the ray ended (HitscanSystem.shoot)
+	var hit_pos = hit_result.get("position", hit_result.get("end_position", muzzle_pos + entity.global_transform.basis.z * 50.0))
 	var hit_normal = hit_result.get("normal", Vector3.UP)
 	var collider = hit_result.get("collider")
 

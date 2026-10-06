@@ -11,6 +11,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Kernel Barrage"
+	icon = "dot"
 	cooldown = 7.0
 	duration = 0.8
 

@@ -49,6 +49,8 @@ func connect_to_entity_signals():
 		# Connect shot_fired to broadcast to other clients
 		if not combat.shot_fired.is_connected(_on_shot_fired):
 			combat.shot_fired.connect(_on_shot_fired)
+		if not combat.target_hit.is_connected(_on_target_hit):
+			combat.target_hit.connect(_on_target_hit)
 	var abilities = player_entity.get_component("AbilityComponent")
 	if abilities and not abilities.ability_cast.is_connected(_on_ability_cast):
 		abilities.ability_cast.connect(_on_ability_cast)
@@ -59,6 +61,23 @@ func connect_to_entity_signals():
 		health.damage_taken.connect(_on_damaged)
 	if health and not health.hit_from.is_connected(_on_hit_from):
 		health.hit_from.connect(_on_hit_from)
+
+const DEALT_KEEP_MSEC := 1000  # how long "dealt" stays in the state (covers lost packets)
+var _dealt_n: int = 0
+var _dealt_dmg: int = 0
+var _dealt_msec: int = -100000
+
+## Our damage to someone else: the owner's hitmarker (state "dealt" = [count, last damage])
+func _on_target_hit(target, dmg: float) -> void:
+	if dmg <= 0.0 or target == player_entity:
+		return
+	_dealt_n += 1
+	_dealt_dmg = int(ceil(dmg))
+	_dealt_msec = Time.get_ticks_msec()
+	if player_entity.get("is_local_player"):  # the host's own hero has no state to read it from
+		var combat = player_entity.get_component("CombatComponent")
+		if combat:
+			combat.hit_marker.emit(dmg, true)
 
 func _on_hit_from(pos: Vector3, amount: float) -> void:
 	_hit_id += 1
@@ -160,6 +179,7 @@ func _announce_kill(killer, game_server: GameServer, npc_kind: String = "") -> v
 		"victim_name": String(lobby.players_names.get(player_id, "Player_%d" % player_id)) if lobby else "",
 		"victim_hero": character_name,
 		"weapon": -1,
+		"victim_wear": cosmetics.duplicate(),  # for the kill card
 	}
 	if npc_kind != "":
 		info["npc"] = npc_kind
@@ -286,10 +306,6 @@ func process_input(input_data: Dictionary):
 		if input_data.has("jump") and input_data.jump:
 			movement.jump()
 
-		# Process sprint input
-		if input_data.has("sprint"):
-			movement.set_sprint(input_data.sprint)
-
 	# Facing direction (the client aims with the mouse)
 	if input_data.has("rotation_y"):
 		player_entity.rotation.y = float(input_data.rotation_y)
@@ -344,6 +360,11 @@ func process_input(input_data: Dictionary):
 			else:
 				# No hit reported by client, still call attack for effects and potential server-side hits
 				var debt = _take_early_shot(combat)
+				# A single bullet the client rolled and missed with (PlayerInputHandler._resolve_shot):
+				# fire it along the client's direction, so a miss stays a miss instead of a second roll
+				var shot_dir = input_data.get("shot_dir")
+				if shot_dir is Vector3 and combat.equipped_ranged_weapon and combat.equipped_ranged_weapon.fire_mode == "single":
+					combat.preset_shot(shot_dir)
 				combat.attack(target_pos)
 				combat.attack_cooldown += debt  # owed, shot or not (it was zeroed above)
 
@@ -382,6 +403,9 @@ func get_sync_data() -> Dictionary:
 		"stats": stats(),
 	}
 
+	if Time.get_ticks_msec() - _dealt_msec < DEALT_KEEP_MSEC:
+		data["dealt"] = PackedInt32Array([_dealt_n, _dealt_dmg])
+
 	# Add component data
 	var health = player_entity.get_component("HealthComponent")
 	if health:
@@ -393,7 +417,6 @@ func get_sync_data() -> Dictionary:
 	if movement:
 		data["velocity"] = movement.velocity
 		data["is_moving"] = movement.is_moving
-		data["stamina"] = [snappedf(movement.stamina, 0.1), movement.exhausted]
 
 	# Add combat data for weapon sync
 	var combat = player_entity.get_component("CombatComponent")

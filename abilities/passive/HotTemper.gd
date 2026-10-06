@@ -7,6 +7,7 @@ const VALUE = 1.25
 
 func _init():
 	ability_name = "Hot Temper"
+	icon = "skull"
 	cooldown = 0.0
 
 func _on_apply(entity):  # entity: Entity
