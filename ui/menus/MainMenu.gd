@@ -6,7 +6,7 @@ extends Control
 class_name MainMenu
 
 const SCENE_CLICK_DELAY: float = 0.25  # the clicked thing's juice plays before the screen opens
-const VERSION = "v0.8.6"
+const VERSION = "v0.8.8"
 const LEFT_W: int = 380  # the left column's width (x = ScreenHeader.SIDE_MARGIN)
 const PARTY_W: int = 360  # the right column's width (players pill, party)
 
