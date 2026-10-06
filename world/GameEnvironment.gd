@@ -29,6 +29,9 @@ func _ready():
 	_create_sun()
 	_create_environment()
 	_create_clouds()
+	RenderQuality.apply_sun(sun)
+	RenderQuality.apply_environment(world_environment.environment)
+	RenderQuality.apply_viewport(get_viewport())
 	ambient_life = AmbientLife.new()
 	ambient_life.name = "AmbientLife"
 	add_child(ambient_life)

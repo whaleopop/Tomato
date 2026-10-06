@@ -299,6 +299,13 @@ const STRINGS = {
 	"UI scale": "Масштаб интерфейса",
 	"Size of menus and the HUD": "Размер меню и HUD",
 	"DONE": "ГОТОВО",
+	"Graphics Quality": "Качество графики",
+	"Auto": "Авто",
+	"Low": "Низкое",
+	"Medium": "Среднее",
+	"High": "Высокое",
+	"Touch Controls": "Сенсорное управление",
+	"Controls Opacity": "Прозрачность джойстиков",
 
 	# ---------------------------------------------------------------- connect
 	"Multiplayer": "Мультиплеер",

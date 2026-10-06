@@ -20,15 +20,19 @@ func _ready():
 	if DisplayServer.get_name() == "headless":
 		set_process(false)
 		return
+	if RenderQuality.level() == RenderQuality.LOW:
+		set_process(false)
+		return
+	var density = 0.5 if RenderQuality.level() == RenderQuality.MEDIUM else 1.0
 	_rng.randomize()
-	_pollen = _particles(140, 9.0, Vector3(18, 2.5, 14), 0.07, Color(1.0, 0.97, 0.8, 0.7), false)
+	_pollen = _particles(int(140 * density), 9.0, Vector3(18, 2.5, 14), 0.07, Color(1.0, 0.97, 0.8, 0.7), false)
 	var pm: ParticleProcessMaterial = _pollen.process_material
 	pm.gravity = Vector3(0.15, 0.02, 0.05)
 	pm.turbulence_enabled = true
 	pm.turbulence_noise_strength = 0.6
 	pm.turbulence_noise_scale = 3.0
 	pm.initial_velocity_max = 0.2
-	_leaves = _particles(22, 7.0, Vector3(18, 1.0, 14), 0.2, Color(1, 1, 1, 1), false)
+	_leaves = _particles(int(22 * density), 7.0, Vector3(18, 1.0, 14), 0.2, Color(1, 1, 1, 1), false)
 	var lm: ParticleProcessMaterial = _leaves.process_material
 	lm.gravity = Vector3(0.5, -0.6, 0.2)
 	lm.angular_velocity_min = -180.0
@@ -41,7 +45,7 @@ func _ready():
 	var ramp_tex = GradientTexture1D.new()
 	ramp_tex.gradient = ramp
 	lm.color_initial_ramp = ramp_tex
-	_fireflies = _particles(70, 5.0, Vector3(15, 1.0, 11), 0.09, Color(0.85, 1.0, 0.35, 1.0), true)
+	_fireflies = _particles(int(70 * density), 5.0, Vector3(15, 1.0, 11), 0.09, Color(0.85, 1.0, 0.35, 1.0), true)
 	var fm: ParticleProcessMaterial = _fireflies.process_material
 	fm.gravity = Vector3.ZERO
 	fm.turbulence_enabled = true

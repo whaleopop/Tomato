@@ -74,7 +74,7 @@ func _update_ability_aim():
 			aiming_ability = -1
 	var camera = get_viewport().get_camera_3d()
 	var tps = camera is CameraController and camera.third_person
-	if aiming_ability >= 0 and not tps and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+	if aiming_ability >= 0 and not tps and Input.is_action_pressed("ability_cancel"):
 		aiming_ability = -1  # changed my mind
 
 func _pressed(action: String) -> bool:
@@ -120,7 +120,7 @@ func _update_aim_direction():
 		current_aim_position.y = player.global_position.y
 		return
 
-	var mouse_pos = get_viewport().get_mouse_position()
+	var mouse_pos = CameraController.aim_screen_point(get_viewport())
 	var ray_origin = camera.project_ray_origin(mouse_pos)
 	var ray_dir = camera.project_ray_normal(mouse_pos)
 
@@ -283,17 +283,25 @@ func _capture_and_send_input():
 	}
 	input_sequence += 1
 
-	# Capture movement input (WASD)
+	# Capture movement input (WASD), or the touch move stick when touch controls are active
 	var move_direction = Vector2.ZERO
+	var touch_move = Vector2.ZERO
+	if Platform.touch_mode():
+		var touch = get_tree().get_first_node_in_group("touch_controls")
+		if touch:
+			touch_move = touch.move_vector
 
-	if Input.is_action_pressed("move_up"):
-		move_direction.y -= 1.0
-	if Input.is_action_pressed("move_down"):
-		move_direction.y += 1.0
-	if Input.is_action_pressed("move_left"):
-		move_direction.x -= 1.0
-	if Input.is_action_pressed("move_right"):
-		move_direction.x += 1.0
+	if touch_move.length_squared() > 0.01:
+		move_direction = touch_move
+	else:
+		if Input.is_action_pressed("move_up"):
+			move_direction.y -= 1.0
+		if Input.is_action_pressed("move_down"):
+			move_direction.y += 1.0
+		if Input.is_action_pressed("move_left"):
+			move_direction.x -= 1.0
+		if Input.is_action_pressed("move_right"):
+			move_direction.x += 1.0
 
 	if move_direction.length_squared() > 0.01:
 		# Transform movement direction relative to camera rotation
@@ -304,9 +312,17 @@ func _capture_and_send_input():
 
 	# Jump disabled for standard mode
 
-	# Attack: a click, or holding the button (the weapon's fire rate limits the rate)
+	# Attack: a click, or holding the button (the weapon's fire rate limits the rate).
+	# Touch: emulate_mouse_from_touch turns ANY finger (move stick included) into a synthetic
+	# "attack" click, so on touch we trust only TouchControls' own fire-stick state instead.
 	var combat = player.get_component("CombatComponent")
-	var holding = Input.is_action_pressed("attack") and combat != null and combat.can_attack()
+	var attack_down: bool
+	if Platform.touch_mode():
+		var touch = get_tree().get_first_node_in_group("touch_controls")
+		attack_down = touch != null and touch.firing
+	else:
+		attack_down = Input.is_action_pressed("attack")
+	var holding = attack_down and combat != null and combat.can_attack()
 	if _pressed("attack") or holding:
 		input_data["attack"] = true
 		var aim = _mouse_target()

@@ -170,6 +170,9 @@ func _ready():
 	for c in [health_bar, ammo_display]:
 		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	if Platform.touch_mode():
+		_apply_touch_layout()
+
 	var network_manager = get_node_or_null("/root/NetworkManager")
 	if network_manager and network_manager.has_signal("match_ended"):
 		network_manager.match_ended.connect(_on_match_ended)
@@ -179,6 +182,29 @@ func _ready():
 		network_manager.map_event.connect(_on_map_event)
 	if network_manager and network_manager.has_signal("player_killed"):
 		network_manager.player_killed.connect(_on_player_killed)
+
+## Touch layout: health top-left (bottom-left is the move stick), ammo smaller under the top-right
+## column (bottom-right is the aim stick), abilities hidden (they live on TouchControls' buttons).
+## Safe-area margins keep corner elements clear of notches / rounded corners.
+func _apply_touch_layout() -> void:
+	var margins = UIScale.safe_margins(self)
+	health_bar.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	health_bar.grow_vertical = Control.GROW_DIRECTION_END
+	health_bar.offset_left = UITheme.MARGIN_MEDIUM + margins.x
+	health_bar.offset_top = UITheme.MARGIN_MEDIUM + margins.y + 64  # clear of a pause button
+	health_bar.offset_bottom = 0
+	top_right.offset_right = -UITheme.MARGIN_MEDIUM - margins.z
+	top_right.offset_top = UITheme.MARGIN_MEDIUM + margins.y
+	ability_bar.visible = false
+	ammo_display.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	ammo_display.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	ammo_display.grow_vertical = Control.GROW_DIRECTION_END
+	ammo_display.offset_left = -260
+	ammo_display.offset_right = -UITheme.MARGIN_MEDIUM - margins.z
+	ammo_display.offset_top = 220  # under the minimap / stats pill / kill feed column
+	ammo_display.offset_bottom = 0
+	ammo_display.scale = Vector2(0.78, 0.78)
+	ammo_display.pivot_offset = Vector2(ammo_display.size.x, 0)
 
 func _place(control: Control, preset: int, offset: Vector2):
 	control.set_anchors_preset(preset)

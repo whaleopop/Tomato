@@ -13,6 +13,8 @@ var visibility_system: VisibilitySystem = null
 var pause_menu: PauseMenu = null
 var loading_overlay: Control = null
 var training_ground: TrainingGround = null
+var _touch_controls: Node = null      # mobile-port on-screen sticks/buttons (TouchControls.gd)
+var _touch_camera: CameraController = null
 
 func _ready():
 	add_to_group("game_scene")
@@ -232,6 +234,9 @@ func _setup_local_player(player: Player):
 	if camera and camera.has_method("set_target"):
 		camera.set_target(player)
 
+	if Platform.touch_mode():
+		_setup_touch_controls(player, camera)
+
 	var hud = get_node_or_null("UI/PlayerHUD")
 	if hud and hud.has_method("setup"):
 		var grid: HexGrid = null
@@ -254,6 +259,28 @@ func _setup_local_player(player: Player):
 	_setup_inventory_menu(player)
 	_setup_pause_menu()
 	_register_player_visibility(player)
+
+## Mobile-port: builds the on-screen stick/button layer and wires its aim stick into the
+## camera's touch_aim_offset (world-space point the hero aims at) each frame.
+func _setup_touch_controls(player: Player, camera: Node) -> void:
+	var ui_layer = get_node_or_null("UI")
+	if not ui_layer:
+		return
+	var touch = preload("res://ui/hud/touch/TouchControls.gd").new()
+	touch.name = "TouchControls"
+	ui_layer.add_child(touch)
+	touch.setup(player)
+	_touch_controls = touch
+	_touch_camera = camera if camera is CameraController else null
+
+func _process(_delta: float) -> void:
+	if _touch_controls and is_instance_valid(_touch_controls) and _touch_camera and is_instance_valid(_touch_camera):
+		if _touch_controls.aim_active:
+			# The stick's vector is relative to the screen, same convention as WASD move input
+			var dir = _touch_camera.transform_direction(_touch_controls.aim_vector)
+			_touch_camera.touch_aim_offset = Vector3(dir.x, 0.0, dir.y) * 8.0
+		else:
+			_touch_camera.touch_aim_offset = Vector3.ZERO
 
 ## Zone alerts and the countdown come from NetworkManager.zone_changed (PlayerHUD connects itself)
 func _connect_destruction_alerts(_hud):

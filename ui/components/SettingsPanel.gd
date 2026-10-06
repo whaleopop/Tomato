@@ -24,6 +24,7 @@ var _footer_hint: Label
 var _reset_button: Button
 var _language_chips: Dictionary = {}      # language code -> Button
 var _scale_chips: Dictionary = {}         # preset -> Button
+var _quality_chips: Dictionary = {}       # GameSettings.graphics_quality value -> Button
 var _key_buttons: Dictionary = {}         # action -> Button
 var _listening: String = ""               # the action waiting for a key
 
@@ -154,18 +155,56 @@ func _build_audio(box: VBoxContainer) -> void:
 
 func _build_video(box: VBoxContainer) -> void:
 	_kicker("Video", box)
-	var fullscreen = _switch_row("Fullscreen", "", GameSettings.fullscreen, box)
-	fullscreen.toggled.connect(func(on):
-		GameSettings.fullscreen = on
-		GameSettings.apply())
-	var vsync = _switch_row("VSync", "Locks the frame rate to the screen", GameSettings.vsync, box)
-	vsync.toggled.connect(func(on):
-		GameSettings.vsync = on
-		GameSettings.apply())
+	if not Platform.is_mobile():
+		var fullscreen = _switch_row("Fullscreen", "", GameSettings.fullscreen, box)
+		fullscreen.toggled.connect(func(on):
+			GameSettings.fullscreen = on
+			GameSettings.apply())
+		var vsync = _switch_row("VSync", "Locks the frame rate to the screen", GameSettings.vsync, box)
+		vsync.toggled.connect(func(on):
+			GameSettings.vsync = on
+			GameSettings.apply())
 	var juice = _switch_row("Juice splatter", "Juice sprays, stains and footprints when someone is hit", GameSettings.juice_splatter, box)
 	juice.toggled.connect(func(on):
 		GameSettings.juice_splatter = on
 		GameSettings.save())
+	var qrow = _row("Graphics Quality", "", box)
+	var qchips = HBoxContainer.new()
+	qchips.add_theme_constant_override("separation", 6)
+	qchips.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	qrow.add_child(qchips)
+	for pair in [[-1, "Auto"], [0, "Low"], [1, "Medium"], [2, "High"]]:
+		var qc = UITheme.create_tab(tr(pair[1]).to_upper(), qchips, Vector2(78, 40))
+		qc.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # set translated + uppercased above
+		qc.pressed.connect(_set_graphics_quality.bind(pair[0]))
+		_quality_chips[pair[0]] = qc
+	_mark_quality()
+	if Platform.is_mobile():
+		# No "Touch Controls" switch here: Platform.touch_mode() returns true unconditionally on
+		# mobile (short-circuits before ever checking GameSettings.touch_controls), so a switch
+		# toggling that setting had zero effect - there is also no other way to play on a phone
+		# (no bluetooth-controller support), so on-screen controls should just always be on.
+		var orow = _row("Controls Opacity", "", box)
+		var oslider = UITheme.create_slider(0.3, 1.0, GameSettings.touch_opacity, orow)
+		oslider.custom_minimum_size = Vector2(250, 24)
+		oslider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		oslider.focus_mode = Control.FOCUS_NONE
+		oslider.scrollable = false
+		oslider.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		var ovalue = UITheme.create_heading("", orow)
+		ovalue.custom_minimum_size.x = 56
+		ovalue.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		ovalue.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		ovalue.add_theme_font_override("font", UITheme.font_black())
+		ovalue.add_theme_font_size_override("font_size", 17)
+		ovalue.add_theme_color_override("font_color", UITheme.GOLD)
+		ovalue.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+		var oshow = func(v: float):
+			GameSettings.touch_opacity = v
+			GameSettings.save()
+			ovalue.text = "%d%%" % int(round(v * 100.0))
+		oslider.value_changed.connect(oshow)
+		oshow.call(GameSettings.touch_opacity)
 	UITheme.create_spacer(false, box).custom_minimum_size.y = 4
 	_kicker("Interface", box)
 	# The languages side by side, each written in its own language
@@ -186,6 +225,8 @@ func _build_video(box: VBoxContainer) -> void:
 	schips.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	srow.add_child(schips)
 	for p in UIScale.PRESETS:
+		if Platform.is_mobile() and (p < 0.8 or p > 1.0):
+			continue  # phones only pick among the mobile-safe presets
 		var sc = UITheme.create_tab("%d%%" % roundi(p * 100.0), schips, Vector2(72, 40))
 		sc.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
 		sc.pressed.connect(_set_ui_scale.bind(p))
@@ -202,6 +243,8 @@ func _build_controls(box: VBoxContainer) -> void:
 		if cam is CameraController:
 			cam.set_locked(on))
 	UITheme.create_spacer(false, box).custom_minimum_size.y = 4
+	if Platform.is_mobile():
+		return  # no keyboard to rebind on a phone
 	var keys_head = HBoxContainer.new()
 	keys_head.add_theme_constant_override("separation", 12)
 	box.add_child(keys_head)
@@ -359,6 +402,15 @@ func _set_ui_scale(p: float) -> void:
 func _mark_scale() -> void:
 	for p in _scale_chips:
 		UITheme.set_tab_active(_scale_chips[p], is_equal_approx(p, GameSettings.ui_scale))
+
+func _set_graphics_quality(value: int) -> void:
+	GameSettings.graphics_quality = value
+	GameSettings.save()
+	_mark_quality()
+
+func _mark_quality() -> void:
+	for q in _quality_chips:
+		UITheme.set_tab_active(_quality_chips[q], q == GameSettings.graphics_quality)
 
 func _mark_language() -> void:
 	for code in _language_chips:

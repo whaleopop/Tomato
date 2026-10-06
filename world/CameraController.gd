@@ -79,12 +79,26 @@ var tps_distance: float = TPS_DISTANCE
 var _tps_aiming: bool = false
 var _top_fov: float = 75.0
 
+## Touch aim (mobile-port): set by whoever owns the on-screen aim stick (TouchControls, via
+## PlayerInputHandler/GameSceneController wiring) to a world-space offset from the hero; while
+## touch_mode() is on and this isn't zero, aim_screen_point uses hero position + this offset
+## instead of the mouse.
+var touch_aim_offset: Vector3 = Vector3.ZERO
+## Last non-zero touch aim direction (world-space, horizontal, normalized): while the aim stick
+## is untouched (touch_aim_offset == ZERO) the hero keeps facing this instead of snapping to
+## wherever the emulated "mouse position" (the last finger touch - often the move stick) sits.
+var touch_last_aim_dir: Vector3 = Vector3(0, 0, 1)  # heroes face +Z by default (PlayerInputHandler)
+
 func _ready():
 	# Set initial values
 	target_angle = camera_angle
 	_top_fov = fov
-	set_third_person(GameSettings.third_person, false)
-	locked = GameSettings.camera_locked
+	if Platform.touch_mode():
+		set_third_person(false, false)
+		locked = false
+	else:
+		set_third_person(GameSettings.third_person, false)
+		locked = GameSettings.camera_locked
 
 ## Sounds are heard from the hero, not from up here (everything would be equally far away and
 ## quiet): the listener stands at the target and faces where the view faces (Sfx)
@@ -205,6 +219,19 @@ func _update_third_person(delta: float):
 ## ahead of the hero in the locked top-down view
 static func aim_screen_point(viewport: Viewport) -> Vector2:
 	var cam = viewport.get_camera_3d()
+	if cam is CameraController and Platform.touch_mode() and cam.target:
+		var hero = cam.target.visual_position() if cam.target.has_method("visual_position") else cam.target.global_position
+		var offset: Vector3
+		if cam.touch_aim_offset != Vector3.ZERO:
+			cam.touch_last_aim_dir = cam.touch_aim_offset.normalized()
+			offset = cam.touch_aim_offset
+		else:
+			# Aim stick untouched: keep facing the last real aim direction instead of falling
+			# back to the raw "mouse position" (the last finger touch - often the move stick).
+			offset = cam.touch_last_aim_dir * 8.0
+		var p = hero + offset
+		if not cam.is_position_behind(p):
+			return cam.unproject_position(p)
 	if cam is CameraController and cam.third_person:
 		return viewport.get_visible_rect().size / 2.0
 	if cam is CameraController and cam.locked_active():
@@ -364,7 +391,7 @@ func _calculate_look_ahead_offset() -> Vector3:
 	if not viewport:
 		return Vector3.ZERO
 
-	var mouse_pos = viewport.get_mouse_position()
+	var mouse_pos = aim_screen_point(viewport)
 	var screen_size = viewport.get_visible_rect().size
 
 	# Calculate normalized offset from screen center (-1 to 1)

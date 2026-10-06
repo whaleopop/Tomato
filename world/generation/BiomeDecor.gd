@@ -65,6 +65,10 @@ static func decorate(tile: HexTile) -> void:
 		mmi.multimesh = mm
 		mmi.material_override = part[1]
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var range_end = RenderQuality.decor_range()
+		if range_end > 0.0:
+			mmi.visibility_range_end = range_end
+			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		holder.add_child(mmi)
 
 ## A random spot on the hexagon's top, clear of the very edge
