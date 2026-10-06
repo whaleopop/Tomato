@@ -289,7 +289,7 @@ func _fill_friends(res: Dictionary) -> void:
 			tag.add_theme_font_override("font", UITheme.font_black())
 			tag.add_theme_color_override("font_color", UITheme.ACCENT_INFO)
 			tag.uppercase = true
-		elif state != "offline":
+		else:
 			_btn(row, "INVITE", "primary", func(): _invite(int(f.id), String(f.nickname)))
 			_draggable(row, f)
 		_btn(row, "PROFILE", "", func(): open_profile.emit(int(f.id)))
@@ -612,11 +612,9 @@ func _select(p: Dictionary, relation: String = "friend") -> void:
 			var together = online != null and online.party().get("members", []).any(func(m): return int(m.id) == id)
 			if together:
 				_side_note("In your party", UITheme.ACCENT_INFO)
-			elif state != "offline":
+			else:
 				var inv = UITheme.create_play_button("INVITE TO PARTY", tr("Play together"), _sel_actions)
 				inv.pressed.connect(func(): _invite(id, String(p.nickname)))
-			else:
-				_side_note("Offline", UITheme.TEXT_MUTED)
 			_sel_actions.add_child(buttons)
 			_side_button(buttons, "PROFILE", "", func(): open_profile.emit(id))
 			_side_button(buttons, "REMOVE FRIEND", "danger", func(): _act("/friends/remove", {"id": id}))
