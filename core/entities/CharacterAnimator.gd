@@ -40,6 +40,11 @@ var _spawn_offset: float = 0.0
 var _one_shot_until: float = 0.0
 const HARD_LANDING_SPEED: float = 4.5   # m/s downwards; below that a landing doesn't shake tiles
 var _fall_speed: float = 0.0            # fastest downward speed during the current airtime
+# Idle variants: now and then a standing hero glances around / stretches / shifts weight (visual only)
+const IDLE_VARIANTS: Array = ["idle_look", "idle_stretch", "idle_shift"]
+var _idle_timer: float = randf_range(5.0, 12.0)
+var _variant_until: float = -1.0
+var _last_action_time: float = -100.0
 
 func setup(p_player: Node3D):
 	player = p_player
@@ -48,6 +53,9 @@ func setup(p_player: Node3D):
 	var combat = player.get_component("CombatComponent") if player.has_method("get_component") else null
 	if combat:
 		combat.shot_fired.connect(func(_a, _b, _c): on_attack())
+	var abilities = player.get_component("AbilityComponent") if player.has_method("get_component") else null
+	if abilities:
+		abilities.ability_activated.connect(on_ability_cast)
 	var health = player.get_component("HealthComponent") if player.has_method("get_component") else null
 	if health:
 		health.damage_taken.connect(func(_amount, _src): on_hit())
@@ -69,7 +77,7 @@ func _bind() -> bool:
 		anim_player = _find_anim_player(pivot)
 		if anim_player:
 			# glTF has no loop flag: make the cycles loop
-			for clip in ["idle", "walk", "run"]:
+			for clip in ["idle", "walk", "run", "fall"]:
 				if anim_player.has_animation(clip):
 					anim_player.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
 		model_bottom = _bottom_of(pivot)
@@ -137,6 +145,13 @@ func _update_spawn(delta: float):
 func on_attack():
 	_recoil = 1.0
 	_play_one_shot("attack")
+
+## Cast clip of the ability (also for replays on remote copies); models without it use "attack"
+func on_ability_cast(ability) -> void:
+	var pose: String = String(ability.get("cast_pose")) if ability else "attack"
+	if not anim_player or not anim_player.has_animation(pose):
+		pose = "attack"
+	_play_one_shot(pose)
 
 func on_hit():
 	_shake = 1.0
@@ -231,11 +246,18 @@ func _lean_vector() -> Vector2:
 # ---------------------------------------------------------------- skeletal
 
 func _drive_skeletal():
+	if _variant_until >= 0.0:
+		# an idle variant is playing: cut it as soon as the hero moves, falls or acts
+		if _time >= _variant_until or _speed > 0.4 or _airborne or _time < _one_shot_until:
+			_variant_until = -1.0
+			_current_clip = ""
+		else:
+			return
 	if _time < _one_shot_until:
 		return
 	var clip = "idle"
 	if _airborne:
-		clip = "jump"
+		clip = "fall" if _vertical_speed < 0.0 and anim_player.has_animation("fall") else "jump"
 	elif _speed > RUN_SPEED:
 		clip = "run"
 	elif _speed > 0.4:
@@ -244,6 +266,19 @@ func _drive_skeletal():
 		clip = "walk" if clip == "run" and anim_player.has_animation("walk") else "idle"
 	if not anim_player.has_animation(clip):
 		return
+	if clip == "idle":
+		_idle_timer -= get_process_delta_time()
+		if _idle_timer <= 0.0:
+			_idle_timer = randf_range(5.0, 12.0)
+			# not while fighting (shot / cast / hit in the last 4 s) and never on a headless server
+			if _time - _last_action_time > 4.0 and DisplayServer.get_name() != "headless" and not _holds_ranged_weapon():
+				var v: String = IDLE_VARIANTS[randi() % IDLE_VARIANTS.size()]
+				if anim_player.has_animation(v):
+					anim_player.play(v, 0.3)
+					anim_player.speed_scale = 1.0
+					_current_clip = v
+					_variant_until = _time + anim_player.get_animation(v).length
+					return
 	if clip != _current_clip:
 		_current_clip = clip
 		anim_player.play(clip, 0.15)
@@ -253,10 +288,15 @@ func _drive_skeletal():
 	else:
 		anim_player.speed_scale = 1.0
 
+func _holds_ranged_weapon() -> bool:
+	var combat = player.get_component("CombatComponent") if player and player.has_method("get_component") else null
+	return combat != null and combat.get("equipped_ranged_weapon") != null
+
 func _play_one_shot(clip: String):
 	if not anim_player or not anim_player.has_animation(clip):
 		return
 	anim_player.play(clip, 0.08)
+	_last_action_time = _time
 	anim_player.speed_scale = 1.0
 	_current_clip = clip
 	_one_shot_until = _time + anim_player.get_animation(clip).length * 0.9

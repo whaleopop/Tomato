@@ -15,7 +15,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 [application]
 
 config/name="ROYALTIM3"
-config/version="0.8.6"
+config/version="0.8.7"
 run/main_scene="res://scenes/MainMenuScene.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"

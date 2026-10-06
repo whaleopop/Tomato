@@ -11,6 +11,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Kernel Barrage"
+	cast_pose = "cast_spray"
 	icon = "dot"
 	cooldown = 7.0
 	duration = 0.8

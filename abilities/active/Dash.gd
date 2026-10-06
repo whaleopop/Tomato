@@ -10,6 +10,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Dash"
+	cast_pose = "cast_dash"
 	icon = "fast"
 	cooldown = 3.0
 	duration = 0.3

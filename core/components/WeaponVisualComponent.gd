@@ -7,7 +7,7 @@ extends Node3D
 class_name WeaponVisualComponent
 
 const HERO_HEIGHT: float = 1.2                     # Player._load_character_model's standard height
-const HAND: Vector3 = Vector3(-0.28, 0.6, 0.12)    # right hand of a standard hero (-X right, +Z forward)
+const HAND: Vector3 = Vector3(-0.22, 0.55, 0.25)    # right hand of a standard hero (-X right, +Z forward): arms out, so the arm bones can reach
 const GRIP: float = 0.3                            # the hand sits this share of the length behind the middle
 
 var player: Player = null
@@ -16,6 +16,13 @@ var weapon_model: Node3D = null                   # holder: rest pose + animatio
 var _rest: Transform3D = Transform3D.IDENTITY
 var _length: float = 0.45
 var _tween: Tween = null
+var grip_modifier: WeaponGripModifier = null     # arms follow the gun (never on a headless server)
+var _cast_token: int = 0
+var _casting: bool = false
+var _dead: bool = false
+
+const CAST_HIDE_TIME: float = 0.5                # the cast clip: 15 frames at 30 FPS
+static var allow_headless: bool = false          # tests only
 
 static var _scenes: Dictionary = {}  # model path -> PackedScene (shared by all heroes)
 
@@ -31,6 +38,14 @@ func setup(p_player: Player):
 		combat.reload_finished.connect(_on_reload_finished)
 		if combat.equipped_ranged_weapon:
 			_show_weapon(combat.equipped_ranged_weapon)
+
+	var abilities = player.get_component("AbilityComponent")
+	if abilities:
+		abilities.ability_activated.connect(_on_ability_activated)  # own casts and replays alike
+	var health = player.get_component("HealthComponent")
+	if health:
+		health.died.connect(_on_died)
+		health.revived.connect(_on_revived)
 
 	var inventory = player.get_component("InventoryComponent")
 	if inventory:
@@ -92,6 +107,8 @@ func _show_weapon(weapon: RangedWeapon):
 	add_child(weapon_model)
 	weapon_model.position = _hand() + Vector3(0, 0, _length * GRIP)
 	_rest = weapon_model.transform
+	weapon_model.visible = not _casting and not _dead
+	_update_grip(weapon)
 
 ## Where the right hand is: HAND for a slim hero; round ones (tomato, melon) hold the gun at the
 ## front of their body, or it disappears inside them
@@ -124,6 +141,63 @@ func _hide_weapon():
 	if weapon_model:
 		weapon_model.queue_free()
 		weapon_model = null
+	if grip_modifier and is_instance_valid(grip_modifier):
+		grip_modifier.set_weapon(null, 0, 0.0, 1.0)
+
+## Arms on the gun: a WeaponGripModifier on the model's skeleton, created once
+func _update_grip(weapon: RangedWeapon) -> void:
+	if DisplayServer.get_name() == "headless" and not allow_headless:
+		return
+	# a modifier on a swapped-out model is only queued for deletion / detached: treat as missing
+	if grip_modifier != null and (not is_instance_valid(grip_modifier) or grip_modifier.is_queued_for_deletion() or not grip_modifier.is_inside_tree()):
+		grip_modifier = null
+	if grip_modifier == null:
+		var model = player.get_node_or_null("Model") if player else null
+		if model == null:
+			return
+		var skels = model.find_children("*", "Skeleton3D", true, false)
+		if skels.is_empty():
+			return
+		var m := WeaponGripModifier.new()
+		m.name = "WeaponGrip"
+		m.influence = 0.0
+		skels[0].add_child(m)
+		if not m.bind(skels[0], player):
+			m.queue_free()
+			return
+		grip_modifier = m
+	grip_modifier.enabled_grip = not _casting and not _dead
+	grip_modifier.set_weapon(weapon_model, int(weapon.weapon_type), _length, _hero_scale())
+
+## A cast (own or replayed): the gun goes away for the cast clip, the arms go back to the clip
+func _on_ability_activated(_ability = null) -> void:
+	_casting = true
+	_cast_token += 1
+	var token := _cast_token
+	if weapon_model:
+		weapon_model.visible = false
+	if grip_modifier and is_instance_valid(grip_modifier):
+		grip_modifier.enabled_grip = false
+	await get_tree().create_timer(CAST_HIDE_TIME).timeout
+	if token != _cast_token or not is_instance_valid(self):
+		return
+	_casting = false
+	if weapon_model and not _dead:
+		weapon_model.visible = true
+	if grip_modifier and is_instance_valid(grip_modifier):
+		grip_modifier.enabled_grip = not _dead
+
+func _on_revived() -> void:
+	_dead = false
+	if weapon_model and not _casting:
+		weapon_model.visible = true
+	if grip_modifier and is_instance_valid(grip_modifier):
+		grip_modifier.enabled_grip = not _casting
+
+func _on_died() -> void:
+	_dead = true
+	if grip_modifier and is_instance_valid(grip_modifier):
+		grip_modifier.enabled_grip = false
 
 func _hero_scale() -> float:
 	if player and player.character_data and player.character_data.model_scale > 0.0:
@@ -247,10 +321,14 @@ func _create_muzzle_flash():
 	tween.tween_callback(flash_mesh.queue_free)
 
 func _on_reload_started():
+	if grip_modifier and is_instance_valid(grip_modifier):
+		grip_modifier.start_reload()
 	# Muzzle down and the gun lowered while the magazine goes in
 	_animate(Vector3(0, -0.12, -0.08) * _hero_scale(), 35.0, 0.25, 0.0, true)
 
 func _on_reload_finished():
+	if grip_modifier and is_instance_valid(grip_modifier):
+		grip_modifier.end_reload()
 	if not weapon_model:
 		return
 	if _tween and _tween.is_valid():

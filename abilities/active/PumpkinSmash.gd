@@ -11,6 +11,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Pumpkin Smash"
+	cast_pose = "cast_slam"
 	icon = "wave"
 	cooldown = 10.0
 	duration = 0.6

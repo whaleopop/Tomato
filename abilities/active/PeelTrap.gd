@@ -12,6 +12,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Peel Trap"
+	cast_pose = "cast_throw"
 	icon = "warning"
 	cooldown = 8.0
 	duration = 0.3

@@ -2,6 +2,7 @@
 
     blender -b --factory-startup -P rig_and_animate.py -- IN.glb OUT.glb [--remesh] [--faces 5000]
     ... -- IN.glb OUT.glb --palette P.palette.txt --concept INPUT.png [--faces 2500]   (concept look)
+    ... -- --anim-only IN.glb [OUT.glb]                                               (re-bake clips only)
     ... -- --extract CONCEPT.png OUT.palette.txt                                      (palette only)
 
 Made for ROYALTIM's veggie mascots (round body, optional stubby arms/legs):
@@ -13,7 +14,7 @@ Made for ROYALTIM's veggie mascots (round body, optional stubby arms/legs):
   3. finds legs/arms from the shape and builds a small armature
      (root > body > head, body > arm.L/R, root > leg.L/R; limbs only if detected)
   4. skins with automatic weights and repairs vertices left without weights
-  5. keyframes idle, walk, run, jump, land, attack, hit, death
+  5. keyframes (key pose tables) idle, walk, run, jump, fall, land, attack, hit, death, 5 casts
   6. exports a GLB with the skeleton and all actions (Godot: AnimationPlayer)
 
 Prints "PROGRESS: <pct> <msg>" and a final "RESULT: <path>" like generate.py.
@@ -816,6 +817,23 @@ def detect_limbs(obj, force_arms=False, force_legs=False):
     return shape
 
 
+def _add_end_bones(eb):
+    """A small child bone at the tip of each arm bone (hand.L / hand.R, not deforming): a leaf bone has
+    no length in a glTF skeleton, so the game (WeaponGripModifier.bone_length) reads the arm length
+    from the distance to this child. Idempotent. Named without "arm" so the arm lookup skips them."""
+    for side in ("L", "R"):
+        p = eb.get("arm." + side)
+        if p is None or ("hand." + side) in eb:
+            continue
+        d = (p.tail - p.head).normalized()
+        b = eb.new("hand." + side)
+        b.head = p.tail
+        b.tail = p.tail + d * 0.05
+        b.parent = p
+        b.use_connect = True
+        b.use_deform = False
+
+
 def build_armature(obj, s):
     zmin, h, cx, cy = s["zmin"], s["h"], s["cx"], s["cy"]
     bpy.ops.object.select_all(action="DESELECT")
@@ -846,6 +864,7 @@ def build_armature(obj, s):
     if s["arms"]:
         for name, (shoulder, hand) in zip(("arm.L", "arm.R"), s["arms"]):
             bone(name, shoulder, hand, body)
+    _add_end_bones(eb)
 
     # Z axis of every bone points forward (-Y): X = pitch, Z = side tilt, Y = twist
     for b in eb:
@@ -886,93 +905,356 @@ def _repair_weights(obj, arm):
 
 
 # ----------------------------------------------------------------------------- animation
-# Pose bones: rotation X = pitch (positive leans forward), Z = side tilt, location Y = along
-# the bone (up for root/body). Every clip keys every bone, so clips never leak into each other.
+# Hand-authored KEY POSE tables: {clip: (frames, loop, [(frame, pose), ...])}. Between keys Blender
+# interpolates with smooth bezier curves; a pose repeated on two frames is a hold (used only at
+# impacts: hit snap, land squash, attack strike, death topple). Poses are dicts of channels, 0 = rest:
+#   root_y (fraction of height), body_rx (+ leans forward), body_ry (+ turns to the character's
+#   LEFT, so the right shoulder comes forward), body_rz (+ tilts to the character's left),
+#   body_s (Y scale, volume kept), head_rx / head_rz,
+#   arm_r / arm_l (+ swings forward and up, ~3 = straight up), arm_r_out / arm_l_out (+ outward),
+#   leg_r / leg_l (+ foot forward).
+# "r" is the CHARACTER's right = -X in Blender (the character faces -Y). The bones keep their old
+# names (the one at -X is called "arm.L" / "leg.L"), so sides are resolved by rest position and every
+# axis sign is calibrated on the rig itself (_calibrate) - no assumptions about bone roll.
 
 TAU = math.tau
 
 
-def _pb(bones, name):
-    return bones.get(name)
+def P(**kw):
+    return kw
 
 
-def clip_idle(b, t):
-    s = math.sin(TAU * t)
-    b["body"].scale = (1 - 0.015 * s, 1 + 0.035 * s, 1 - 0.015 * s)
-    b["head"].rotation_euler.x = 0.04 * math.sin(TAU * t + 0.6)
-    for side, sign in (("arm.L", 1), ("arm.R", -1)):
-        if _pb(b, side):
-            b[side].rotation_euler.z = sign * 0.10 * s
+def mirror(p):
+    q = {}
+    for k, v in p.items():
+        if k.startswith(("arm_r", "leg_r")):
+            q[k.replace("_r", "_l", 1)] = v
+        elif k.startswith(("arm_l", "leg_l")):
+            q[k.replace("_l", "_r", 1)] = v
+        elif k in ("body_rz", "head_rz", "body_ry", "head_ry"):
+            q[k] = -v
+        else:
+            q[k] = v
+    return q
 
 
-def _gait(b, t, swing, hop, lean, waddle, h):
-    s = math.sin(TAU * t)
-    b["root"].location.y = abs(s) * hop * h
-    b["body"].rotation_euler.x = lean
-    b["body"].rotation_euler.z = waddle * s
-    b["head"].rotation_euler.z = -waddle * 0.5 * s
-    for side, sign in (("leg.L", 1), ("leg.R", -1)):
-        if _pb(b, side):
-            b[side].rotation_euler.x = sign * swing * s
-    for side, sign in (("arm.L", -1), ("arm.R", 1)):
-        if _pb(b, side):
-            b[side].rotation_euler.x = sign * swing * 0.9 * s
+def _mirrored_cycle(first_half, half):
+    """Keys of one half step + the same mirrored half a half-cycle later + the loop point."""
+    keys = list(first_half)
+    keys += [(f + half, mirror(p)) for f, p in first_half]
+    keys.append((half * 2, first_half[0][1]))
+    return keys
 
 
-def make_clips(h):
+# Death pose per body type: bounce (round: bounces and rolls onto its side), topple (tall: slow
+# fall like a tree), thud (heavy: knees buckle, hard drop, shudder), spin (small: spun around, then flat)
+DEATH_KIND = {
+    "Apple": "bounce", "Tomato": "bounce", "Beet": "bounce",
+    "Banana": "topple", "Carrot": "topple", "Corn": "topple",
+    "Pumpkin": "thud", "Watermelon": "thud", "Pineapple": "thud", "Broccoli": "thud",
+    "Grape": "spin", "Lemon": "spin", "Pepper": "spin",
+}
+
+
+def _back(t, **kw):
+    """Lying on the back, t = 0 standing .. 1 flat: the whole rig (legs too) pitches about the feet,
+    shifted forward / up so the body ends up where it stood."""
+    d = dict(root_rx=-1.45 * t, root_fz=0.42 * t, root_y=0.2 * t)
+    d.update(kw)
+    return P(**d)
+
+
+def _side(t, sg=1.0, **kw):
+    d = dict(root_rz=1.45 * sg * t, root_x=-0.42 * sg * t, root_y=0.2 * t)
+    d.update(kw)
+    return P(**d)
+
+
+_RELAXED = dict(body_s=0.93, head_rx=-0.15, arm_r=0.2, arm_l=0.1, arm_r_out=0.5, arm_l_out=0.6, leg_r=0.45, leg_l=0.15)
+
+
+def _death_variant(kind, d_hit, flat, rest):
+    rl = _RELAXED
+    if kind == "bounce":
+        # round: hops back, rolls and ends on its side
+        return [
+            (0, P()), (2, d_hit), (3, d_hit),
+            (7, _back(0.2, root_y=0.12, body_s=1.03, head_rx=-0.3, arm_r=0.9, arm_l=0.9, arm_r_out=0.4, arm_l_out=0.4)),
+            (11, _side(0.45, 1.0, root_y=0.14, body_s=0.97, body_rx=-0.3, arm_r=0.7, arm_l=0.7, arm_r_out=0.5, arm_l_out=0.5)),
+            (14, _side(0.9, 1.0, root_y=0.2, body_s=0.95, arm_r=0.4, arm_l=0.4, arm_r_out=0.5, arm_l_out=0.5, leg_r=0.3)),
+            (17, _side(1.0, 1.0, **rl)), (19, _side(1.0, 1.0, **rl)),
+            (21, _side(1.0, 1.0, **dict(rl, root_y=0.23))),
+            (23, _side(1.0, 1.0, **rl)), (24, _side(1.0, 1.0, **rl)),
+        ]
+    if kind == "topple":
+        # tall: slow wobble, then falls like a felled tree, one small bounce
+        return [
+            (0, P()),
+            (3, P(body_s=0.98, body_rx=0.1, body_rz=0.06, head_rx=-0.1, arm_r=-0.3, arm_l=-0.3, arm_r_out=0.4, arm_l_out=0.4)),
+            (7, _back(0.05, body_rx=-0.1, body_rz=-0.05, head_rx=-0.2, arm_r=0.5, arm_l=0.5, arm_r_out=0.6, arm_l_out=0.6)),
+            (12, _back(0.3, head_rx=-0.3, arm_r=1.0, arm_l=0.8, arm_r_out=0.7, arm_l_out=0.7)),
+            (16, _back(0.8, head_rx=-0.3, arm_r=0.7, arm_l=0.7, arm_r_out=0.6, arm_l_out=0.6)),
+            (19, flat), (20, flat),
+            (22, _back(0.95, **dict(rl, root_y=0.225))),
+            (24, rest),
+        ]
+    if kind == "thud":
+        # heavy: knees buckle, hard drop, falls back and shudders
+        drop = P(root_y=-0.03, body_s=0.85, body_rx=0.15, head_rx=0.1, arm_r=0.2, arm_l=0.2, arm_r_out=0.5, arm_l_out=0.5, leg_r=0.5, leg_l=0.5)
+        shake_a = _back(1.0, **dict(rl, body_rz=0.06))
+        shake_b = _back(1.0, **dict(rl, body_rz=-0.06))
+        return [
+            (0, P()), (2, d_hit), (4, d_hit),
+            (8, drop), (10, drop),
+            (13, _back(0.45, body_s=0.9, head_rx=-0.3, arm_r=0.8, arm_l=0.8, arm_r_out=0.6, arm_l_out=0.6, leg_r=0.4, leg_l=0.3)),
+            (15, flat), (16, flat),
+            (17, shake_a), (18, shake_b), (19, shake_a), (20, shake_b),
+            (22, rest), (24, rest),
+        ]
+    if kind == "spin":
+        # small: knocked up and spun around, lands on its side
+        tw = 6.2832
+        return [
+            (0, P()), (2, d_hit),
+            (5, P(root_y=0.12, body_s=1.05, body_rx=-0.3, body_ry=1.6, head_rx=-0.3, arm_r=1.5, arm_l=1.5, arm_r_out=0.7, arm_l_out=0.7, leg_r=0.4, leg_l=-0.3)),
+            (9, P(root_y=0.16, body_s=1.0, body_rx=-0.4, body_ry=4.2, head_rx=-0.3, arm_r=1.5, arm_l=1.5, arm_r_out=0.7, arm_l_out=0.7, leg_r=-0.3, leg_l=0.4)),
+            (13, _side(0.5, -1.0, root_y=0.2, body_s=0.95, body_ry=5.8, head_rx=-0.3, arm_r=1.0, arm_l=1.0, arm_r_out=0.6, arm_l_out=0.6)),
+            (16, _side(1.0, -1.0, **dict(rl, body_ry=tw))), (18, _side(1.0, -1.0, **dict(rl, body_ry=tw))),
+            (20, _side(1.0, -1.0, **dict(rl, body_ry=tw, root_y=0.225))),
+            (22, _side(1.0, -1.0, **dict(rl, body_ry=tw))), (24, _side(1.0, -1.0, **dict(rl, body_ry=tw))),
+        ]
+    return None
+
+
+def _clip_tables(death_kind=""):
+    # idle: breathing + slow weight shift, 48 loop
+    idle = [
+        (0, P()),
+        (12, P(body_s=1.015, body_rz=0.02, head_rx=0.03, arm_r_out=0.06, arm_l_out=0.06)),
+        (24, P(body_s=1.035, head_rx=0.0, arm_r_out=0.12, arm_l_out=0.12, arm_r=0.03, arm_l=0.03)),
+        (36, P(body_s=1.015, body_rz=-0.02, head_rx=-0.03, arm_r_out=0.06, arm_l_out=0.06)),
+        (48, P()),
+    ]
+    # walk: contact 0, down 3, passing 6, up 9, mirrored 12-21, 24 loop
+    walk_half = [
+        (0, P(root_y=-0.01, body_rx=0.07, body_rz=0.04, body_ry=-0.12, head_rz=-0.03, leg_r=0.7, leg_l=-0.7, arm_r=-0.65, arm_l=0.65, arm_r_out=0.06, arm_l_out=0.06)),
+        (3, P(root_y=-0.035, body_s=0.98, body_rx=0.08, body_rz=0.06, body_ry=-0.06, head_rz=-0.04, leg_r=0.48, leg_l=-0.5, arm_r=-0.4, arm_l=0.4, arm_r_out=0.07, arm_l_out=0.07)),
+        (6, P(root_y=0.0, body_rx=0.07, body_rz=0.0, body_ry=0.0, leg_r=0.0, leg_l=-0.05, arm_r=0.0, arm_l=0.0, arm_r_out=0.09, arm_l_out=0.09)),
+        (9, P(root_y=0.035, body_s=1.015, body_rx=0.06, body_rz=-0.05, body_ry=0.06, head_rz=0.04, leg_r=-0.42, leg_l=0.42, arm_r=0.4, arm_l=-0.4, arm_r_out=0.07, arm_l_out=0.07)),
+    ]
+    walk = _mirrored_cycle(walk_half, 12)
+    # run: contact 0 (lean), down 2 (squash), passing 4, flight 6 (stretch, arms pump), mirrored 8-14
+    run_half = [
+        (0, P(root_y=-0.01, body_rx=0.25, body_rz=0.07, body_ry=-0.3, head_rx=-0.12, leg_r=1.15, leg_l=-1.1, arm_r=-1.3, arm_l=1.3, arm_r_out=0.1, arm_l_out=0.1)),
+        (2, P(root_y=-0.06, body_s=0.94, body_rx=0.27, body_rz=0.1, body_ry=-0.15, head_rx=-0.14, leg_r=0.7, leg_l=-0.75, arm_r=-0.8, arm_l=0.8, arm_r_out=0.1, arm_l_out=0.1)),
+        (4, P(root_y=0.0, body_rx=0.25, body_ry=0.0, head_rx=-0.12, leg_r=0.0, leg_l=-0.1, arm_r=0.0, arm_l=0.0, arm_r_out=0.12, arm_l_out=0.12)),
+        (6, P(root_y=0.13, body_s=1.06, body_rx=0.22, body_rz=-0.08, body_ry=0.3, head_rx=-0.1, leg_r=-1.2, leg_l=1.15, arm_r=1.4, arm_l=-1.4, arm_r_out=0.1, arm_l_out=0.1)),
+    ]
+    run = _mirrored_cycle(run_half, 8)
+    # jump 20: crouch, takeoff stretch, apex tuck, open into the fall
+    jump = [
+        (0, P()),
+        (4, P(root_y=-0.02, body_s=0.8, body_rx=0.2, head_rx=-0.1, arm_r=-0.7, arm_l=-0.7, arm_r_out=0.2, arm_l_out=0.2, leg_r=0.1, leg_l=0.1)),
+        (7, P(root_y=0.05, body_s=1.15, body_rx=-0.05, head_rx=-0.1, arm_r=2.3, arm_l=2.3, arm_r_out=0.25, arm_l_out=0.25, leg_r=-0.2, leg_l=-0.2)),
+        (11, P(root_y=0.07, body_s=0.97, body_rx=0.12, arm_r=1.3, arm_l=1.3, arm_r_out=0.8, arm_l_out=0.8, leg_r=0.7, leg_l=0.65)),
+        (20, P(root_y=0.05, body_s=1.03, head_rx=-0.1, arm_r=1.7, arm_l=1.1, arm_r_out=0.2, arm_l_out=0.15, leg_r=0.6, leg_l=0.3)),
+    ]
+    # fall 12 loop: arms up / forward and uneven, knees tucked, three irregular flail poses
+    fall_a = P(root_y=0.05, body_s=1.03, body_rx=0.08, head_rx=-0.1, arm_r=1.7, arm_l=1.1, arm_r_out=0.2, arm_l_out=0.15, leg_r=0.6, leg_l=0.3)
+    fall_b = P(root_y=0.05, body_s=1.04, body_rx=0.05, body_rz=0.07, head_rx=-0.15, head_rz=0.08, arm_r=1.0, arm_l=1.9, arm_r_out=0.3, arm_l_out=0.2, leg_r=0.3, leg_l=0.65)
+    fall_c = P(root_y=0.055, body_s=1.02, body_rx=0.12, body_rz=-0.05, head_rx=-0.05, head_rz=-0.06, arm_r=1.45, arm_l=0.7, arm_r_out=0.15, arm_l_out=0.3, leg_r=0.5, leg_l=0.45)
+    fall = [(0, fall_a), (4, fall_b), (8, fall_c), (12, fall_a)]
+    # land 10: squash (held at the impact), overshoot, settle
+    squash = P(root_y=-0.01, body_s=0.75, body_rx=0.2, head_rx=-0.12, arm_r=0.3, arm_l=0.3, arm_r_out=0.5, arm_l_out=0.5, leg_r=0.15, leg_l=0.15)
+    land = [
+        (0, P(root_y=0.03, body_s=1.04, arm_r=1.4, arm_l=1.0, arm_r_out=0.3, arm_l_out=0.3, leg_r=0.4, leg_l=0.1)),
+        (2, squash), (4, squash),
+        (6, P(body_s=1.1, body_rx=-0.05, arm_r=0.6, arm_l=0.6, arm_r_out=0.3, arm_l_out=0.3)),
+        (8, P(body_s=0.97, arm_r_out=0.1, arm_l_out=0.1)),
+        (10, P()),
+    ]
+    # attack 12: wind-back, strike (held), follow-through. Right arm = -X.
+    strike = P(root_y=0.01, body_s=1.03, body_rx=0.2, body_ry=0.45, head_rx=-0.1, arm_r=1.6, arm_l=-0.5, arm_r_out=0.0, arm_l_out=0.2)
+    attack = [
+        (0, P()),
+        (3, P(body_s=0.96, body_rx=-0.05, body_ry=-0.35, arm_r=-1.2, arm_l=0.5, arm_r_out=0.15, arm_l_out=0.1)),
+        (5, strike), (6, strike),
+        (8, P(body_s=1.01, body_rx=0.15, body_ry=0.5, arm_r=1.85, arm_l=-0.4, arm_l_out=0.2)),
+        (12, P()),
+    ]
+    # hit 10: short snap back with a backward lean (held), head whip, recover
+    snap = P(body_s=0.95, body_rx=-0.3, root_rx=-0.12, head_rx=0.2, arm_r=-0.3, arm_l=-0.3, arm_r_out=0.3, arm_l_out=0.3)
+    hit = [
+        (0, P()), (1, snap), (2, snap),
+        (3, P(body_s=0.95, body_rx=-0.3, root_rx=-0.12, head_rx=-0.4, arm_r=-0.3, arm_l=-0.3, arm_r_out=0.3, arm_l_out=0.3)),
+        (6, P(body_s=1.0, body_rx=0.06, head_rx=0.08, arm_r_out=0.15, arm_l_out=0.15)),
+        (10, P()),
+    ]
+    # death 24: hit (held), stagger, topple onto the back, flat (held), bounce, settle (held)
+    d_hit = P(body_s=0.94, body_rx=-0.3, head_rx=-0.4, arm_r=-0.3, arm_l=-0.3, arm_r_out=0.35, arm_l_out=0.35)
+    flat = _back(1.0, **_RELAXED)
+    rest = _back(1.0, **dict(_RELAXED, head_rx=-0.1, arm_r_out=0.55))
+    death = [
+        (0, P()), (2, d_hit), (4, d_hit),
+        (9, P(body_rx=0.1, body_rz=0.2, head_rx=0.1, leg_r=0.3, leg_l=-0.2, arm_r=0.8, arm_l=-0.4, arm_r_out=0.5, arm_l_out=0.4)),
+        (13, _back(0.45, body_s=0.97, head_rx=-0.3, arm_r=0.7, arm_l=0.7, arm_r_out=0.6, arm_l_out=0.6, leg_r=0.1)),
+        (17, flat), (19, flat),
+        (21, _back(0.95, **dict(_RELAXED, root_y=0.225))),
+        (23, rest), (24, rest),
+    ]
+    death = _death_variant(death_kind, d_hit, flat, rest) or death
+    # casts, 15 frames: anticipation 0-4, action 4-8, recovery 8-15 (weapon hidden: arms go anywhere).
+    # throw: overhand with a body turn and a step
+    throw = P(body_s=1.03, body_rx=0.3, body_ry=0.7, root_rx=0.1, head_ry=-0.3, arm_r=1.5, arm_l=-0.7, arm_r_out=0.0, arm_l_out=0.4, leg_r=0.4, leg_l=-0.3)
+    cast_throw = [
+        (0, P()),
+        (4, P(body_s=0.97, body_rx=-0.1, body_ry=-0.6, root_rx=-0.05, head_ry=0.3, arm_r=-2.5, arm_l=0.9, arm_r_out=0.35, arm_l_out=0.3, leg_r=-0.2, leg_l=0.3)),
+        (6, throw), (7, throw),
+        (10, P(body_rx=0.3, body_ry=0.45, arm_r=0.5, arm_l=-0.3, arm_l_out=0.3)),
+        (15, P()),
+    ]
+    # slam: rises on the toes with the arms overhead, then crashes down into a crouch
+    slam = P(root_y=-0.025, body_s=0.88, body_rx=0.6, head_rx=0.2, arm_r=0.7, arm_l=0.7, arm_r_out=0.1, arm_l_out=0.1, leg_r=0.35, leg_l=-0.3)
+    cast_slam = [
+        (0, P()),
+        (2, P(root_y=-0.01, body_s=0.88, body_rx=0.15, arm_r=-0.3, arm_l=-0.3, arm_r_out=0.4, arm_l_out=0.4)),
+        (4, P(root_y=0.06, body_s=1.1, body_rx=-0.2, head_rx=-0.25, arm_r=2.9, arm_l=2.9, arm_r_out=0.25, arm_l_out=0.25)),
+        (6, slam), (8, slam),
+        (11, P(body_s=0.95, body_rx=0.2, arm_r=0.3, arm_l=0.3)),
+        (15, P()),
+    ]
+
+    # spray: braced, forward thrust, the whole torso shakes
+    def sp(ry, rz=0.0):
+        return P(body_s=0.98, body_rx=0.25, body_ry=ry, body_rz=rz, head_rx=-0.1, head_ry=-ry * 0.5, arm_r=1.35, arm_l=1.35, arm_r_out=0.1, arm_l_out=0.1, leg_r=0.3, leg_l=-0.3)
+
+    cast_spray = [
+        (0, P()),
+        (4, P(body_s=0.97, body_rx=-0.12, head_rx=-0.1, arm_r=-0.5, arm_l=-0.5, arm_r_out=0.3, arm_l_out=0.3)),
+        (6, sp(0.0)),
+        (7, sp(0.3, 0.05)), (8, sp(-0.3, -0.05)), (9, sp(0.3, 0.05)), (10, sp(-0.3, -0.05)), (11, sp(0.25, 0.05)), (12, sp(-0.15)),
+        (15, P()),
+    ]
+    # raise: rises on the toes, arms spread up in a V, looks up
+    up = P(root_y=0.06, body_s=1.1, body_rx=-0.2, head_rx=-0.35, arm_r=2.9, arm_l=2.9, arm_r_out=0.55, arm_l_out=0.55, leg_r=-0.1, leg_l=-0.1)
+    cast_raise = [
+        (0, P()),
+        (4, P(root_y=-0.01, body_s=0.9, body_rx=0.1, arm_r=-0.3, arm_l=-0.3, arm_r_out=0.3, arm_l_out=0.3)),
+        (8, up), (10, up),
+        (12, P(root_y=0.02, body_s=1.05, arm_r=2.3, arm_l=2.3, arm_r_out=0.5, arm_l_out=0.5)),
+        (15, P()),
+    ]
+    # dash: the whole body pitches forward, arms swept back
+    dash_pose = P(root_y=0.02, root_rx=0.3, body_s=1.02, body_rx=0.4, head_rx=-0.5, arm_r=-1.9, arm_l=-1.9, arm_r_out=0.2, arm_l_out=0.2, leg_r=-0.8, leg_l=0.6)
+    cast_dash = [
+        (0, P()),
+        (4, P(body_s=0.9, body_rx=0.15, root_rx=0.1, arm_r=-0.6, arm_l=-0.6, arm_r_out=0.2, arm_l_out=0.2, leg_r=0.3, leg_l=-0.3)),
+        (6, dash_pose), (8, dash_pose),
+        (11, P(root_rx=0.2, body_rx=0.3, head_rx=-0.3, arm_r=-1.1, arm_l=-1.1, arm_r_out=0.15, arm_l_out=0.15, leg_r=-0.2, leg_l=0.2)),
+        (15, P()),
+    ]
+    # idle variants (one-shot, played now and then by CharacterAnimator): glance around, stretch, shift weight
+    idle_look = [
+        (0, P()),
+        (10, P(body_ry=0.15, head_ry=0.8, head_rx=0.05, head_rz=0.12, arm_r_out=0.06, arm_l_out=0.06)),
+        (22, P(body_ry=0.12, head_ry=0.8, head_rx=0.05, head_rz=0.12, arm_r_out=0.06, arm_l_out=0.06)),
+        (34, P(body_ry=-0.15, head_ry=-0.8, head_rz=-0.12, arm_r_out=0.06, arm_l_out=0.06)),
+        (46, P(body_ry=-0.12, head_ry=-0.8, head_rz=-0.12, arm_r_out=0.06, arm_l_out=0.06)),
+        (60, P()),
+    ]
+    idle_stretch = [
+        (0, P()),
+        (6, P(body_s=0.93, body_rx=0.1, arm_r=-0.3, arm_l=-0.3, arm_r_out=0.2, arm_l_out=0.2)),
+        (18, P(root_y=0.03, body_s=1.12, body_rx=-0.2, head_rx=-0.3, arm_r=2.8, arm_l=2.8, arm_r_out=0.45, arm_l_out=0.45)),
+        (32, P(root_y=0.03, body_s=1.12, body_rx=-0.2, head_rx=-0.3, arm_r=2.8, arm_l=2.8, arm_r_out=0.45, arm_l_out=0.45)),
+        (40, P(body_s=0.95, body_rx=0.12, head_rx=0.1, arm_r=0.3, arm_l=0.3, arm_r_out=0.3, arm_l_out=0.3)),
+        (48, P(body_s=1.02, arm_r_out=0.1, arm_l_out=0.1)),
+        (60, P()),
+    ]
+    idle_shift = [
+        (0, P()),
+        (10, P(root_y=-0.012, body_rz=0.13, body_ry=-0.12, head_rz=-0.12, leg_r=0.15, arm_r=0.15, arm_l=-0.15, arm_r_out=0.08, arm_l_out=0.16)),
+        (26, P(root_y=-0.012, body_rz=0.13, body_ry=-0.12, head_rz=-0.12, leg_r=0.15, arm_r=0.15, arm_l=-0.15, arm_r_out=0.08, arm_l_out=0.16)),
+        (38, P(root_y=-0.012, body_rz=-0.13, body_ry=0.12, head_rz=0.12, leg_l=0.15, arm_r=-0.15, arm_l=0.15, arm_r_out=0.16, arm_l_out=0.08)),
+        (50, P(body_s=1.02, head_rx=0.08)),
+        (60, P()),
+    ]
     return {
-        "idle": (48, clip_idle),
-        "walk": (24, lambda b, t: _gait(b, t, 0.55, 0.05, 0.06, 0.12, h)),
-        "run": (16, lambda b, t: _gait(b, t, 0.95, 0.08, 0.25, 0.08, h)),
-        "jump": (20, lambda b, t: _jump(b, t)),
-        "land": (10, lambda b, t: _squash(b, 1.0 - t, 0.28)),
-        "attack": (12, lambda b, t: _attack(b, t)),
-        "hit": (10, lambda b, t: _hit(b, t)),
-        "death": (24, lambda b, t: _death(b, t)),
+        "idle_look": (60, False, idle_look), "idle_stretch": (60, False, idle_stretch),
+        "idle_shift": (60, False, idle_shift),
+        "idle": (48, True, idle), "walk": (24, True, walk), "run": (16, True, run),
+        "jump": (20, False, jump), "fall": (12, True, fall), "land": (10, False, land),
+        "attack": (12, False, attack), "hit": (10, False, hit), "death": (24, False, death),
+        "cast_throw": (15, False, cast_throw), "cast_slam": (15, False, cast_slam),
+        "cast_spray": (15, False, cast_spray), "cast_raise": (15, False, cast_raise),
+        "cast_dash": (15, False, cast_dash),
     }
 
 
-def _squash(b, amount, depth):
-    k = depth * amount
-    b["body"].scale = (1 + k * 0.5, 1 - k, 1 + k * 0.5)
+# Personality per hero: multipliers on the shared pose tables. leg / arm = stride and arm swing,
+# sway = body roll / turn / head tilt, squash = body_s deviation, bounce = vertical travel,
+# lean = forward lean when running, amp = size of reactions (hit / attack / casts / arms in jumps),
+# stomp = extra squash on every footfall (heavy heroes), twist = spine twist (body_ry) everywhere.
+_DEFAULT_STYLE = dict(leg=1.0, arm=1.0, sway=1.0, squash=1.0, bounce=1.0, lean=1.0, amp=1.0, stomp=0.0, twist=1.0)
+HERO_STYLE = {
+    # round: roll and waddle, big squash
+    "Apple": dict(leg=0.8, arm=0.8, sway=1.7, squash=1.3, bounce=1.2),
+    "Tomato": dict(leg=0.85, sway=1.6, squash=1.3, bounce=1.1, amp=1.0),
+    "Beet": dict(leg=0.85, arm=0.9, sway=1.4, squash=1.2, stomp=0.02, lean=0.7),
+    # heavy: stomp, land squash on each step, small reactions
+    "Pumpkin": dict(leg=0.8, arm=0.8, sway=1.2, squash=1.3, bounce=0.8, stomp=0.05, amp=0.9),
+    "Watermelon": dict(leg=0.75, arm=0.75, sway=1.3, squash=1.4, bounce=0.8, stomp=0.06, amp=0.9),
+    "Pineapple": dict(leg=1.0, arm=0.9, sway=1.0, squash=0.9, stomp=0.03),
+    "Broccoli": dict(leg=0.85, arm=1.1, sway=1.0, squash=0.4, stomp=0.03, lean=1.0),
+    # tall: long stride, sway, little squash
+    "Banana": dict(leg=1.1, arm=1.1, sway=1.2, squash=0.7, bounce=0.8, twist=0.4),
+    "Carrot": dict(leg=1.2, sway=0.7, squash=0.6, bounce=0.8, lean=0.8),
+    "Corn": dict(leg=1.15, sway=1.3, squash=0.6, bounce=0.9),
+    # small: quick choppy steps, big arm pump, springy
+    "Grape": dict(leg=1.1, arm=1.4, sway=1.0, squash=1.0, bounce=1.5, amp=1.1),
+    "Lemon": dict(leg=1.0, arm=1.3, sway=1.2, squash=1.1, bounce=1.4, amp=1.1),
+    "Pepper": dict(leg=1.15, arm=1.4, sway=0.8, bounce=1.6, lean=1.3, amp=1.2),
+}
+_LOCO_CLIPS = ("idle", "walk", "run", "idle_look", "idle_stretch", "idle_shift")
 
 
-def _jump(b, t):
-    # crouch -> stretch -> tuck -> neutral
-    if t < 0.25:
-        _squash(b, t / 0.25, 0.22)
-    elif t < 0.5:
-        k = (t - 0.25) / 0.25
-        b["body"].scale = (1 - 0.06 * k, 1 + 0.14 * k, 1 - 0.06 * k)
-    else:
-        k = 1.0 - (t - 0.5) / 0.5
-        b["body"].scale = (1 - 0.06 * k, 1 + 0.14 * k, 1 - 0.06 * k)
-        for side in ("leg.L", "leg.R"):
-            if _pb(b, side):
-                b[side].rotation_euler.x = -0.5 * k
-    for side, sign in (("arm.L", 1), ("arm.R", -1)):
-        if _pb(b, side):
-            b[side].rotation_euler.z = sign * 0.6 * math.sin(math.pi * t)
+def style_for(name):
+    s = dict(_DEFAULT_STYLE)
+    s.update(HERO_STYLE.get(name, {}))
+    return s
 
 
-def _attack(b, t):
-    punch = math.sin(math.pi * min(t / 0.6, 1.0))
-    b["body"].rotation_euler.y = 0.35 * punch
-    b["body"].rotation_euler.x = 0.12 * punch
-    if _pb(b, "arm.R"):
-        b["arm.R"].rotation_euler.x = 1.3 * punch
-
-
-def _hit(b, t):
-    k = math.sin(math.pi * t) * (1.0 - t)
-    b["body"].rotation_euler.x = -0.45 * k
-    _squash(b, k, 0.25)
-
-
-def _death(b, t):
-    k = min(t * 1.4, 1.0)
-    b["body"].rotation_euler.x = -1.35 * k
-    b["body"].scale = (1 + 0.15 * k, 1 - 0.35 * k, 1 + 0.15 * k)
+def stylize(clip, keys, st):
+    out = []
+    loco = clip in _LOCO_CLIPS
+    gait = clip in ("walk", "run")
+    for f, pose in keys:
+        q = dict(pose)
+        for k, v in pose.items():
+            if k.startswith("leg_"):
+                q[k] = v * st["leg"]
+            elif k.endswith("_out") and k.startswith("arm_"):
+                q[k] = v * (st["arm"] if loco else st["amp"])
+            elif k.startswith("arm_"):
+                q[k] = v * (st["arm"] if loco else st["amp"])
+            elif k in ("body_rz", "body_ry", "head_rz"):
+                q[k] = v * st["sway"] if (loco or clip == "death") else v * st["amp"]
+                if k == "body_ry" and abs(v) < 3.0:
+                    q[k] *= st["twist"]
+            elif k == "body_s":
+                q[k] = 1.0 + (v - 1.0) * st["squash"] if clip != "death" else v
+                q[k] = max(q[k], 0.8)
+            elif k == "root_y":
+                q[k] = v * st["bounce"] if clip != "death" else v
+            elif k in ("body_rx", "head_rx"):
+                if gait:
+                    q[k] = v * st["lean"]
+                elif clip not in ("death", "land", "jump", "fall") and not loco:
+                    q[k] = v * st["amp"]
+        if gait and pose.get("root_y", 0.0) < -0.005 and st["stomp"]:
+            q["body_s"] = q.get("body_s", 1.0) - st["stomp"]
+        out.append((f, q))
+    return out
 
 
 def reset_pose(arm):
@@ -983,29 +1265,247 @@ def reset_pose(arm):
         pb.scale = (1, 1, 1)
 
 
-def bake_clips(arm, height):
+def _resolve_roles(arm):
+    """Map roles to pose bones; the character's right side is -X (smaller rest x)."""
+    pbs = {pb.name: pb for pb in arm.pose.bones}
+    roles = {k: pbs.get(k) for k in ("root", "body", "head")}
+    for kind in ("arm", "leg"):
+        pair = [pbs[n] for n in (kind + ".L", kind + ".R") if n in pbs]
+        pair.sort(key=lambda p: (arm.matrix_world @ p.bone.head_local).x)
+        if len(pair) == 2:
+            roles[kind + "_r"], roles[kind + "_l"] = pair
+    return {k: v for k, v in roles.items() if v}
+
+
+def _tail_world(arm, pb):
+    bpy.context.view_layer.update()
+    return arm.matrix_world @ pb.tail
+
+
+def _bone_forward(arm, pb):
+    bpy.context.view_layer.update()
+    return (arm.matrix_world.to_3x3() @ pb.matrix.to_3x3()) @ Vector((0, 0, 1))
+
+
+def _calibrate(arm, roles):
+    """Per role: sign making +X rotation move the tip forward (-Y), and sign making +Z rotation
+    move it toward the character's left (+X). The root also gets the signs of its location Z (forward)
+    and X (left) - used by the death poses that tip the whole rig over."""
+    cal = {}
+    for role, pb in roles.items():
+        reset_pose(arm)
+        t0 = _tail_world(arm, pb).copy()
+        pb.rotation_euler.x = 0.3
+        t1 = _tail_world(arm, pb).copy()
+        pb.rotation_euler.x = 0.0
+        pb.rotation_euler.z = 0.3
+        t2 = _tail_world(arm, pb).copy()
+        fwd = 1.0 if (t1.y - t0.y) < 0 else -1.0
+        left = 1.0 if (t2.x - t0.x) > 0 else -1.0
+        # twist about the bone's own Y: sign making + turn the bone's forward (Z) toward the left (+X)
+        pb.rotation_euler.z = 0.0
+        z0 = _bone_forward(arm, pb).x
+        pb.rotation_euler.y = 0.3
+        z1 = _bone_forward(arm, pb).x
+        pb.rotation_euler.y = 0.0
+        tw = 1.0 if (z1 - z0) > 0 else -1.0
+        if role == "root":
+            pb.location.z = 0.1
+            tz = _tail_world(arm, pb).copy()
+            pb.location.z = 0.0
+            pb.location.x = 0.1
+            tx = _tail_world(arm, pb).copy()
+            pb.location.x = 0.0
+            cal[role] = (fwd, left, tw, 1.0 if (tz.y - t0.y) < 0 else -1.0, 1.0 if (tx.x - t0.x) > 0 else -1.0)
+        else:
+            cal[role] = (fwd, left, tw)
+    reset_pose(arm)
+    return cal
+
+
+def apply_pose(roles, cal, pose, h):
+    g = pose.get
+    if "root" in roles:
+        r = roles["root"]
+        c = cal.get("root", (1.0, 1.0, 1.0, 1.0, 1.0))
+        r.location = (c[4] * g("root_x", 0.0) * h, g("root_y", 0.0) * h, c[3] * g("root_fz", 0.0) * h)
+        r.rotation_euler.x = c[0] * g("root_rx", 0.0)
+        r.rotation_euler.z = c[1] * g("root_rz", 0.0)
+    body = roles["body"]
+    body.rotation_euler.x = cal["body"][0] * g("body_rx", 0.0)
+    body.rotation_euler.y = cal["body"][2] * g("body_ry", 0.0)
+    body.rotation_euler.z = cal["body"][1] * g("body_rz", 0.0)
+    s = g("body_s", 1.0)
+    xz = 1.0 + (1.0 - s) * 0.35
+    body.scale = (xz, s, xz)
+    if "head" in roles:
+        roles["head"].rotation_euler.x = cal["head"][0] * g("head_rx", 0.0)
+        roles["head"].rotation_euler.z = cal["head"][1] * g("head_rz", 0.0)
+        roles["head"].rotation_euler.y = cal["head"][2] * g("head_ry", 0.0)
+    for side in ("r", "l"):
+        if "arm_" + side in roles:
+            pb = roles["arm_" + side]
+            a = g("arm_" + side, 0.0)
+            pb.rotation_euler.x = cal["arm_" + side][0] * a
+            # outward: the right arm (-X) goes toward -X = against "left"
+            out = g("arm_%s_out" % side, 0.0)
+            pb.rotation_euler.z = cal["arm_" + side][1] * out * (1.0 if side == "l" else -1.0)
+            # the arms inherit the body scale: cancel most of it so a squashed body does not
+            # stretch / thin the limbs (effective length along the arm direction)
+            eff = math.sqrt((s * math.cos(a)) ** 2 + (xz * math.sin(a)) ** 2)
+            pb.scale = (xz ** -0.7, eff ** -0.7, xz ** -0.7)
+        if "leg_" + side in roles:
+            roles["leg_" + side].rotation_euler.x = cal["leg_" + side][0] * g("leg_" + side, 0.0)
+
+
+def bake_clips(arm, height, hero=""):
+    st = style_for(hero)
+    info("hero %r style %s" % (hero, st))
     bpy.context.scene.render.fps = FPS
     arm.animation_data_create()
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="POSE")
-    bones = {pb.name: pb for pb in arm.pose.bones}
+    reset_pose(arm)
+    roles = _resolve_roles(arm)
+    cal = _calibrate(arm, roles)
+    info("sides: right arm=%s right leg=%s; cal=%s" % (
+        roles["arm_r"].name if "arm_r" in roles else None,
+        roles["leg_r"].name if "leg_r" in roles else None, cal))
     names = []
-    for name, (frames, fn) in make_clips(height).items():
+    def _bake(name, keys):
         act = bpy.data.actions.new(name)
         act.use_fake_user = True
         arm.animation_data.action = act
-        for f in range(0, frames + 1, 2):
+        for f, pose in stylize(name, keys, st):
             reset_pose(arm)
-            fn(bones, f / frames)
+            apply_pose(roles, cal, pose, height)
             for pb in arm.pose.bones:
                 pb.keyframe_insert("location", frame=f)
                 pb.keyframe_insert("rotation_euler", frame=f)
                 pb.keyframe_insert("scale", frame=f)
+        return act
+
+    def _lowest(act, frame):
+        arm.animation_data.action = act
+        bpy.context.scene.frame_set(int(frame))
+        dg = bpy.context.evaluated_depsgraph_get()
+        low = 1e9
+        for o in bpy.context.scene.objects:
+            if o.type != "MESH" or not o.vertex_groups:  # skinned body only (not helper meshes)
+                continue
+            eo = o.evaluated_get(dg)
+            me = eo.to_mesh()
+            mw = eo.matrix_world
+            low = min(low, min((mw @ v.co).z for v in me.vertices))
+            eo.to_mesh_clear()
+        return low
+
+    for name, (frames, loop, keys) in _clip_tables(DEATH_KIND.get(hero, "")).items():
+        act = _bake(name, keys)
+        if name == "death":
+            # lie flat ON the ground: measure the lowest skinned vertex at the last frame and lift / sink
+            # the lying poses (weighted by how far they are tipped over) so it rests at y = 0
+            last = max(f for f, _ in keys)
+            dy = -_lowest(act, last)
+            if abs(dy) > 0.002:
+                shift = dy / height
+                fixed = []
+                for f, pose in keys:
+                    tip = min(1.0, (abs(pose.get("root_rx", 0.0)) + abs(pose.get("root_rz", 0.0))) / 1.45)
+                    q = dict(pose)
+                    q["root_y"] = q.get("root_y", 0.0) + shift * tip
+                    fixed.append((f, q))
+                bpy.data.actions.remove(act)
+                act = _bake(name, fixed)
+                info("death lift %s: %.3f m -> lowest now %.3f" % (hero, dy, _lowest(act, last)))
         names.append(name)
     reset_pose(arm)
     arm.animation_data.action = bpy.data.actions["idle"]
     bpy.ops.object.mode_set(mode="OBJECT")
     info("animations: " + ", ".join(names))
+
+
+def _smooth_weights(arm, iters=4, radius=0.25, keep=0.5):
+    """Blend the skin weights over a few loops around the shoulders and hips (Laplacian smoothing on the
+    welded mesh, only within `radius` of an arm / leg root), so joints bend smoothly instead of creasing.
+    Run once on a finished GLB (--anim-only IN --smooth); every run blurs a little more."""
+    heads = [arm.matrix_world @ arm.data.bones[n].head_local for n in ("arm.L", "arm.R", "leg.L", "leg.R")
+             if n in arm.data.bones]
+    for o in bpy.context.scene.objects:
+        if o.type != "MESH" or not o.vertex_groups:
+            continue
+        gname = {g.index: g.name for g in o.vertex_groups}
+        V = o.data.vertices
+        key = lambda v: (round(v.co.x, 3), round(v.co.y, 3), round(v.co.z, 3))
+        keys = [key(v) for v in V]
+        W, adj, members = {}, {}, {}
+        for v, k in zip(V, keys):
+            members.setdefault(k, []).append(v.index)
+            if k not in W:
+                W[k] = {gname[g.group]: g.weight for g in v.groups if g.weight > 0.0}
+        for p in o.data.polygons:
+            ks = [keys[i] for i in p.vertices]
+            for i, a in enumerate(ks):
+                b = ks[(i + 1) % len(ks)]
+                if a != b:
+                    adj.setdefault(a, set()).add(b)
+                    adj.setdefault(b, set()).add(a)
+        zone = [k for k in W if any((o.matrix_world @ Vector(k) - h).length < radius for h in heads)]
+        for _ in range(iters):
+            new = {}
+            for k in zone:
+                nb = adj.get(k)
+                if not nb:
+                    continue
+                mix = {}
+                for n, w in W[k].items():
+                    mix[n] = w * keep
+                for q in nb:
+                    for n, w in W[q].items():
+                        mix[n] = mix.get(n, 0.0) + w * (1.0 - keep) / len(nb)
+                top = sorted(mix.items(), key=lambda t: -t[1])[:4]
+                tot = sum(w for _, w in top) or 1.0
+                new[k] = {n: w / tot for n, w in top if w / tot > 0.01}
+            W.update(new)
+        groups = {g.name: g for g in o.vertex_groups}
+        for k in zone:
+            for i in members[k]:
+                for g in list(V[i].groups):
+                    o.vertex_groups[g.group].remove([i])
+                for n, w in W[k].items():
+                    groups[n].add([i], w, "REPLACE")
+        info("smoothed skin weights of %s: %d joint vertices, %d passes" % (o.name, len(zone), iters))
+
+
+def anim_only(src, dst, smooth=False):
+    """Re-bake the clips of a finished rigged GLB; meshes, paint and skin stay untouched."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.import_scene.gltf(filepath=src)
+    arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
+    if not arms:
+        raise SystemExit("ERROR: no armature in " + src)
+    arm = arms[0]
+    for a in list(bpy.data.actions):
+        bpy.data.actions.remove(a)
+    if arm.animation_data:
+        arm.animation_data_clear()
+    meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+    zs = [(o.matrix_world @ Vector(c)).z for o in meshes for c in o.bound_box]
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.select_all(action="DESELECT")
+    arm.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    _add_end_bones(arm.data.edit_bones)
+    for b in arm.data.edit_bones:  # same bone frame as build_armature: Z forward (-Y)
+        b.align_roll(Vector((0, -1, 0)))
+    bpy.ops.object.mode_set(mode="OBJECT")
+    if smooth:
+        _smooth_weights(arm)
+    root_z = (arm.matrix_world @ arm.data.bones["root"].head_local).z
+    bake_clips(arm, max(zs) - root_z, os.path.splitext(os.path.basename(src))[0])
+    has_colors = any(o.data.color_attributes for o in meshes)
+    export(dst, has_colors)
+    print("RESULT: " + dst, flush=True)
 
 
 # ----------------------------------------------------------------------------- export / main
@@ -1038,6 +1538,10 @@ def main():
     if argv and argv[0] == "--extract":  # -- --extract CONCEPT.png OUT.palette.txt
         write_palette(argv[2], extract_palette(argv[1]))
         return
+    if argv and argv[0] == "--anim-only":  # -- --anim-only IN.glb [OUT.glb]  (default: overwrite IN)
+        pos = [a for a in argv[1:] if not a.startswith("--")]
+        anim_only(pos[0], pos[1] if len(pos) > 1 else pos[0], "--smooth" in argv)
+        return
     opts = parse_args()
     log(5, "importing mesh")
     obj = import_mesh(opts["src"])
@@ -1062,7 +1566,7 @@ def main():
     shape = detect_limbs(obj, force_arms=limbs in ("all", "arms"), force_legs=limbs in ("all", "legs"))
     arm = build_armature(obj, shape)
     log(70, "animating")
-    bake_clips(arm, shape["h"])
+    bake_clips(arm, shape["h"], os.path.splitext(os.path.basename(opts["dst"]))[0])
     log(90, "exporting GLB")
     export(opts["dst"], has_colors)
     log(100, "done")

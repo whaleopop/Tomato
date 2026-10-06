@@ -8,6 +8,7 @@ signal ability_finished
 var duration: float = 0.0
 var is_active: bool = false
 var max_range: float = 0.0  # > 0: targets further away are pulled in to this distance
+var cast_pose := "cast_raise"  # CharacterAnimator clip played when cast
 
 func activate(entity, target_position: Vector3 = Vector3.ZERO) -> bool:  # entity: Entity
 	if not enabled or is_active:

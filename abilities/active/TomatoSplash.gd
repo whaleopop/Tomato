@@ -10,6 +10,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Tomato Splash"
+	cast_pose = "cast_throw"
 	icon = "burst"
 	cooldown = 8.0
 	duration = 0.5

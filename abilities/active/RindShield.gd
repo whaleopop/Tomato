@@ -14,6 +14,7 @@ func aim_preview() -> Dictionary:
 
 func _init():
 	ability_name = "Rind Shield"
+	cast_pose = "cast_raise"
 	icon = "shield"
 	cooldown = 12.0
 	duration = 0.3

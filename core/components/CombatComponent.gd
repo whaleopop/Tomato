@@ -26,6 +26,7 @@ var _reload_weapon: RangedWeapon = null      # the gun being reloaded
 
 # Muzzle offset from entity position: right, up, forward (where WeaponVisualComponent holds the gun)
 var muzzle_offset: Vector3 = Vector3(0.28, 0.66, 0.6)
+const VISUAL_MUZZLE := Vector3(0.22, 0.56, 0.6)  # the drawn barrel (hand -0.22, 0.55 + gun length)
 
 func _init(p_entity = null):  # p_entity: Entity
 	entity = p_entity
@@ -591,6 +592,15 @@ func _get_muzzle_position() -> Vector3:
 
 	return entity.global_position + offset
 
+## Where the barrel really is (visuals only: tracer start, muzzle flash). The ray / hit origin
+## keeps muzzle_offset, the server judges hits from it.
+func _get_visual_muzzle_position() -> Vector3:
+	if not entity:
+		return Vector3.ZERO
+	var forward = entity.transform.basis.z
+	var right = -entity.transform.basis.x
+	return entity.global_position + right * VISUAL_MUZZLE.x + Vector3.UP * VISUAL_MUZZLE.y + forward * VISUAL_MUZZLE.z
+
 ## Create visual effects for shot
 func _create_shot_effects(muzzle_pos: Vector3, hit_result: Dictionary, weapon_type: String) -> void:
 	if not entity or not is_instance_valid(entity):
@@ -602,14 +612,14 @@ func _create_shot_effects(muzzle_pos: Vector3, hit_result: Dictionary, weapon_ty
 	var hit_normal = hit_result.get("normal", Vector3.UP)
 	var collider = hit_result.get("collider")
 
-	WeaponEffects.create_shot_effects(parent, muzzle_pos, hit_pos, hit_normal, collider, weapon_type)
+	WeaponEffects.create_shot_effects(parent, _get_visual_muzzle_position(), hit_pos, hit_normal, collider, weapon_type)
 
 ## Create visual effects for shotgun spread
 func _create_shot_effects_shotgun(muzzle_pos: Vector3, results: Array[Dictionary]) -> void:
 	if not entity or not is_instance_valid(entity):
 		return
 
-	WeaponEffects.create_shotgun_effects(_effects_parent(), muzzle_pos, results)
+	WeaponEffects.create_shotgun_effects(_effects_parent(), _get_visual_muzzle_position(), results)
 
 ## Shot effects belong in the 3D world, not under the shooter. On the host, remote players are
 ## ServerWorld entities and ServerWorld is a plain Node, so fall back to the current scene.
