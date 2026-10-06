@@ -26,7 +26,7 @@
       <a href="#heroes">Герои</a>
       <a href="#leaderboard">Топ игроков</a>
       <a href="#about">Об игре</a>
-      <a href="#play" class="nav-cta">Играть</a>
+      <a href="#play" class="nav-cta" id="nav-cta">Играть</a>
     </nav>
     <button class="burger" id="burger" aria-label="Меню">
       <span></span><span></span><span></span>
@@ -48,7 +48,7 @@
           пока не останется один герой.
         </p>
         <div class="hero-actions">
-          <a href="#play" class="btn btn-gold">Зарегистрироваться</a>
+          <a href="#play" class="btn btn-gold">Создать аккаунт</a>
           <a href="#heroes" class="btn btn-ghost">Смотреть героев</a>
         </div>
         <div class="hero-stats">
@@ -125,24 +125,67 @@
     </div>
   </section>
 
-  <!-- REGISTER -->
+  <!-- ACCOUNT: auth forms (guest) / dashboard (logged in) -->
   <section id="play" class="section section-cta">
     <div class="wrap cta-row">
-      <div class="cta-copy">
-        <div class="eyebrow">Ранний доступ</div>
-        <h2>Оставь e-mail — пришлём ссылку на игру</h2>
-        <p class="section-sub">
-          Игра создаёт аккаунт автоматически при первом запуске клиента — логин и пароль не нужны.
-          Оставь почту, и мы пришлём ссылку на скачивание и важные новости о релизах.
-        </p>
+
+      <!-- Guest state: login / register tabs -->
+      <div id="auth-block">
+        <div class="cta-copy">
+          <div class="eyebrow">Аккаунт на сайте</div>
+          <h2>Создай аккаунт — получи прямую ссылку на скачивание</h2>
+          <p class="section-sub">
+            Это отдельный веб-аккаунт сайта (email и пароль), он не связан с игровым профилем —
+            тот создаётся автоматически при первом запуске клиента.
+          </p>
+        </div>
+
+        <div class="auth-tabs">
+          <button type="button" class="auth-tab active" data-tab="login">Войти</button>
+          <button type="button" class="auth-tab" data-tab="register">Регистрация</button>
+        </div>
+
+        <form id="login-form" class="auth-form">
+          <label for="login-email" class="sr-only">Email</label>
+          <input type="email" id="login-email" name="email" placeholder="your@email.com" autocomplete="email" required>
+          <label for="login-password" class="sr-only">Пароль</label>
+          <input type="password" id="login-password" name="password" placeholder="Пароль" autocomplete="current-password" required>
+          <button type="submit" class="btn btn-gold">Войти</button>
+        </form>
+
+        <form id="register-form" class="auth-form" hidden>
+          <label for="register-email" class="sr-only">Email</label>
+          <input type="email" id="register-email" name="email" placeholder="your@email.com" autocomplete="email" required>
+          <label for="register-password" class="sr-only">Пароль</label>
+          <input type="password" id="register-password" name="password" placeholder="Пароль (от 8 символов)" autocomplete="new-password" minlength="8" required>
+          <button type="submit" class="btn btn-gold">Зарегистрироваться</button>
+        </form>
+
+        <p id="auth-note" class="signup-note"></p>
       </div>
-      <form id="signup-form" class="signup-form" action="https://formspree.io/f/xgaooaor" method="POST">
-        <label for="email" class="sr-only">Email</label>
-        <input type="email" id="email" name="email" placeholder="your@email.com" required>
-        <input type="hidden" name="_subject" value="ROYALTIM: новая заявка на доступ">
-        <button type="submit" class="btn btn-gold">Зарегистрироваться</button>
-      </form>
-      <p id="signup-note" class="signup-note"></p>
+
+      <!-- Logged-in state: simple dashboard -->
+      <div id="dashboard-block" hidden>
+        <div class="cta-copy">
+          <div class="eyebrow">Личный кабинет</div>
+          <h2>С возвращением!</h2>
+        </div>
+        <div class="dashboard-panel">
+          <div class="dashboard-row">
+            <span class="dashboard-label">Email</span>
+            <span class="dashboard-value" id="dash-email">—</span>
+          </div>
+          <div class="dashboard-row">
+            <span class="dashboard-label">На сайте с</span>
+            <span class="dashboard-value" id="dash-created">—</span>
+          </div>
+          <div class="dashboard-actions">
+            <a id="dash-download" class="btn btn-gold" href="https://github.com/whaleopop/Tomato/releases/latest/download/Royaltim-windows.zip">Скачать игру</a>
+            <button type="button" id="dash-logout" class="btn btn-ghost">Выйти</button>
+          </div>
+        </div>
+      </div>
+
     </div>
   </section>
 
