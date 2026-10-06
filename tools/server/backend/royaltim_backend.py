@@ -29,11 +29,20 @@ Game servers (DedicatedServer.gd, localhost + X-Server-Key):
 Authorization for clients: "Authorization: Bearer <device key>" (the key never leaves the device and
 this server, only its hash is stored).
 
+Website accounts (separate from game accounts, no link yet):
+  POST /web/register {email, password} -> {ok, token, email, created}
+  POST /web/login {email, password}    -> {ok, token, email, created}
+  GET  /web/me                         -> {ok, id, email, created}
+  POST /web/logout
+Authorization: "Authorization: Bearer ws_<session>" (only the hash is stored; 30-day sliding expiry);
+passwords PBKDF2-HMAC-SHA256 with a per-user salt; failed logins throttled per email and per IP.
+
 catalog.json comes from the game (tools/server/export_catalog.gd): prices, kinds, heroes, mastery.
 The rules below mirror ui/profile/PlayerProfile.gd and Mastery.gd - keep them in step.
 """
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -73,6 +82,19 @@ PARTY_MAX = 2
 INVITE_TTL = 120.0
 _next_party = [1]
 
+# web accounts (website login, separate identity from device-key game accounts)
+WEB_PBKDF2_ITER = 600_000  # stored per-row so it can change later
+WEB_SESSION_TTL = 30 * 86400.0
+WEB_PW_MIN, WEB_PW_MAX = 8, 128
+WEB_EMAIL_MAX = 254
+WEB_EMAIL_RE = re.compile(r"[^@\s]{1,64}@[^@\s]+\.[^@\s.]{2,}")
+WEB_LOGIN_PER_EMAIL = (5, 900.0)
+WEB_LOGIN_PER_IP = (30, 900.0)
+WEB_REGISTER_PER_IP = (5, 3600.0)
+WEB_TRIES = {}  # (kind, key) -> [count, window_start, window] -- guarded by LOCK
+WEB_KDF_SLOTS = threading.BoundedSemaphore(2)  # cap concurrent password hashing (VPS also runs game servers)
+_WEB_DUMMY_SALT = secrets.token_bytes(16)  # hashed against for unknown emails so timing doesn't leak existence
+
 
 def now():
     return time.time()
@@ -102,6 +124,15 @@ def open_db(path):
         PRIMARY KEY (a, b))""")  # a asked b; status "pending" / "accepted"
     db.execute("""CREATE TABLE IF NOT EXISTS purchases (
         account INTEGER NOT NULL, item TEXT NOT NULL, price INTEGER, at REAL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS web_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL,
+        pw_hash TEXT NOT NULL, pw_salt TEXT NOT NULL, pw_iter INTEGER NOT NULL,
+        created REAL NOT NULL, last_login REAL,
+        game_account INTEGER)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS web_sessions (
+        token_hash TEXT PRIMARY KEY, web_account INTEGER NOT NULL,
+        created REAL NOT NULL, expires REAL NOT NULL)""")
+    db.execute("CREATE INDEX IF NOT EXISTS web_sessions_account ON web_sessions(web_account)")
     return db
 
 
@@ -128,6 +159,70 @@ def load_account(account_id):
 
 def save_account(account_id, profile):
     DB.execute("UPDATE accounts SET profile=?, seen=? WHERE id=?", (json.dumps(profile), now(), account_id))
+
+
+# --- web accounts (website, separate from game accounts)
+
+def web_token_hash(token):
+    return hashlib.sha256(("royaltim-web:" + token).encode()).hexdigest()
+
+
+def web_hash_password(password, salt_bytes, iterations):
+    """CPU heavy (~0.3-0.8s): call outside LOCK, guarded by WEB_KDF_SLOTS."""
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt_bytes, iterations).hex()
+
+
+def web_new_session(web_id):
+    """Caller holds LOCK."""
+    token = "ws_" + secrets.token_urlsafe(32)
+    t = now()
+    DB.execute("INSERT INTO web_sessions (token_hash, web_account, created, expires) VALUES (?,?,?,?)",
+               (web_token_hash(token), web_id, t, t + WEB_SESSION_TTL))
+    return token
+
+
+def web_session_account(token):
+    """Caller holds LOCK."""
+    h = web_token_hash(token)
+    row = DB.execute("SELECT web_account, expires FROM web_sessions WHERE token_hash=?", (h,)).fetchone()
+    if not row:
+        return None
+    t = now()
+    if row[1] < t:
+        DB.execute("DELETE FROM web_sessions WHERE token_hash=?", (h,))
+        return None
+    if row[1] - t < WEB_SESSION_TTL - 3600:
+        DB.execute("UPDATE web_sessions SET expires=? WHERE token_hash=?", (t + WEB_SESSION_TTL, h))
+    return row[0]
+
+
+def web_throttled(key, rule):
+    """Returns seconds remaining if throttled, else 0. Caller holds LOCK."""
+    max_attempts, window = rule
+    entry = WEB_TRIES.get(key)
+    if not entry:
+        return 0
+    count, window_start, w = entry
+    if now() - window_start > w:
+        return 0
+    if count >= max_attempts:
+        return max(0.0, w - (now() - window_start))
+    return 0
+
+
+def web_count_try(key, rule):
+    """Records an attempt. Caller holds LOCK."""
+    max_attempts, window = rule
+    entry = WEB_TRIES.get(key)
+    t = now()
+    if not entry or t - entry[1] > entry[2]:
+        WEB_TRIES[key] = [1, t, window]
+    else:
+        entry[0] += 1
+
+
+def web_clear_tries(key):
+    WEB_TRIES.pop(key, None)
 
 
 # ------------------------------------------------------------------ rules (PlayerProfile / Mastery)
@@ -248,6 +343,9 @@ def matchmaker_loop():
                 for acc, f in list(FOUND.items()):
                     if t - f["at"] > FOUND_KEEP:
                         FOUND.pop(acc, None)
+                for key, entry in list(WEB_TRIES.items()):
+                    if t - entry[1] > entry[2]:
+                        WEB_TRIES.pop(key, None)
                 for mode, rule in MODES.items():
                     units = queue_units(mode)  # a party is one unit: never split
                     while units:
@@ -318,6 +416,26 @@ class Handler(BaseHTTPRequestHandler):
         return self.client_address[0] in ("127.0.0.1", "::1") and secrets.compare_digest(
             self.headers.get("X-Server-Key", ""), SERVER_KEY)
 
+    def _client_ip(self):
+        """Real visitor IP behind the local Caddy reverse proxy."""
+        ip = self.client_address[0]
+        if ip in ("127.0.0.1", "::1"):
+            fwd = self.headers.get("X-Forwarded-For", "")
+            if fwd:
+                return fwd.split(",")[-1].strip()
+        return ip
+
+    def _web_route(self, method, path, body):
+        try:
+            handler = WEB_ROUTES.get((method, path))
+            if handler is None:
+                return self._send(404, {"ok": False, "error": "Unknown request"})
+            status, data = handler(self, body)
+            return self._send(status, data)
+        except Exception as ex:
+            log("web error on", path, type(ex).__name__)
+            return self._send(500, {"ok": False, "error": "Server error"})
+
     def do_GET(self):
         self._route("GET", {})
 
@@ -334,6 +452,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route(self, method, body):
         path = self.path.split("?")[0]
+        if path.startswith("/web/"):
+            return self._web_route(method, path, body)
         try:
             with LOCK:
                 if path == "/status":
@@ -815,6 +935,112 @@ def match_report(body):
     save_account(account, p)
     log("match %d: account %d +%d coins, %s +%d xp" % (match_id, account, coins, hero, hero_xp))
     return {"ok": True}
+
+
+# --- web accounts endpoints (website, separate from game accounts)
+
+def web_register(handler, body):
+    ip = handler._client_ip()
+    email = str(body.get("email", "")).strip().lower()
+    password = str(body.get("password", ""))
+    if len(email) > WEB_EMAIL_MAX or not WEB_EMAIL_RE.fullmatch(email):
+        return (200, {"ok": False, "code": "bad_email", "error": "Invalid email"})
+    if not (WEB_PW_MIN <= len(password) <= WEB_PW_MAX):
+        return (200, {"ok": False, "code": "bad_password", "error": "Password must be 8 to 128 characters"})
+    with LOCK:
+        wait = web_throttled(("register_ip", ip), WEB_REGISTER_PER_IP)
+        if wait:
+            return (429, {"ok": False, "code": "throttled", "error": "Too many attempts", "retry_after": wait})
+        web_count_try(("register_ip", ip), WEB_REGISTER_PER_IP)
+        if DB.execute("SELECT 1 FROM web_accounts WHERE email=?", (email,)).fetchone():
+            return (200, {"ok": False, "code": "email_taken", "error": "Email already registered"})
+    salt = secrets.token_bytes(16)
+    if not WEB_KDF_SLOTS.acquire(timeout=5):
+        return (200, {"ok": False, "code": "busy", "error": "Server busy, try again"})
+    try:
+        pw_hash = web_hash_password(password, salt, WEB_PBKDF2_ITER)
+    finally:
+        WEB_KDF_SLOTS.release()
+    t = now()
+    with LOCK:
+        try:
+            web_id = DB.execute(
+                "INSERT INTO web_accounts (email, pw_hash, pw_salt, pw_iter, created, last_login, game_account) "
+                "VALUES (?,?,?,?,?,?,NULL)",
+                (email, pw_hash, salt.hex(), WEB_PBKDF2_ITER, t, t)).lastrowid
+        except sqlite3.IntegrityError:
+            return (200, {"ok": False, "code": "email_taken", "error": "Email already registered"})
+        log("new web account", web_id)
+        token = web_new_session(web_id)
+    return (200, {"ok": True, "token": token, "email": email, "created": t})
+
+
+def web_login(handler, body):
+    ip = handler._client_ip()
+    email = str(body.get("email", "")).strip().lower()
+    password = str(body.get("password", ""))
+    if not email or len(email) > WEB_EMAIL_MAX or not WEB_EMAIL_RE.fullmatch(email) or not password:
+        return (200, {"ok": False, "code": "bad_credentials", "error": "Wrong email or password"})
+    with LOCK:
+        wait = max(web_throttled(("login_email", email), WEB_LOGIN_PER_EMAIL),
+                   web_throttled(("login_ip", ip), WEB_LOGIN_PER_IP))
+        web_count_try(("login_email", email), WEB_LOGIN_PER_EMAIL)
+        web_count_try(("login_ip", ip), WEB_LOGIN_PER_IP)
+        if wait:
+            return (429, {"ok": False, "code": "throttled", "error": "Too many attempts", "retry_after": wait})
+        DB.execute("DELETE FROM web_sessions WHERE expires < ?", (now(),))
+        row = DB.execute("SELECT id, pw_hash, pw_salt, pw_iter, created FROM web_accounts WHERE email=?",
+                         (email,)).fetchone()
+    if not WEB_KDF_SLOTS.acquire(timeout=5):
+        return (200, {"ok": False, "code": "busy", "error": "Server busy, try again"})
+    try:
+        if row:
+            candidate = web_hash_password(password, bytes.fromhex(row[2]), row[3])
+        else:
+            web_hash_password(password, _WEB_DUMMY_SALT, WEB_PBKDF2_ITER)
+            candidate = None
+    finally:
+        WEB_KDF_SLOTS.release()
+    if row is None or candidate is None or not hmac.compare_digest(candidate, row[1]):
+        return (200, {"ok": False, "code": "bad_credentials", "error": "Wrong email or password"})
+    web_id, _, _, _, created = row
+    with LOCK:
+        web_clear_tries(("login_email", email))
+        DB.execute("UPDATE web_accounts SET last_login=? WHERE id=?", (now(), web_id))
+        token = web_new_session(web_id)
+    return (200, {"ok": True, "token": token, "email": email, "created": created})
+
+
+def web_me(handler, body):
+    auth = handler.headers.get("Authorization", "")
+    if not auth.startswith("Bearer ws_"):
+        return (401, {"ok": False, "code": "not_logged_in", "error": "Not logged in"})
+    token = auth[7:].strip()
+    with LOCK:
+        web_id = web_session_account(token)
+        if web_id is None:
+            return (401, {"ok": False, "code": "not_logged_in", "error": "Not logged in"})
+        row = DB.execute("SELECT email, created FROM web_accounts WHERE id=?", (web_id,)).fetchone()
+    if not row:
+        return (401, {"ok": False, "code": "not_logged_in", "error": "Not logged in"})
+    return (200, {"ok": True, "id": web_id, "email": row[0], "created": row[1]})
+
+
+def web_logout(handler, body):
+    auth = handler.headers.get("Authorization", "")
+    if auth.startswith("Bearer ws_"):
+        token = auth[7:].strip()
+        with LOCK:
+            DB.execute("DELETE FROM web_sessions WHERE token_hash=?", (web_token_hash(token),))
+    return (200, {"ok": True})
+
+
+WEB_ROUTES = {
+    ("POST", "/web/register"): web_register,
+    ("POST", "/web/login"): web_login,
+    ("GET", "/web/me"): web_me,
+    ("POST", "/web/logout"): web_logout,
+}
 
 
 ROUTES = {

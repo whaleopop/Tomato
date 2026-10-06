@@ -1,6 +1,8 @@
-// ROYALTIM-3 website — hero grid, live leaderboard/status from the backend, nav + signup form.
+// ROYALTIM-3 website — hero grid, live leaderboard/status from the backend, nav + web account auth.
 
-const BACKEND = "http://159.194.255.184:8080";
+const BACKEND = "https://159-194-255-184.sslip.io";
+const SESSION_KEY = "royaltim_web_session"; // localStorage key holding the session token
+const DOWNLOAD_URL = "https://github.com/whaleopop/Tomato/releases/latest/download/Royaltim-windows.zip";
 
 const HEROES = [
   { id: "tomato", name: "Томат", desc: "Мощный боец ближнего боя с сокрушительными ударами." },
@@ -132,44 +134,200 @@ function setupNav() {
   nav.querySelectorAll("a").forEach((a) => a.addEventListener("click", () => nav.classList.remove("open")));
 }
 
-function setupSignupForm() {
-  const form = document.getElementById("signup-form");
-  const note = document.getElementById("signup-note");
-  if (!form || !note) return;
-  const placeholderAction = form.getAttribute("action") || "";
-  form.addEventListener("submit", async (ev) => {
-    if (placeholderAction.includes("YOUR_FORM_ID")) {
-      ev.preventDefault();
-      note.textContent = "Форма ещё не подключена — впишите свой Formspree ID в action формы.";
-      note.className = "signup-note err";
-      return;
-    }
-    ev.preventDefault();
-    note.textContent = "Отправляем…";
-    note.className = "signup-note";
-    try {
-      const res = await fetch(form.action, {
-        method: "POST",
-        body: new FormData(form),
-        headers: { Accept: "application/json" },
-      });
-      if (res.ok) {
-        note.textContent = "Готово! Мы пришлём ссылку на игру на твою почту.";
-        note.className = "signup-note ok";
-        form.reset();
-      } else {
-        note.textContent = "Не получилось отправить — попробуй ещё раз чуть позже.";
-        note.className = "signup-note err";
-      }
-    } catch (e) {
-      note.textContent = "Не получилось отправить — проверь соединение.";
-      note.className = "signup-note err";
-    }
+// ---------- web account auth (separate from the game's device-key accounts) ----------
+
+function getSession() {
+  try {
+    return localStorage.getItem(SESSION_KEY) || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function setSession(token) {
+  try {
+    if (token) localStorage.setItem(SESSION_KEY, token);
+    else localStorage.removeItem(SESSION_KEY);
+  } catch (e) {
+    // private window / blocked storage — session just won't persist across reloads
+  }
+}
+
+function setAuthNote(text, kind) {
+  const note = document.getElementById("auth-note");
+  if (!note) return;
+  note.textContent = text;
+  note.className = "signup-note" + (kind ? " " + kind : "");
+}
+
+function setupAuthTabs() {
+  const tabs = document.querySelectorAll(".auth-tab");
+  const loginForm = document.getElementById("login-form");
+  const registerForm = document.getElementById("register-form");
+  if (!tabs.length || !loginForm || !registerForm) return;
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      const isLogin = tab.dataset.tab === "login";
+      loginForm.hidden = !isLogin;
+      registerForm.hidden = isLogin;
+      setAuthNote("", "");
+    });
   });
+}
+
+// Server error `code` -> Russian message (server text itself stays English, per the API contract).
+const AUTH_ERRORS = {
+  bad_email: "Неверный email",
+  bad_password: "Пароль: от 8 до 128 символов",
+  email_taken: "Этот email уже зарегистрирован",
+  bad_credentials: "Неверный email или пароль",
+  busy: "Сервер занят, попробуй через минуту",
+  not_logged_in: "Сессия истекла, войди снова",
+};
+
+function authErrorMessage(data, retryAfter) {
+  if (data.code === "throttled") {
+    const mins = retryAfter ? Math.ceil(retryAfter / 60) : null;
+    return mins ? `Слишком много попыток, подожди ${mins} мин.` : "Слишком много попыток, попробуй позже";
+  }
+  return AUTH_ERRORS[data.code] || data.error || "Не получилось выполнить запрос";
+}
+
+async function webApi(path, body) {
+  const res = await fetch(`${BACKEND}${path}`, {
+    method: "POST",
+    mode: "cors",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  let data = {};
+  try {
+    data = await res.json();
+  } catch (e) {
+    throw new Error("Сервер не отвечает — попробуй позже");
+  }
+  if (!res.ok || data.ok === false) {
+    throw new Error(authErrorMessage(data, data.retry_after));
+  }
+  return data;
+}
+
+async function fetchMe(token) {
+  const res = await fetch(`${BACKEND}/web/me`, {
+    mode: "cors",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("session invalid");
+  return res.json();
+}
+
+function showDashboard(profile) {
+  const authBlock = document.getElementById("auth-block");
+  const dashBlock = document.getElementById("dashboard-block");
+  const emailEl = document.getElementById("dash-email");
+  const createdEl = document.getElementById("dash-created");
+  const downloadEl = document.getElementById("dash-download");
+  if (!authBlock || !dashBlock) return;
+  authBlock.hidden = true;
+  dashBlock.hidden = false;
+  if (emailEl) emailEl.textContent = profile.email || "—";
+  if (createdEl && profile.created) {
+    const d = new Date(profile.created * 1000);
+    createdEl.textContent = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric" }).format(d);
+  }
+  if (downloadEl) downloadEl.href = DOWNLOAD_URL;
+  const navCta = document.getElementById("nav-cta");
+  if (navCta) navCta.textContent = "Кабинет";
+}
+
+function showAuthForms() {
+  const authBlock = document.getElementById("auth-block");
+  const dashBlock = document.getElementById("dashboard-block");
+  if (!authBlock || !dashBlock) return;
+  authBlock.hidden = false;
+  dashBlock.hidden = true;
+  const navCta = document.getElementById("nav-cta");
+  if (navCta) navCta.textContent = "Играть";
+}
+
+async function restoreSession() {
+  const token = getSession();
+  if (!token) return;
+  try {
+    const data = await fetchMe(token);
+    showDashboard(data);
+  } catch (e) {
+    setSession("");
+  }
+}
+
+function setupAuthForms() {
+  const loginForm = document.getElementById("login-form");
+  const registerForm = document.getElementById("register-form");
+  const logoutBtn = document.getElementById("dash-logout");
+
+  if (loginForm) {
+    loginForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const email = document.getElementById("login-email").value.trim();
+      const password = document.getElementById("login-password").value;
+      setAuthNote("Входим…", "");
+      try {
+        const data = await webApi("/web/login", { email, password });
+        setSession(data.token);
+        setAuthNote("", "");
+        loginForm.reset();
+        showDashboard(data);
+      } catch (e) {
+        setAuthNote(e.message, "err");
+      }
+    });
+  }
+
+  if (registerForm) {
+    registerForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const email = document.getElementById("register-email").value.trim();
+      const password = document.getElementById("register-password").value;
+      setAuthNote("Создаём аккаунт…", "");
+      try {
+        const data = await webApi("/web/register", { email, password });
+        setSession(data.token);
+        setAuthNote("", "");
+        registerForm.reset();
+        showDashboard(data);
+      } catch (e) {
+        setAuthNote(e.message, "err");
+      }
+    });
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", async () => {
+      const token = getSession();
+      setSession("");
+      showAuthForms();
+      if (token) {
+        try {
+          await fetch(`${BACKEND}/web/logout`, {
+            method: "POST",
+            mode: "cors",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch (e) {
+          // already logged out locally, a failed server call doesn't matter here
+        }
+      }
+    });
+  }
 }
 
 renderHeroes();
 loadStatus();
 loadLeaderboard();
 setupNav();
-setupSignupForm();
+setupAuthTabs();
+setupAuthForms();
+restoreSession();
