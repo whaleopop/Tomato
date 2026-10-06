@@ -21,6 +21,9 @@ static var third_person: bool = false  # CameraController's view (V)
 static var ui_scale: float = 1.0  # UIScale preset
 static var juice_splatter: bool = true  # juice sprays, stains and footprints on hits (JuiceSplatter)
 static var camera_locked: bool = true # top-down view turns with the hero (CameraController.locked)
+static var touch_controls: bool = OS.has_feature("mobile")  # on-screen touch input (mobile-port)
+static var graphics_quality: int = -1  # -1 = auto (picked from platform), else a quality preset index
+static var touch_opacity: float = 0.6  # on-screen stick / button alpha (mobile-port)
 
 static func load_and_apply():
 	var cfg = ConfigFile.new()
@@ -43,6 +46,9 @@ static func load_and_apply():
 		third_person = cfg.get_value("video", "third_person", third_person)
 		juice_splatter = cfg.get_value("video", "juice_splatter", juice_splatter)
 		camera_locked = cfg.get_value("controls", "camera_locked", camera_locked)
+		touch_controls = cfg.get_value("controls", "touch_controls", touch_controls)
+		graphics_quality = cfg.get_value("video", "graphics_quality", graphics_quality)
+		touch_opacity = cfg.get_value("controls", "touch_opacity", touch_opacity)
 	Locale.setup(language)
 	apply()
 
@@ -54,10 +60,11 @@ static func apply():
 	if DisplayServer.get_name() == "headless":
 		return
 	# Only when it really changes: re-setting "windowed" on every volume tick un-maximized the window
-	var mode = DisplayServer.window_get_mode()
-	var is_full = mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
-	if fullscreen != is_full:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen else DisplayServer.WINDOW_MODE_MAXIMIZED)
+	if not OS.has_feature("mobile"):
+		var mode = DisplayServer.window_get_mode()
+		var is_full = mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+		if fullscreen != is_full:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen else DisplayServer.WINDOW_MODE_MAXIMIZED)
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if vsync else DisplayServer.VSYNC_DISABLED)
 	UIScale.apply(Engine.get_main_loop().root)
 
@@ -73,6 +80,9 @@ static func save():
 	cfg.set_value("video", "third_person", third_person)
 	cfg.set_value("video", "juice_splatter", juice_splatter)
 	cfg.set_value("controls", "camera_locked", camera_locked)
+	cfg.set_value("controls", "touch_controls", touch_controls)
+	cfg.set_value("video", "graphics_quality", graphics_quality)
+	cfg.set_value("controls", "touch_opacity", touch_opacity)
 	cfg.set_value("interface", "language", language)
 	cfg.set_value("interface", "ui_scale", ui_scale)
 	cfg.set_value("player", "name", player_name)

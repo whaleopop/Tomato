@@ -1,0 +1,169 @@
+# Experimental mobile builds (Android APK + iOS Xcode project) from the mobile-port branch.
+# Manual trigger only for now - this is a first functional pass, not a polished release pipeline.
+#
+# android-apk: exports a DEBUG APK signed with Godot's bundled debug keystore. NOT suitable for
+#   the Play Store - a release build needs a real keystore configured in export_presets.cfg's
+#   preset.3 (keystore/release, keystore/release_user, keystore/release_password), set up later.
+#
+# ios-xcode-project: exports the Xcode project only (preset.4 has application/export_project_only=true,
+#   runnable=false) - Godot doesn't need to run on macOS to produce it, just package resources + templates.
+#
+# ios-unsigned-build: sanity-checks that project on a real Mac with an UNSIGNED build
+#   (CODE_SIGNING_ALLOWED=NO). This proves the Xcode project is well-formed but produces no .ipa.
+#   Actual App Store / TestFlight / device install requires a paid Apple Developer account, a signing
+#   certificate (.p12) and a provisioning profile stored as GitHub Secrets - none of that exists yet.
+#   This job is allowed to fail without failing the whole workflow (continue-on-error).
+name: Mobile Build (Android + iOS, experimental)
+
+on:
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  android-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Cache Godot editor + export templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            godot-linux/godot
+            godot-templates/templates
+          key: godot-${{ env.GODOT_VERSION }}-linux
+
+      - name: Download Godot editor
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          mkdir -p godot-linux
+          wget -q "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -O godot-linux/godot.zip
+          unzip -q godot-linux/godot.zip -d godot-linux
+          mv "godot-linux/Godot_v${GODOT_VERSION}-stable_linux.x86_64" godot-linux/godot
+          rm godot-linux/godot.zip
+
+      - name: Download export templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          mkdir -p godot-templates
+          wget -q "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -O godot-templates/templates.tpz
+          unzip -q godot-templates/templates.tpz -d godot-templates
+          rm godot-templates/templates.tpz
+
+      - name: Install export templates into Godot's user data dir
+        run: |
+          dest="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$dest"
+          cp -r godot-templates/templates/* "$dest/"
+
+      - name: Import the project
+        run: ./godot-linux/godot --headless --path . --import || true
+
+      - name: Export Android (debug)
+        run: |
+          mkdir -p build/Android
+          ./godot-linux/godot --headless --path . --export-debug "Android" build/Android/royaltim.apk
+          ls -la build/Android
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: royaltim-android-debug
+          path: build/Android/royaltim.apk
+
+  ios-xcode-project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Godot editor + export templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            godot-linux/godot
+            godot-templates/templates
+          key: godot-${{ env.GODOT_VERSION }}-linux
+
+      - name: Download Godot editor
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          mkdir -p godot-linux
+          wget -q "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -O godot-linux/godot.zip
+          unzip -q godot-linux/godot.zip -d godot-linux
+          mv "godot-linux/Godot_v${GODOT_VERSION}-stable_linux.x86_64" godot-linux/godot
+          rm godot-linux/godot.zip
+
+      - name: Download export templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          mkdir -p godot-templates
+          wget -q "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -O godot-templates/templates.tpz
+          unzip -q godot-templates/templates.tpz -d godot-templates
+          rm godot-templates/templates.tpz
+
+      - name: Install export templates into Godot's user data dir
+        run: |
+          dest="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$dest"
+          cp -r godot-templates/templates/* "$dest/"
+
+      - name: Import the project
+        run: ./godot-linux/godot --headless --path . --import || true
+
+      - name: Export iOS (Xcode project only, unsigned)
+        run: |
+          mkdir -p build/iOS
+          ./godot-linux/godot --headless --path . --export-release "iOS" build/iOS/royaltim
+          ls -la build/iOS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: royaltim-ios-xcode-project
+          path: build/iOS/
+
+  ios-unsigned-build:
+    runs-on: macos-14
+    needs: ios-xcode-project
+    continue-on-error: true
+    steps:
+      - name: Download the Xcode project artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: royaltim-ios-xcode-project
+          path: build/iOS
+
+      - name: Attempt an unsigned build (sanity check only, no .ipa is produced)
+        continue-on-error: true
+        run: |
+          set -x
+          ls -la build/iOS
+          project=$(find build/iOS -maxdepth 2 -name "*.xcodeproj" | head -n 1)
+          if [ -z "$project" ]; then
+            echo "No .xcodeproj found in the exported artifact - Godot's iOS export layout may have changed."
+            exit 1
+          fi
+          echo "Found project: $project"
+          xcodebuild -list -project "$project" || true
+          scheme=$(xcodebuild -list -project "$project" 2>/dev/null | awk '/Schemes:/{f=1;next} f && NF {print $1; exit}')
+          if [ -z "$scheme" ]; then
+            echo "Could not detect a scheme, trying -alltargets"
+            xcodebuild -project "$project" -alltargets -configuration Release -sdk iphoneos \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          else
+            echo "Using scheme: $scheme"
+            xcodebuild -project "$project" -scheme "$scheme" -configuration Release -sdk iphoneos \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          fi

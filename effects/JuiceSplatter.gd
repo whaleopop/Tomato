@@ -31,6 +31,8 @@ var _walkers: Dictionary = {}      # entity -> {last: Vector3, steps: int, left:
 var _walk_timer: float = 0.0
 
 static func enabled() -> bool:
+	if RenderQuality.level() == RenderQuality.LOW:
+		return false
 	return GameSettings.juice_splatter and DisplayServer.get_name() != "headless"
 
 ## Called when `entity` (Player / Weed) took damage. The spray flies away from `from_pos` if known.

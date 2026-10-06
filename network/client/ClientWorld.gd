@@ -459,5 +459,7 @@ func _setup_post_processing():
 	env.ssr_enabled = true
 	env.ssr_max_steps = 48
 
+	RenderQuality.apply_environment(env)
 	world_env.environment = env
 	add_child(world_env)
+	RenderQuality.apply_viewport(get_viewport())
