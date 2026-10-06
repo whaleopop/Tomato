@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROYALTIM — королевская битва овощей и фруктов</title>
+<meta name="description" content="ROYALTIM — 3D королевская битва сверху с антропоморфными овощами и фруктами. Процедурная гексагональная карта, система разрушения вместо зоны. Играй бесплатно.">
+<link rel="icon" type="image/png" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="bg-glow"></div>
+
+<header class="site-header">
+  <div class="wrap header-row">
+    <a href="#top" class="brand">
+      <img src="assets/favicon-32.png" alt="" class="brand-icon">
+      <span>ROYALTIM</span>
+    </a>
+    <nav class="nav">
+      <a href="#heroes">Герои</a>
+      <a href="#leaderboard">Топ игроков</a>
+      <a href="#about">Об игре</a>
+      <a href="#play" class="nav-cta">Играть</a>
+    </nav>
+    <button class="burger" id="burger" aria-label="Меню">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap hero-row">
+      <div class="hero-copy">
+        <div class="eyebrow">3D battle royale · Godot 4</div>
+        <h1>Последний <span class="gold">овощ</span> на острове<br>победит.</h1>
+        <p class="lead">
+          Гексагональная карта генерируется заново в каждом матче. Вместо сжимающейся зоны —
+          живая <strong>система разрушения</strong>: платформы горят, проваливаются и поднимаются,
+          пока не останется один герой.
+        </p>
+        <div class="hero-actions">
+          <a href="#play" class="btn btn-gold">Зарегистрироваться</a>
+          <a href="#heroes" class="btn btn-ghost">Смотреть героев</a>
+        </div>
+        <div class="hero-stats">
+          <div><strong id="stat-online">—</strong><span>онлайн сейчас</span></div>
+          <div><strong id="stat-registered">—</strong><span>игроков зарегистрировано</span></div>
+          <div><strong>13</strong><span>героев</span></div>
+        </div>
+      </div>
+      <div class="hero-art">
+        <img src="assets/heroes/tomato.jpg" alt="Томат — герой ROYALTIM" class="hero-art-img">
+        <div class="hero-art-ring"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HEROES -->
+  <section id="heroes" class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">Выбери свой овощ</div>
+        <h2>13 героев, 13 характеров</h2>
+        <p class="section-sub">У каждого — своя активная и пассивная способность. Никаких повторов.</p>
+      </div>
+      <div class="hero-grid" id="hero-grid"></div>
+    </div>
+  </section>
+
+  <!-- LEADERBOARD -->
+  <section id="leaderboard" class="section section-alt">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">Зал славы</div>
+        <h2>Топ игроков</h2>
+        <p class="section-sub">Рейтинг по монетам, заработанным в матчах. Обновляется живьём с сервера.</p>
+      </div>
+      <div class="board-panel">
+        <div class="board-head-row">
+          <span class="col-rank">#</span>
+          <span class="col-player">Игрок</span>
+          <span class="col-hero">Герой</span>
+          <span class="col-level">Ур.</span>
+          <span class="col-coins">Монеты</span>
+        </div>
+        <div id="board-body" class="board-body">
+          <div class="board-loading">Загружаем рейтинг…</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ABOUT -->
+  <section id="about" class="section">
+    <div class="wrap about-row">
+      <div class="about-card">
+        <div class="about-icon">⬡</div>
+        <h3>Гексагональная карта</h3>
+        <p>Каждый матч — новая процедурная карта на гексагональной сетке: террасы, вода, особые биомы и ориентиры.</p>
+      </div>
+      <div class="about-card">
+        <div class="about-icon">🔥</div>
+        <h3>Система разрушения</h3>
+        <p>Вместо привычной сужающейся зоны остров буквально разваливается: платформы предупреждают, горят и проваливаются.</p>
+      </div>
+      <div class="about-card">
+        <div class="about-icon">⚔</div>
+        <h3>Способности без повторов</h3>
+        <p>У каждого героя уникальная активная и пассивная способность — билды решают исход боя не меньше, чем прицел.</p>
+      </div>
+      <div class="about-card">
+        <div class="about-icon">👥</div>
+        <h3>Пати с друзьями</h3>
+        <p>Зови друзей, собирайся в команду и ищите матч вместе — королевская битва, KOTH, захват флага и режим выживания.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- REGISTER -->
+  <section id="play" class="section section-cta">
+    <div class="wrap cta-row">
+      <div class="cta-copy">
+        <div class="eyebrow">Ранний доступ</div>
+        <h2>Оставь e-mail — пришлём ссылку на игру</h2>
+        <p class="section-sub">
+          Игра создаёт аккаунт автоматически при первом запуске клиента — логин и пароль не нужны.
+          Оставь почту, и мы пришлём ссылку на скачивание и важные новости о релизах.
+        </p>
+      </div>
+      <form id="signup-form" class="signup-form" action="https://formspree.io/f/xgaooaor" method="POST">
+        <label for="email" class="sr-only">Email</label>
+        <input type="email" id="email" name="email" placeholder="your@email.com" required>
+        <input type="hidden" name="_subject" value="ROYALTIM: новая заявка на доступ">
+        <button type="submit" class="btn btn-gold">Зарегистрироваться</button>
+      </form>
+      <p id="signup-note" class="signup-note"></p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-row">
+    <div class="brand brand-footer">
+      <img src="assets/favicon-32.png" alt="" class="brand-icon">
+      <span>ROYALTIM</span>
+    </div>
+    <p>Сделано на Godot 4. Fan-проект, не связан с реальными овощами.</p>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>

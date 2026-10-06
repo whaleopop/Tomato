@@ -22,6 +22,7 @@ Python 3 standard library only. Clients talk JSON over HTTP (network/online/Onli
   matchmaker never splits them (CTF puts them in one team: "party" in the roster).
   GET  /status                             -> registered / online players, queues, matches (the main menu
                                               asks every few seconds: with the Bearer it also counts as "seen")
+  GET  /leaderboard?limit=N (default 20, max 100) -> public top players by coins earned, no auth, for the website
 Game servers (DedicatedServer.gd, localhost + X-Server-Key):
   POST /match/ready {match}                -> its players get "found"
   POST /match/report {match, account, coins, hero, hero_xp, weapon_xp} -> applied once per player
@@ -281,6 +282,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
@@ -293,6 +295,17 @@ class Handler(BaseHTTPRequestHandler):
             return data if isinstance(data, dict) else {}
         except ValueError:
             return {}
+
+    def _query_int(self, key, default, lo, hi):
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        for part in qs.split("&"):
+            k, _, v = part.partition("=")
+            if k == key:
+                try:
+                    return max(lo, min(hi, int(v)))
+                except ValueError:
+                    return default
+        return default
 
     def _account(self):
         auth = self.headers.get("Authorization", "")
@@ -311,6 +324,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         self._route("POST", self._body())
 
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _route(self, method, body):
         path = self.path.split("?")[0]
         try:
@@ -320,6 +341,8 @@ class Handler(BaseHTTPRequestHandler):
                     if account is not None:
                         DB.execute("UPDATE accounts SET seen=? WHERE id=?", (now(), account))
                     return self._send(200, status())
+                if path == "/leaderboard" and method == "GET":
+                    return self._send(200, leaderboard(self._query_int("limit", 20, 1, 100)))
                 if path == "/login" and method == "POST":
                     return self._send(200, login(body))
                 if path.startswith("/match/"):
@@ -362,6 +385,26 @@ def status():
     queues = {mode: sum(1 for q in QUEUE.values() if q["mode"] == mode) for mode in MODES}
     return {"ok": True, "version": CATALOG.get("version", ""), "online": len(online), "registered": registered, "queues": queues,
             "matches": [{"id": i, "mode": m["mode"], "players": len(m["accounts"])} for i, m in MATCHES.items()]}
+
+
+def leaderboard(limit):
+    """Public top players by coins earned across all matches, for the website (no auth)."""
+    rows = DB.execute(
+        "SELECT account, SUM(coins) AS total, COUNT(*) AS matches FROM rewards GROUP BY account ORDER BY total DESC LIMIT ?",
+        (limit,)).fetchall()
+    players = []
+    for account, total, matches in rows:
+        p = load_account(account)
+        if p is None or not p["nickname"]:
+            continue
+        hero = member_hero(p)
+        players.append({
+            "id": account, "nickname": p["nickname"], "hero": hero,
+            "skin": p["hero_skin"].get(hero, "classic"), "hat": p["hero_hat"].get(hero, "no_hat"),
+            "coins": int(total or 0), "level": mastery_level(p["hero_xp"].get(hero, 0), False),
+            "matches": matches,
+        })
+    return {"ok": True, "players": players}
 
 
 def login(body):
